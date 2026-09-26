@@ -5,9 +5,10 @@
 ### Larger posters
 
 - `resolution=780` renders portrait posters at 780×1170 from TMDB's `w780`
-  art (backdrop crops and logos from the originals) for clients that draw
-  posters large. Same layout at either size: pixel settings scale with the
-  canvas. Roughly twice the render time and file size; URLs without it are
+  art, and `1000`, `1500` or `2000` from the original art (backdrop crops and
+  logos from the originals above 500), for clients that draw posters large.
+  Same layout at any size: pixel settings scale with the canvas. About 2×,
+  3×, 7× and 12× the render time and file size; URLs without it are
   unchanged and keep their cached composites.
 
 ### Notch on the side, and graphic quality badges

@@ -83,9 +83,11 @@ Landscape renders deliberately skip stream-quality fetching because this layout 
 
 ### Poster resolution
 
-`resolution=780` renders a portrait poster at 780×1170 instead of 500×750, from TMDB's `w780` art (backdrop crops and title logos from the originals). The layout is the same at either size: fixed-pixel settings such as `badge_height`, `badge_gap` and `score_glow_blur` are still given for the 500-wide canvas and scale with it. `high` and `hd` are accepted for `780`; any other value, and every landscape render, stays at 500×750.
+`resolution` sets the width of a portrait poster, always 2:3: `500` (the default, 500×750), `780` (780×1170, from TMDB's `w780` art), or `1000`, `1500` or `2000`, drawn from the original art (usually 2000×3000) shrunk to fit. Backdrop crops and title logos come from the originals at every size above 500. The layout is the same at any size: fixed-pixel settings such as `badge_height`, `badge_gap` and `score_glow_blur` are still given for the 500-wide canvas and scale with it. `high` and `hd` are accepted for `780`; any other value, and every landscape render, stays at 500×750.
 
-A 780 render costs about twice the CPU of a 500 one and the file is about twice the size, and the first request for each title fetches its larger art once. It is worth it where a client draws posters more than ~500 physical pixels wide: TV grids, tablets, detail pages on high-density phones. The two sizes are cached separately, and URLs without the parameter keep their existing cached composites.
+Measured against 500, a render costs about 2× the CPU and file size at 780, 3× at 1000, 7× at 1500 and 12× at 2000, and a 2000 render needs well over a gigabyte of memory at its peak — the larger sizes are for trying out.
+
+The first request for each title at a new size fetches its larger art once. A larger size only shows where a client draws the poster more than ~500 physical pixels wide — a detail or hero view, a tablet, a large poster on a high-density phone; a TV grid tile is usually far smaller, so the extra detail is scaled away. Each size is cached separately, and URLs without the parameter keep their existing cached composites.
 
 ### Logo endpoint
 

@@ -1633,8 +1633,9 @@ class RequestConfig:
     # "portrait" (default, unchanged) | "landscape".  Landscape is a separate
     # renderer, not a variant of the portrait layout — see landscape.py.
     shape: str = "portrait"
-    # Portrait canvas width: 500 (500x750, the default) or 780 (780x1170, drawn
-    # from TMDB's w780 art).  "resolution" in the URL.  Landscape ignores it.
+    # Portrait canvas width, 2:3: 500 (the default), 780 (TMDB's w780 art), or
+    # 1000 / 1500 / 2000 (the original art, shrunk to fit) — tmdb.POSTER_WIDTHS.
+    # "resolution" in the URL.  Landscape ignores it.
     # Fixed-pixel settings (badge height/gap, glow blur) are given at 500 and
     # scaled to the canvas at render time — see _scale_render_cfg.
     poster_width: int = 500
@@ -2104,7 +2105,7 @@ def build_request_config(params: dict) -> RequestConfig:
 
     cfg.shape = _normalise_shape(params.get("shape"))
     _res = (params.get("resolution") or "").strip().lower()
-    _res_width = {"780": 780, "high": 780, "hd": 780}.get(_res)
+    _res_width = {"high": 780, "hd": 780}.get(_res) or (int(_res) if _res.isdigit() else None)
     if _res_width in POSTER_WIDTHS and cfg.shape != "landscape":
         cfg.poster_width = _res_width
     _ls_art = (params.get("landscape_art") or "").strip().lower()

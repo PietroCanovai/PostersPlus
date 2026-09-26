@@ -13,13 +13,18 @@ class ResolutionParamTests(unittest.TestCase):
     def test_default_is_500(self):
         self.assertEqual(main.build_request_config({}).poster_width, 500)
 
+    def test_every_offered_width(self):
+        for width in (500, 780, 1000, 1500, 2000):
+            with self.subTest(width=width):
+                self.assertEqual(main.build_request_config({"resolution": str(width)}).poster_width, width)
+
     def test_780_and_its_aliases(self):
         for raw in ("780", "high", "HD"):
             with self.subTest(raw=raw):
                 self.assertEqual(main.build_request_config({"resolution": raw}).poster_width, 780)
 
     def test_unknown_values_keep_the_default(self):
-        for raw in ("1000", "max", "", "{resolution}"):
+        for raw in ("1200", "3000", "max", "-780", "", "{resolution}"):
             with self.subTest(raw=raw):
                 self.assertEqual(main.build_request_config({"resolution": raw}).poster_width, 500)
 

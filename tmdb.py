@@ -100,8 +100,12 @@ _POSTER_CANVAS: ContextVar[tuple[int, int]] = ContextVar(
 )
 
 # Canvas widths a request may ask for, and the TMDB poster size fetched for
-# each — the smallest TMDB rendition at least as wide as the canvas.
-POSTER_WIDTHS = {500: "w500", 780: "w780"}
+# each — the smallest TMDB rendition at least as wide as the canvas.  Above
+# 780 that is the original (usually 2000x3000), shrunk to the canvas here.
+# Measured cost per render vs 500 (2026-09-26): 780 ~2x, 1000 ~3x, 1500 ~7x,
+# 2000 ~12x in CPU and file size; 2000 renders peaked near 1.75 GiB on one
+# worker.  The larger sizes are here to be tried, not yet to be offered.
+POSTER_WIDTHS = {500: "w500", 780: "w780", 1000: "original", 1500: "original", 2000: "original"}
 
 
 def poster_canvas() -> tuple[int, int]:
