@@ -167,8 +167,8 @@ class GroupParseTests(unittest.TestCase):
         self.assertEqual((g.size, g.spacing), (28, 0.01))
         self.assertEqual(gb.format_group(g), "bl:2:cert:28:0.01")
         self.assertEqual(gb.format_group(gb.parse_group("bl:2:cert:28")), "bl:2:cert:28")
-        self.assertEqual(gb.format_group(gb.parse_group("bl:2:cert:20:0.028")), "bl:2:cert")  # defaults left out
-        self.assertEqual(gb.format_group(gb.parse_group("bl:2:cert:20:0.05")), "bl:2:cert:20:0.05")
+        self.assertEqual(gb.format_group(gb.parse_group("bl:2:cert:22:0.028")), "bl:2:cert")  # defaults left out
+        self.assertEqual(gb.format_group(gb.parse_group("bl:2:cert:22:0.05")), "bl:2:cert:22:0.05")
         self.assertEqual(gb.parse_group("bl:2:cert:999:1").size, 60)
         self.assertEqual(gb.parse_group("bl:2:cert:999:1").spacing, 0.08)
         self.assertEqual(gb.parse_group("0.1,0.2,r:2:cert:30").size, 30)
@@ -296,7 +296,7 @@ class AutoNotchTests(unittest.TestCase):
 class SpreadBesideChipTests(unittest.TestCase):
     """An auto notch that became a side chip spreads its chip group evenly."""
 
-    def ink_runs(self, spread, chip=(22, 22, 200, 62), pos="left", group="chip:2:res,cert"):
+    def ink_runs(self, spread, chip=(22, 22, 200, 62), pos="left", group="chip:2:res,cert:20"):
         img = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
         before = np.array(img)
         img.paste((200, 50, 50, 255), chip)            # stand-in chip
@@ -322,7 +322,7 @@ class SpreadBesideChipTests(unittest.TestCase):
         self.assertAlmostEqual(a0, 22, delta=2)
         self.assertAlmostEqual(b0 - a1, 300 - b1, delta=2)
 
-    def heights(self, chip, group="chip:2:res,cert"):
+    def heights(self, chip, group="chip:2:res,cert:20"):
         img = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
         before = np.array(img)
         img.paste((200, 50, 50, 255), chip)
@@ -610,7 +610,7 @@ class ConfigAndLayoutTests(unittest.TestCase):
             ink = self.render(badge_group1=spec, sash_mode="hidden")
             rows = np.flatnonzero(ink.any(axis=1))
             return rows.max() - rows.min() + 1
-        self.assertAlmostEqual(height("bl:1:cert:30") / height("bl:1:cert"), 1.5, delta=0.08)
+        self.assertAlmostEqual(height("bl:1:cert:30") / height("bl:1:cert:20"), 1.5, delta=0.08)
         ink = self.render(badge_group1="bl:1:cert:30", sash_mode="hidden")
         self.assertGreater(np.nonzero(ink)[0].max(), 700)    # still on the bottom margin
 

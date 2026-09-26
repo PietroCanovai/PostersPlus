@@ -476,9 +476,9 @@ QUALITY_SLOTS = ("video", "audio", "res")
 MAX_ITEMS = 4
 DEFAULT_GROUP1 = "chip:4:video,audio,res,cert"
 # A group's size is the row height in the units badge_height uses (20 matches
-# the side chip); its spacing, the space between its badges, is a fraction of
+# the side chip; the default is a touch larger); its spacing, the space between its badges, is a fraction of
 # the poster's width.
-DEFAULT_SIZE, SIZE_RANGE = 20, (10, 60)
+DEFAULT_SIZE, SIZE_RANGE = 22, (10, 60)
 DEFAULT_SPACING, SPACING_RANGE = 0.028, (0.0, 0.08)
 
 
