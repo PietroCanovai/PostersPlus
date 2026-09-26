@@ -876,18 +876,11 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
 
-# Logo priorities that consult the secondary preferred language ("custom").
-# Elsewhere the secondary language is inert and must be kept out of the image
-# fetch / cache key so single-language requests keep their existing cache entry.
-_SECONDARY_LANGUAGE_PRIORITIES = frozenset({
-    "native_custom_text",
-    "native_custom_original_text",
-})
 import tvdb
 import anime
 import cinemeta
@@ -1555,23 +1548,14 @@ class RequestConfig:
     tmdb_rating_source: str = "mdblist"
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
-    # Secondary preferred language ("custom").  Only consulted by the
-    # native_custom_* priorities below; blank elsewhere (and blank there degrades
-    # those modes to their non-custom equivalents).
+    # Secondary preferred language ("custom").  Only consulted when the logo
+    # priority lists "custom"; blank elsewhere (and blank there just skips it).
     logo_language_secondary: str = ""
-    # Logo resolution priority.  "native" = the viewer's chosen logo_language
-    # (e.g. en); "custom" = logo_language_secondary; "original" = the content's
-    # own original language (e.g. ja for an anime).  "text" = render the
-    # translated title as text.
-    #   "native_original" (default): native → original → text
-    #   "original_native":           original → native → text
-    #   "native_if_original_english": native if content is native, else English
-    #                                 → original → text
-    #   "native_text":               native → English → neutral → text
-    #                                 (no original-language logo)
-    #   "native_custom_text":         native → custom → English → neutral → text
-    #   "native_custom_original_text": native → custom → original → English
-    #                                 → neutral → text
+    # Logo priority: the ordered sources a logo is looked for in, first match
+    # wins — a preset name ("native_original", the default: native → original
+    # → neutral → English → text) or a comma list of native, native_if_original,
+    # custom, original, english, neutral and text.  See tmdb.LOGO_PRIORITY_SOURCES
+    # for what each means and tmdb.parse_logo_priority for the canonical form.
     logo_priority: str = "native_original"
     # Fallback-poster style for titles with no art: "minimal" (procedural textured
     # backdrop) or "photoreal" (hand-made photographic art that blends with real
@@ -2272,15 +2256,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.logo_language_secondary = (
         params.get("logo_language_secondary", cfg.logo_language_secondary).strip().lower()
     )
-    _lp = params.get("logo_priority")
-    if _lp in (
-        "native_original",
-        "original_native",
-        "native_if_original_english",
-        "native_text",
-        "native_custom_text",
-        "native_custom_original_text",
-    ):
+    _lp = parse_logo_priority(params.get("logo_priority"))
+    if _lp:
         cfg.logo_priority = _lp
     elif "logo_native_fallback" in params:
         # Legacy param (boolean): true → native_original, false → native_text.
@@ -7383,7 +7360,7 @@ async def get_poster(
     # Secondary preferred language, only when the chosen priority actually uses it.
     _effective_secondary = (
         rcfg.logo_language_secondary
-        if rcfg.logo_priority in _SECONDARY_LANGUAGE_PRIORITIES
+        if logo_priority_uses_custom(rcfg.logo_priority)
         else ""
     )
 
@@ -7658,19 +7635,16 @@ async def get_poster(
         _poster_language_order = image_language_order(
             rcfg.logo_language, _original_lang, rcfg.logo_priority, _effective_secondary
         )
-        _priority_lang = _poster_language_order[0] if _poster_language_order else ""
-        _ranked_posters = [
-            _plangs[language]
-            for language in _poster_language_order
-            if _plangs.get(language)
-        ]
-        # art_source only matters when the priority-first language is English —
-        # the two TMDB English poster candidates (editorial primary vs
-        # community top-rated) can differ meaningfully.  For non-English
-        # priority languages TMDB has no separate "primary" concept so we
-        # always use the vote-ranked poster regardless of art_source.
+        _ranked_langs = [language for language in _poster_language_order
+                         if _plangs.get(language)]
+        _ranked_posters = [_plangs[language] for language in _ranked_langs]
+        # art_source only matters when the language that wins is English (or
+        # none does) — the two TMDB English poster candidates (editorial
+        # primary vs community top-rated) can differ meaningfully.  For other
+        # languages TMDB has no separate "primary" concept so we always use the
+        # vote-ranked poster regardless of art_source.
         _use_primary = (
-            _priority_lang == "en"
+            (not _ranked_langs or _ranked_langs[0] == "en")
             and rcfg.original_art_source == "primary"
         )
         if _use_primary:
@@ -8157,14 +8131,11 @@ async def get_poster(
                 )
 
             async def _metahub():
+                # Metahub stands in for English, so it goes when English does.
                 return (await _fetch_metahub_logo(client, effective_imdb_id)
-                        if effective_imdb_id else None)
-
-            # These modes have their own explicit order: TMDB language buckets
-            # (native, then custom/original for the native_custom_* variants) ->
-            # TMDB English -> Metahub -> TMDB neutral -> rendered text.
-            if rcfg.logo_priority in _TEXT_FORWARD_LOGO_PRIORITIES:
-                return await _tmdb(use_metahub=True)
+                        if effective_imdb_id
+                        and "english" in logo_priority_sources(rcfg.logo_priority)
+                        else None)
 
             if _tvdb_logo_pri == 1:
                 return (await _tvdb()) or (await _tmdb(use_metahub=True))
@@ -8810,7 +8781,8 @@ async def get_poster(
             fallback_title=(
                 title if is_no_poster
                 else (title if is_textless and not logo and not rcfg.textless
-                      and not _suppress_overlay else None)
+                      and not _suppress_overlay
+                      and logo_priority_draws_text(rcfg.logo_priority) else None)
             ),
             discovery_meta=discovery_meta,
             quality_tokens=quality_tokens,

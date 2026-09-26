@@ -684,7 +684,7 @@
 
   #tooltip.open { opacity: 1; visibility: visible; }
 
-  /* Two controls side by side (e.g. native language + priority). */
+  /* Two controls side by side (e.g. native language + fallback poster style). */
   .field-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -693,6 +693,8 @@
     margin-bottom: var(--gap-field);
   }
   .field-row > .field { margin-bottom: 0; }
+  /* Landscape hides the fallback style (portrait-only); the language takes the row. */
+  .field-row:has(> #fallback-bg-style-field[style*="none"]) { grid-template-columns: 1fr; }
 
   input[type="text"],
   input[type="number"],
@@ -1374,6 +1376,8 @@
   .sash-enable-btn:hover  { color: var(--gold); background: var(--gold-faint); opacity: 1; }
 
   .sash-disabled-section { margin-top: 14px; }
+  .lp-list { margin-bottom: 0; }
+  .lp-sub { color: var(--text-muted); margin-left: 6px; }
   .sash-disabled-header {
     font-size: 8.5px;
     color: var(--silver-dim);
@@ -2340,69 +2344,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field-row">
             <div class="field">
               <label class="field-label" data-tip="★ marks languages whose poster text is fully translated, not just the logo.">Native Language</label>
-              <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
+              <select id="cfg-language" oninput="buildLogoPriorityList(); build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English ★</option>
-                <option value="es">Spanish ★</option>
-                <option value="es-es">Spanish (Spain) ★</option>
-                <option value="es-mx">Spanish (Mexico) ★</option>
-                <option value="fr">French ★</option>
-                <option value="fr-fr">French (France) ★</option>
-                <option value="de">German ★</option>
-                <option value="it">Italian ★</option>
-                <option value="pt">Portuguese ★</option>
-                <option value="pt-br">Portuguese (Brazil) ★</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="zh">Chinese</option>
-                <option value="ru">Russian ★</option>
-                <option value="tr">Turkish ★</option>
-                <option value="pl">Polish ★</option>
-                <option value="nl">Dutch ★</option>
-                <option value="sv">Swedish ★</option>
-                <option value="da">Danish ★</option>
-                <option value="fi">Finnish ★</option>
-                <option value="no">Norwegian ★</option>
-                <option value="el">Greek ★</option>
-                <option value="cs">Czech ★</option>
-                <option value="hu">Hungarian ★</option>
-                <option value="ro">Romanian ★</option>
-                <option value="uk">Ukrainian ★</option>
-                <option value="bg">Bulgarian ★</option>
-                <option value="hr">Croatian ★</option>
-                <option value="sk">Slovak ★</option>
-                <option value="ar">Arabic</option>
-                <option value="hi">Hindi</option>
-                <option value="bn">Bengali</option>
-                <option value="ta">Tamil</option>
-                <option value="te">Telugu</option>
-                <option value="ml">Malayalam</option>
-                <option value="ur">Urdu</option>
-                <option value="fa">Persian</option>
-                <option value="he">Hebrew</option>
-                <option value="id">Indonesian ★</option>
-                <option value="ms">Malay ★</option>
-                <option value="vi">Vietnamese ★</option>
-                <option value="sw">Swahili ★</option>
-                <option value="af">Afrikaans ★</option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="field-label" data-tip="Sources are tried left to right. Original is the content's own language; Custom is your secondary language.">Language Priority</label>
-              <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
-                <option value="native_original" selected>Native → Original → Text</option>
-                <option value="original_native">Original → Native → Text</option>
-                <option value="native_if_original_english">Native if Original, else English → Original → Text</option>
-                <option value="native_text">Native → English → Neutral → Text</option>
-                <option value="native_custom_text">Native → Custom → Text</option>
-                <option value="native_custom_original_text">Native → Custom → Original → Text</option>
-              </select>
-            </div>
-            </div><!-- /field-row -->
-            <div class="field" id="secondary-lang-field" style="display:none;">
-              <label class="field-label" data-tip="Tried after your native language in the Custom priority modes. ★ marks fully translated languages.">Secondary Language (Custom)</label>
-              <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
-                <option value="" selected>None</option>
-                <option value="en">English ★</option>
                 <option value="es">Spanish ★</option>
                 <option value="es-es">Spanish (Spain) ★</option>
                 <option value="es-mx">Spanish (Mexico) ★</option>
@@ -2454,6 +2397,61 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
                 <option value="minimal">Textured Backdrop</option>
                 <option value="photoreal" selected>Photorealistic</option>
+              </select>
+            </div>
+            </div><!-- /field-row -->
+            <div class="field">
+              <label class="field-label" data-tip="Where a title's logo comes from, tried top to bottom — the first that has one wins. Native is your language; Original is the title's own language; Custom is a second language of your choice; English includes the Metahub logo library; Neutral is a logo TMDB has not tagged with any language, usually a symbol or an untagged wordmark. Text draws the title as text when nothing above has a logo; disable it to show no title at all. Drag to reorder, ✕ to disable.">Logo Priority</label>
+              <input type="hidden" id="cfg-logo-priority" value="native_original" data-default="native_original">
+              <div class="sash-list lp-list" id="logo-priority-list"></div>
+            </div>
+            <div class="field" id="secondary-lang-field" style="display:none;">
+              <label class="field-label" data-tip="The language the Custom entry of Logo Priority stands for. ★ marks fully translated languages.">Custom Language</label>
+              <select id="cfg-language-secondary" oninput="buildLogoPriorityList(); build(); queuePreviewReload()">
+                <option value="" selected>None</option>
+                <option value="en">English ★</option>
+                <option value="es">Spanish ★</option>
+                <option value="es-es">Spanish (Spain) ★</option>
+                <option value="es-mx">Spanish (Mexico) ★</option>
+                <option value="fr">French ★</option>
+                <option value="fr-fr">French (France) ★</option>
+                <option value="de">German ★</option>
+                <option value="it">Italian ★</option>
+                <option value="pt">Portuguese ★</option>
+                <option value="pt-br">Portuguese (Brazil) ★</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
+                <option value="ru">Russian ★</option>
+                <option value="tr">Turkish ★</option>
+                <option value="pl">Polish ★</option>
+                <option value="nl">Dutch ★</option>
+                <option value="sv">Swedish ★</option>
+                <option value="da">Danish ★</option>
+                <option value="fi">Finnish ★</option>
+                <option value="no">Norwegian ★</option>
+                <option value="el">Greek ★</option>
+                <option value="cs">Czech ★</option>
+                <option value="hu">Hungarian ★</option>
+                <option value="ro">Romanian ★</option>
+                <option value="uk">Ukrainian ★</option>
+                <option value="bg">Bulgarian ★</option>
+                <option value="hr">Croatian ★</option>
+                <option value="sk">Slovak ★</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+                <option value="bn">Bengali</option>
+                <option value="ta">Tamil</option>
+                <option value="te">Telugu</option>
+                <option value="ml">Malayalam</option>
+                <option value="ur">Urdu</option>
+                <option value="fa">Persian</option>
+                <option value="he">Hebrew</option>
+                <option value="id">Indonesian ★</option>
+                <option value="ms">Malay ★</option>
+                <option value="vi">Vietnamese ★</option>
+                <option value="sw">Swahili ★</option>
+                <option value="af">Afrikaans ★</option>
               </select>
             </div>
             </div><!-- /presentation group -->
@@ -5227,14 +5225,173 @@ function normaliseCustomPalette(raw = vEl('cfg-score-custom-palette')) {
     .join(',');
 }
 
-// The secondary-language picker is only meaningful for the "Custom" priority
-// modes, so only reveal it then.
+// ── Logo priority ─────────────────────────────────────────────────────────
+// An ordered list of sources, first with a logo wins.  The value lives in the
+// hidden #cfg-logo-priority (so presets, reset and the shape stash handle it
+// like any other control) as the server's canonical spelling: a preset name
+// when the order is one, else a comma list.  Mirrors LOGO_PRIORITY_SOURCES and
+// parse_logo_priority in tmdb.py — the two have to agree.
+const LOGO_SOURCES = [
+  { id: 'native',             label: 'Native' },
+  { id: 'native_if_original', label: 'Native, if Original',
+    tip: 'Your language, but only for titles originally in it' },
+  { id: 'custom',             label: 'Custom' },
+  { id: 'original',           label: 'Original', tip: "The title's own language" },
+  { id: 'english',            label: 'English',  tip: 'TMDB English, then Metahub' },
+  { id: 'neutral',            label: 'Neutral',  tip: 'Logos TMDB has tagged with no language — often a symbol or an untagged wordmark' },
+  { id: 'text',               label: 'Text',     tip: 'Draw the title as text. Always last; disable it to show no title when no logo is found' },
+];
+const LOGO_PRIORITY_PRESETS = {
+  native_original:             ['native', 'original', 'neutral', 'english', 'text'],
+  original_native:             ['original', 'native', 'neutral', 'english', 'text'],
+  native_if_original_english:  ['native_if_original', 'english', 'original', 'neutral', 'text'],
+  native_text:                 ['native', 'english', 'neutral', 'text'],
+  native_custom_text:          ['native', 'custom', 'english', 'neutral', 'text'],
+  native_custom_original_text: ['native', 'custom', 'original', 'english', 'neutral', 'text'],
+};
+
+function logoPrioritySources(value) {
+  value = (value || '').trim().toLowerCase();
+  if (LOGO_PRIORITY_PRESETS[value]) return [...LOGO_PRIORITY_PRESETS[value]];
+  const known = new Set(LOGO_SOURCES.map(s => s.id));
+  const out = [];
+  for (const token of value.split(',').map(t => t.trim())) {
+    if (!known.has(token) || out.includes(token)) continue;
+    out.push(token);
+    if (token === 'text') break;
+  }
+  return out.length ? out : [...LOGO_PRIORITY_PRESETS.native_original];
+}
+
+function logoPriorityValue(sources) {
+  const joined = sources.join(',');
+  for (const [name, preset] of Object.entries(LOGO_PRIORITY_PRESETS)) {
+    if (preset.join(',') === joined) return name;
+  }
+  return joined;
+}
+
+function _selectedOptionName(id) {
+  const el = document.getElementById(id);
+  const opt = el && el.options[el.selectedIndex];
+  return opt && opt.value ? opt.textContent.replace('★', '').trim() : '';
+}
+
+function setLogoPriority(sources) {
+  // Text can only ever be last: anything after it would never be reached.
+  const hasText = sources.includes('text');
+  sources = sources.filter(id => id !== 'text');
+  if (hasText) sources.push('text');
+  document.getElementById('cfg-logo-priority').value = logoPriorityValue(sources);
+  buildLogoPriorityList(); build(); queuePreviewReload();
+}
+
+function buildLogoPriorityList() {
+  const container = document.getElementById('logo-priority-list');
+  if (!container) return;
+  const order = logoPrioritySources(vEl('cfg-logo-priority'));
+  const sub = {
+    native: _selectedOptionName('cfg-language'),
+    native_if_original: _selectedOptionName('cfg-language'),
+    custom: _selectedOptionName('cfg-language-secondary') || 'pick a language',
+  };
+  const row = (src, idx) => {
+    const item = document.createElement('div');
+    const active = idx !== null;
+    const movable = active && src.id !== 'text';
+    item.className = 'sash-item lp-item' + (active ? '' : ' sash-item-disabled');
+    item.dataset.id = src.id;
+    if (src.tip) item.title = src.tip;
+    const subText = sub[src.id] ? `<span class="lp-sub">${sub[src.id]}</span>` : '';
+    // The last active source can't be removed: an empty list means nothing.
+    const canDisable = order.length > 1;
+    item.innerHTML = `
+      ${active ? `<span class="sash-drag-handle"${movable ? ' title="Drag to reorder"' : ' style="visibility:hidden"'}>⠿</span>
+      <span class="sash-rank">${idx + 1}</span>` : ''}
+      <span class="sash-label">${src.label}${subText}</span>
+      ${active
+        ? (canDisable ? `<button class="sash-disable-btn" title="Disable">✕</button>` : '')
+        : `<button class="sash-enable-btn" title="Enable">+</button>`}
+    `;
+    item.querySelector('button')?.addEventListener('click', () => {
+      setLogoPriority(active ? order.filter(id => id !== src.id) : [...order, src.id]);
+    });
+    if (active) {
+      item.draggable = movable;
+      item.addEventListener('dragstart', e => { _lpDragId = src.id; item.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+      item.addEventListener('dragend',   () => { item.classList.remove('dragging'); _lpClearOver(); });
+      item.addEventListener('dragover',  e => { if (!_lpDragId) return; e.preventDefault(); _lpClearOver(); item.classList.add('drag-over'); });
+      item.addEventListener('drop',      e => { e.preventDefault(); _lpMove(_lpDragId, src.id); _lpDragId = null; });
+      if (movable) item.querySelector('.sash-drag-handle').addEventListener('touchstart', _lpTouchStart, { passive: true });
+    }
+    return item;
+  };
+
+  container.innerHTML = '';
+  order.forEach((id, idx) => {
+    const src = LOGO_SOURCES.find(s => s.id === id);
+    if (src) container.appendChild(row(src, idx));
+  });
+  const disabled = LOGO_SOURCES.filter(s => !order.includes(s.id));
+  if (disabled.length) {
+    const section = document.createElement('div');
+    section.className = 'sash-disabled-section';
+    section.innerHTML = '<div class="sash-disabled-header">Disabled</div>';
+    disabled.forEach(src => section.appendChild(row(src, null)));
+    container.appendChild(section);
+  }
+  syncSecondaryLangVisibility();
+}
+
+let _lpDragId = null, _lpGhost = null, _lpOffX = 0, _lpOffY = 0;
+function _lpClearOver() {
+  document.querySelectorAll('.lp-item').forEach(el => el.classList.remove('drag-over'));
+}
+function _lpMove(srcId, targetId) {
+  if (!srcId || srcId === targetId) return;
+  const order = logoPrioritySources(vEl('cfg-logo-priority'));
+  const from = order.indexOf(srcId), to = order.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  order.splice(from, 1);
+  order.splice(to, 0, srcId);
+  setLogoPriority(order);
+}
+function _lpTouchStart(e) {
+  const item = e.currentTarget.closest('.lp-item');
+  const t = e.touches[0], r = item.getBoundingClientRect();
+  _lpDragId = item.dataset.id;
+  _lpOffX = t.clientX - r.left; _lpOffY = t.clientY - r.top;
+  _lpGhost = item.cloneNode(true);
+  _lpGhost.style.cssText = `position:fixed;pointer-events:none;z-index:9999;opacity:0.85;width:${item.offsetWidth}px;background:var(--black3);border-color:var(--gold-dim);left:${r.left}px;top:${r.top}px;`;
+  document.body.appendChild(_lpGhost);
+  item.classList.add('dragging');
+  document.addEventListener('touchmove', _lpTouchMove, { passive: false });
+  document.addEventListener('touchend',  _lpTouchEnd,  { passive: true });
+}
+function _lpTouchMove(e) {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (_lpGhost) { _lpGhost.style.left = (t.clientX - _lpOffX) + 'px'; _lpGhost.style.top = (t.clientY - _lpOffY) + 'px'; }
+  _lpClearOver();
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#logo-priority-list > .lp-item');
+  if (target && target.dataset.id !== _lpDragId) target.classList.add('drag-over');
+}
+function _lpTouchEnd(e) {
+  document.removeEventListener('touchmove', _lpTouchMove);
+  document.removeEventListener('touchend',  _lpTouchEnd);
+  if (_lpGhost) { _lpGhost.remove(); _lpGhost = null; }
+  document.querySelectorAll('.lp-item').forEach(el => el.classList.remove('dragging', 'drag-over'));
+  const t = e.changedTouches[0];
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#logo-priority-list > .lp-item');
+  if (target) _lpMove(_lpDragId, target.dataset.id);
+  _lpDragId = null;
+}
+
+// The custom-language picker only means something while Custom is in the list.
 function syncSecondaryLangVisibility() {
-  const lp    = vEl('cfg-logo-priority') || 'native_original';
   const field = document.getElementById('secondary-lang-field');
   if (!field) return;
-  const show  = (lp === 'native_custom_text' || lp === 'native_custom_original_text');
-  field.style.display = show ? '' : 'none';
+  field.style.display = logoPrioritySources(vEl('cfg-logo-priority')).includes('custom') ? '' : 'none';
 }
 
 // The trending catalogs addon's manifest, on the same address and access key
@@ -5740,11 +5897,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
   {
-    // Only emit the secondary language for the priority modes that consult it,
-    // so unrelated URLs stay clean and cache keys don't needlessly diverge.
-    const _lp  = vEl('cfg-logo-priority') || 'native_original';
+    // Only emit the secondary language when the priority lists Custom, so
+    // unrelated URLs stay clean and cache keys don't needlessly diverge.
     const _sec = vEl('cfg-language-secondary') || '';
-    if (_sec && (_lp === 'native_custom_text' || _lp === 'native_custom_original_text')) {
+    if (_sec && logoPrioritySources(vEl('cfg-logo-priority')).includes('custom')) {
       params.set('logo_language_secondary', _sec);
     }
   }
@@ -6417,6 +6573,7 @@ function resetDefaults() {
   sashDisabled = new Set(SASH_DEFAULT_DISABLED);
   localStorage.removeItem('postersplus_sash_order');
   buildSashList();
+  buildLogoPriorityList();
   // Refresh the mode-conditional field visibility so the blocks for the
   // *previously-selected* rating / badge mode don't linger after the parent
   // dropdown reverts to its default (e.g. resetting from Compact would
@@ -7562,14 +7719,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // Language is Core Config — only restored on an explicit URL import.
   if (!settingsOnly && p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
   if (p.has('logo_priority')) {
-    _setEl('cfg-logo-priority', p.get('logo_priority'));
+    _setEl('cfg-logo-priority', logoPriorityValue(logoPrioritySources(p.get('logo_priority'))));
   } else if (p.has('logo_native_fallback')) {
     // Legacy boolean: true → native then original, false → native only.
     _setEl('cfg-logo-priority',
            (p.get('logo_native_fallback') === 'false') ? 'native_text' : 'native_original');
   }
   if (p.has('logo_language_secondary')) _setEl('cfg-language-secondary', p.get('logo_language_secondary'));
-  syncSecondaryLangVisibility();
+  buildLogoPriorityList();
   if (p.has('fallback_bg_style')) _setEl('cfg-fallback-bg-style', p.get('fallback_bg_style'));
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
@@ -7959,7 +8116,7 @@ restoreSettings();
 restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
-syncSecondaryLangVisibility();
+buildLogoPriorityList();
 updateRatingFields();
 updateOriginalArt();
 updateBadgeModeHint();

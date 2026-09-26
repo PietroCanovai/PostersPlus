@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Logo priority as a list
+
+- The Language Priority dropdown is now a Logo Priority list, reordered and
+  switched on or off like the sash priority: Native, Original, Custom,
+  English (TMDB, then Metahub), Neutral (logos TMDB tags with no language)
+  and Text. `logo_priority` takes the list (`logo_priority=native,english,text`)
+  as well as the old preset names, which keep meaning the same order and
+  keep their cached composites.
+- Orders the presets could not express, such as English before Original or
+  no Neutral logos at all. Leaving Text off draws no title when no logo is
+  found.
+- TVDB logos (when enabled) follow the same order, and are now also tried for
+  what used to be the Native → English → Neutral modes.
+
 ### Larger posters
 
 - `resolution=780` renders portrait posters at 780×1170 from TMDB's `w780`

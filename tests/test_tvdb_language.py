@@ -31,16 +31,17 @@ class LogoLanguageOrderTests(unittest.TestCase):
     def test_region_qualified_request_prefers_base_language_artwork(self):
         self.assertEqual(
             _logo_language_order("es-mx", "en", "native_original"),
-            ["spa", "eng"],
+            ["spa", "eng", "null"],
         )
 
     def test_locale_and_base_collapsing_onto_one_code_is_deduplicated(self):
         # A Mexican-Spanish request for a Spain-original title: TMDB ordering
         # yields es-mx then es, both of which are just "spa" to TVDB. Neither
-        # tier is English, so "spa" is the whole preference list.
+        # tier is English, so "spa" leads, followed by the preset's
+        # language-neutral and English steps.
         self.assertEqual(
             _logo_language_order("es-mx", "es", "native_original"),
-            ["spa"],
+            ["spa", "null", "eng"],
         )
 
 
@@ -57,6 +58,14 @@ class SelectByLanguageTests(unittest.TestCase):
                     items, [_to_tvdb_lang(locale)], strict=True
                 )
                 self.assertEqual(chosen, spanish)
+
+    def test_strict_selection_follows_the_given_order(self):
+        neutral = {"language": None, "url": "/neutral.png"}
+        english = {"language": "eng", "url": "/english.png"}
+        items = [neutral, english]
+        self.assertEqual(_select_by_language(items, ["eng", "null"], strict=True), english)
+        self.assertEqual(_select_by_language(items, ["null", "eng"], strict=True), neutral)
+        self.assertIsNone(_select_by_language(items, ["spa"], strict=True))
 
     def test_strict_selection_still_declines_unrelated_languages(self):
         items = [{"language": "deu", "url": "/german.png"}]

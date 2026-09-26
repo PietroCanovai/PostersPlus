@@ -386,12 +386,14 @@ def _select_by_language(
     *,
     strict: bool = False,
 ) -> dict | None:
-    """Pick the best artwork by language preference. Tries each requested language
-    in turn, then language-neutral, then English. Items are pre-sorted by score.
+    """Pick the best artwork by language preference. Items are pre-sorted by
+    score.  "null" in *languages* stands for language-neutral artwork.
 
-    When ``strict`` is False (backgrounds/posters), an unrelated foreign-language
-    item is accepted as a last resort. When ``strict`` is True (logos), that
-    catch-all is dropped and ``None`` is returned instead — so the caller's
+    When ``strict`` is False (backgrounds/posters), the requested languages are
+    followed by language-neutral, then English, then an unrelated foreign-
+    language item as a last resort.  When ``strict`` is True (logos), the
+    requested list is the whole order — it already says where neutral and
+    English go — and ``None`` is returned when it runs out, so the caller's
     provider chain (TMDB/Metahub) is tried rather than serving, say, a French
     logo for an English title."""
     if not items:
@@ -400,15 +402,18 @@ def _select_by_language(
         if not language:
             continue
         for it in items:
-            if it.get("language") == language:
+            if (it.get("language") in (None, "")) if language == "null" \
+                    else it.get("language") == language:
                 return it
+    if strict:
+        return None
     for it in items:
         if it.get("language") in (None, ""):
             return it
     for it in items:
         if it.get("language") == "eng":
             return it
-    return None if strict else items[0]
+    return items[0]
 
 
 # ---------------------------------------------------------------------------
@@ -441,16 +446,22 @@ def _logo_language_order(
     secondary_language: str | None = None,
 ) -> list[str]:
     """Ordered list of TVDB (3-letter) language codes to prefer, derived from the
-    same priority rules TMDB uses so both sources agree on which languages count
-    as a match (and, crucially, which don't).
+    same priority TMDB walks so both sources agree on which languages count as
+    a match (and, crucially, which don't).  "null" is language-neutral; Metahub
+    is not a TVDB source and is left out.
 
     Deduplicated because region collapsing can fold two distinct TMDB entries
     onto one TVDB code — es-mx before es both become spa."""
-    from tmdb import image_language_order
-    order = image_language_order(
+    from tmdb import logo_language_steps
+    steps = logo_language_steps(
         logo_language or "en", original_language, logo_priority, secondary_language
     )
-    return list(dict.fromkeys(lang for lang in (_to_tvdb_lang(c) for c in order) if lang))
+    return list(dict.fromkeys(
+        lang
+        for lang in (step if step == "null" else _to_tvdb_lang(step)
+                     for step in steps if step != "metahub")
+        if lang
+    ))
 
 
 async def fetch_tvdb_logo(

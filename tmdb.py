@@ -1202,14 +1202,111 @@ def _tmdb_include_image_languages(
     return list(dict.fromkeys(languages))
 
 
-# Priorities whose fallback tail is "text-forward": once the language buckets
-# are exhausted we prefer TMDB English → Metahub → language-neutral, and finally
-# a rendered text title, rather than dropping to a neutral/wrong-language logo.
-TEXT_FORWARD_PRIORITIES = frozenset({
-    "native_text",
-    "native_custom_text",
-    "native_custom_original_text",
-})
+# Logo language priority is an ordered list of sources, tried first to last:
+#   native             — the request's logo_language
+#   native_if_original — the same, but only when it is also the content's own
+#                        original language (so a foreign title skips it)
+#   custom             — the secondary preferred language
+#   original           — the content's own original language
+#   english            — a TMDB English logo, then the Metahub CDN (whose logos
+#                        are English in practice)
+#   neutral            — a TMDB logo tagged with no language, usually a symbol
+#                        or a wordmark nobody labelled
+#   text               — stop and draw the title as text
+# A source left out is never used; with no "text" a title that runs out of
+# logos gets no title at all.  "text" always ends the list: nothing after it
+# could be reached.
+LOGO_PRIORITY_SOURCES = (
+    "native", "native_if_original", "custom", "original", "english", "neutral", "text",
+)
+
+# The named priorities the configurator offered before the list, kept as the
+# canonical spelling of their order so existing URLs and composite cache keys
+# are unchanged.  An order spelled out as a list that matches one of these is
+# stored under its name, for the same reason.
+LOGO_PRIORITY_PRESETS: dict[str, tuple[str, ...]] = {
+    "native_original":             ("native", "original", "neutral", "english", "text"),
+    "original_native":             ("original", "native", "neutral", "english", "text"),
+    "native_if_original_english":  ("native_if_original", "english", "original", "neutral", "text"),
+    "native_text":                 ("native", "english", "neutral", "text"),
+    "native_custom_text":          ("native", "custom", "english", "neutral", "text"),
+    "native_custom_original_text": ("native", "custom", "original", "english", "neutral", "text"),
+}
+DEFAULT_LOGO_PRIORITY = "native_original"
+
+
+def parse_logo_priority(value: str | None) -> str | None:
+    """Canonical form of a logo_priority parameter, or None when it is not one.
+
+    Accepts a preset name or a comma-separated list of LOGO_PRIORITY_SOURCES.
+    Unknown and repeated sources are dropped and the list ends at "text"; an
+    order equal to a preset comes back as that preset's name."""
+    value = (value or "").strip().lower()
+    if value in LOGO_PRIORITY_PRESETS:
+        return value
+    sources: list[str] = []
+    for token in value.split(","):
+        token = token.strip()
+        if token in LOGO_PRIORITY_SOURCES and token not in sources:
+            sources.append(token)
+            if token == "text":
+                break
+    if not sources:
+        return None
+    for name, preset in LOGO_PRIORITY_PRESETS.items():
+        if tuple(sources) == preset:
+            return name
+    return ",".join(sources)
+
+
+def logo_priority_sources(logo_priority: str) -> tuple[str, ...]:
+    """The ordered sources a canonical logo_priority stands for."""
+    preset = LOGO_PRIORITY_PRESETS.get(logo_priority)
+    if preset is not None:
+        return preset
+    return tuple(logo_priority.split(",")) if logo_priority else \
+        LOGO_PRIORITY_PRESETS[DEFAULT_LOGO_PRIORITY]
+
+
+def logo_priority_uses_custom(logo_priority: str) -> bool:
+    return "custom" in logo_priority_sources(logo_priority)
+
+
+def logo_priority_draws_text(logo_priority: str) -> bool:
+    """Whether a title with no logo falls back to its name drawn as text."""
+    return "text" in logo_priority_sources(logo_priority)
+
+
+def logo_language_steps(
+    logo_language: str,
+    original_language: str | None,
+    logo_priority: str,
+    secondary_language: str | None = None,
+) -> list[str]:
+    """The priority resolved against one title, as the steps to try in order:
+    a language code for a language-tagged logo, "null" for a language-neutral
+    one, and "metahub" for the Metahub CDN (which rides with English).  Ends
+    before "text"; a source with no language to stand for (no secondary
+    language, no known original language) is skipped, and a language already
+    tried is not tried twice."""
+    steps: list[str] = []
+    for source in logo_priority_sources(logo_priority):
+        if source == "text":
+            break
+        if source == "native":
+            new = [logo_language]
+        elif source == "native_if_original":
+            new = [logo_language] if logo_language == original_language else []
+        elif source == "custom":
+            new = [secondary_language]
+        elif source == "original":
+            new = [original_language]
+        elif source == "english":
+            new = ["en", "metahub"]
+        else:
+            new = ["null"]
+        steps.extend(step for step in new if step and step not in steps)
+    return steps
 
 
 def image_language_order(
@@ -1218,31 +1315,16 @@ def image_language_order(
     logo_priority: str,
     secondary_language: str | None = None,
 ) -> list[str]:
-    """Return the distinct language buckets to try, in priority order.
-
-    *secondary_language* is a user's second preferred language ("custom").  It is
-    only consulted by the ``native_custom_*`` priorities; a blank value there
-    degrades those modes to ``native_text`` / ``native_original`` respectively
-    (the falsy filter below drops it), so the field is safe to leave unset.
-    """
-    if logo_priority == "original_native":
-        languages = [original_language, logo_language]
-    elif logo_priority == "native_if_original_english":
-        languages = (
-            [logo_language, "en", original_language]
-            if original_language == logo_language
-            else ["en", original_language]
+    """The language codes of the priority, in order, for picking a language-
+    tagged image (original-art posters): the logo steps without the language-
+    neutral and Metahub ones."""
+    return [
+        step
+        for step in logo_language_steps(
+            logo_language, original_language, logo_priority, secondary_language
         )
-    elif logo_priority == "native_text":
-        languages = [logo_language]
-    elif logo_priority == "native_custom_text":
-        languages = [logo_language, secondary_language]
-    elif logo_priority == "native_custom_original_text":
-        languages = [logo_language, secondary_language, original_language]
-    else:
-        languages = [logo_language, original_language]
-
-    return list(dict.fromkeys(language for language in languages if language))
+        if step not in ("null", "metahub")
+    ]
 
 
 # Aspect ratio from which a logo counts as "wide" for the landscape layout.  Its
@@ -1289,29 +1371,12 @@ async def fetch_logo(
     a wide logo in the wrong language is not preferred over a stacked one in
     the right language.
 
-    Two language-specific buckets are weighed first, in an order set by
-    *logo_priority*:
-      • "native"   — a logo in the requested language (logo_language).
-      • "original" — a logo in the content's own original language
-                     (original_language); helps foreign titles that only ship
-                     a native-language logo on TMDB.
-      logo_priority:
-        "native_original" (default) → native, then original
-        "original_native"           → original, then native
-        "native_if_original_english" → native when the content is native,
-                                        otherwise English, then original
-        "native_text"               → native only, then English before neutral
-                                       fallback (skip original-language logos)
-        "native_custom_text"          → native, then the secondary_language
-                                       ("custom"), then English/neutral/text
-        "native_custom_original_text" → native, secondary_language, original,
-                                       then English/neutral/text
-
-    After the priority buckets, the common fallbacks apply:
-      → TMDB English logo, Metahub, then neutral logo for native_text
-      → TMDB language-neutral logo, then English logo for other priorities
-      → Metahub CDN logo for other priorities (images.metahub.space)
-      → None (caller may render the translated title as text instead).
+    The sources are tried in the order *logo_priority* gives them (see
+    LOGO_PRIORITY_SOURCES and logo_language_steps): a TMDB logo in each
+    language in turn, a language-neutral TMDB logo, and the Metahub CDN where
+    English sits.  Metahub is skipped when *use_metahub* is False, so a caller
+    can slot another provider in before it.  None when every source comes up
+    empty; the caller decides whether that means a text title.
 
     All results are cached locally so repeat requests never hit external APIs.
     """
@@ -1321,42 +1386,26 @@ async def fetch_logo(
     _exts = (".png", ".svg") if _HAS_CAIROSVG else (".png",)
     _cand = [lg for lg in logos if lg["file_path"].lower().endswith(_exts)]
 
-    language_buckets = {
-        language: [lg for lg in _cand if _image_matches_language(lg, language)]
-        for language in image_language_order(
-            logo_language, original_language, logo_priority, secondary_language
-        )
-    }
-    neutral   = [lg for lg in _cand if lg.get("iso_639_1") in (None, "")]
-    english   = [lg for lg in _cand if _image_matches_language(lg, "en")]
-
-    candidates = []
-    for language in language_buckets:
-        if language_buckets[language]:
-            candidates = language_buckets[language]
+    candidates: list[dict] = []
+    for step in logo_language_steps(
+        logo_language, original_language, logo_priority, secondary_language
+    ):
+        if step == "metahub":
+            if use_metahub and imdb_id:
+                metahub_logo = await _fetch_metahub_logo(client, imdb_id)
+                if metahub_logo is not None:
+                    return metahub_logo
+            continue
+        if step == "null":
+            candidates = [lg for lg in _cand if lg.get("iso_639_1") in (None, "")]
+        else:
+            candidates = [lg for lg in _cand if _image_matches_language(lg, step)]
+        if candidates:
             break
-
-    if logo_priority in TEXT_FORWARD_PRIORITIES:
-        if not candidates and english:
-            candidates = english
-        if not candidates and use_metahub and imdb_id:
-            metahub_logo = await _fetch_metahub_logo(client, imdb_id)
-            if metahub_logo is not None:
-                return metahub_logo
-        if not candidates and neutral:
-            candidates = neutral
-    else:
-        for bucket in (neutral, english):
-            if not candidates and bucket:
-                candidates = bucket
 
     candidates = sorted(candidates, key=_logo_rank_key(prefer_wide), reverse=True)
 
     if not candidates:
-        # No TMDB logo at all — try Metahub before giving up (unless the caller
-        # has asked to skip it, e.g. to slot another source in between).
-        if use_metahub and imdb_id:
-            return await _fetch_metahub_logo(client, imdb_id)
         return None
 
     logo_path = candidates[0]["file_path"]
