@@ -8,6 +8,10 @@ from typing import Any
 
 _FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
+# The portrait canvas width the sash's fixed pixel sizes (its drop shadow and
+# the label's) are set against; a larger canvas scales them by width / this.
+_BASE_WIDTH = 500
+
 try:
     import cairo as _cairo
     _HAS_CAIRO = True
@@ -2098,6 +2102,7 @@ def _sash_skia(
     font_ss: Any,
     ss: int,
     text_rgb: tuple[int, int, int],
+    k: float = 1.0,
 ) -> Image.Image:
     """The sash's band and label, drawn at 1x by Skia onto a ``size`` canvas.
 
@@ -2139,7 +2144,7 @@ def _sash_skia(
     font.setEdging(_skia.Font.Edging.kAntiAlias)
     tp = _skia.Paint(AntiAlias=True)
     tp.setColor(_skia.Color(0, 0, 0, 180))
-    c.drawString(label, x + 2, baseline + 2, font, tp)
+    c.drawString(label, x + 2 * k, baseline + 2 * k, font, tp)
     tp.setColor(_skia.Color(*text_rgb, 225))
     c.drawString(label, x, baseline, font, tp)
 
@@ -2166,6 +2171,7 @@ def draw_award_sash(
         label = f"★  {label}"
     width, height = image.size
     left = side == "left"
+    k    = width / _BASE_WIDTH   # fixed pixel sizes below are set for a 500-wide canvas
 
     # SS = the PIL fallback's supersample factor: it draws the band at SS× and
     # box-reduces it, which anti-aliases the edges and label (2× leaves visibly
@@ -2241,7 +2247,7 @@ def draw_award_sash(
                 y0 + (rw / 2 + du * st + dv * ct) / SS)
 
     corners = [_to_poster(u, v) for u, v in ((0, 0), (sl, 0), (sl, sh), (0, sh))]
-    pad = 32   # beyond the poster edge, so the shadow blur has real band to spread
+    pad = round(32 * k)   # beyond the poster edge, so the shadow blur has real band to spread
     ox = max(math.floor(min(p[0] for p in corners)), -pad)
     oy = max(math.floor(min(p[1] for p in corners)), -pad)
     ex = min(math.ceil(max(p[0] for p in corners)), width + pad)
@@ -2269,7 +2275,7 @@ def draw_award_sash(
         sash = _sash_skia(
             (ex - ox, ey - oy), _to_poster(sl / 2, sh / 2), (ox, oy), -45 if left else 45,
             (sash_length, sash_height), (edge / SS, margin / SS), (hi, lo, border_colour, dark),
-            label, font, SS, _txt_rgb,
+            label, font, SS, _txt_rgb, k,
         )
     else:
         canvas = Image.new("RGBA", ((ex - ox) * SS, (ey - oy) * SS), (0, 0, 0, 0))
@@ -2293,7 +2299,7 @@ def draw_award_sash(
         td         = ImageDraw.Draw(text_layer)
 
         tx, ty = _text_center(td, label, font, lw / 2, sh / 2)
-        td.text((tx + 2 * SS, ty + 2 * SS), label, font=font, fill=(0, 0, 0, 180))
+        td.text((tx + 2 * SS * k, ty + 2 * SS * k), label, font=font, fill=(0, 0, 0, 180))
         td.text((tx, ty),                   label, font=font, fill=(*_txt_rgb, 225))
 
         text_layer = text_layer.rotate(45 if left else -45, expand=True, resample=Image.Resampling.BICUBIC)
@@ -2317,12 +2323,13 @@ def draw_award_sash(
     shadow   = Image.new("RGBA", sash.size, (0, 0, 0, 0))
     sd       = ImageDraw.Draw(shadow)
     sd.bitmap((0, 0), sash.split()[3], fill=(0, 0, 0, 110))
-    shadow   = shadow.filter(ImageFilter.GaussianBlur(10))
+    shadow   = shadow.filter(ImageFilter.GaussianBlur(10 * k))
 
     result   = image.copy()
     # The shadow falls down and away from the corner.
-    shadow_dx = -6 if left else 6
-    result.paste(shadow, (ox + shadow_dx, oy + 6), shadow)
+    shadow_d  = round(6 * k)
+    shadow_dx = -shadow_d if left else shadow_d
+    result.paste(shadow, (ox + shadow_dx, oy + shadow_d), shadow)
     result.paste(sash,   (ox,             oy),     sash)
 
     return result

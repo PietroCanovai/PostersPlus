@@ -874,7 +874,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1633,6 +1633,11 @@ class RequestConfig:
     # "portrait" (default, unchanged) | "landscape".  Landscape is a separate
     # renderer, not a variant of the portrait layout — see landscape.py.
     shape: str = "portrait"
+    # Portrait canvas width: 500 (500x750, the default) or 780 (780x1170, drawn
+    # from TMDB's w780 art).  "resolution" in the URL.  Landscape ignores it.
+    # Fixed-pixel settings (badge height/gap, glow blur) are given at 500 and
+    # scaled to the canvas at render time — see _scale_render_cfg.
+    poster_width: int = 500
     # Which art the landscape renderer draws on:
     #   "textless" — the language-neutral backdrop, with our logo composited
     #   "original" — the highest-voted language-tagged backdrop (title treatment
@@ -1957,7 +1962,31 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
             return sorted(value, key=repr)
         return repr(value)
 
-    return json.dumps(dataclasses.asdict(cfg), sort_keys=True, default=_stable)
+    fields = dataclasses.asdict(cfg)
+    # Fields added after composites were first cached are left out at their
+    # default, so adding one doesn't change — and re-render — every cached key.
+    for name, default in _SIGNATURE_OMIT_AT_DEFAULT.items():
+        if fields.get(name) == default:
+            del fields[name]
+    return json.dumps(fields, sort_keys=True, default=_stable)
+
+
+_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500}
+
+
+def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
+    """The config a render draws with, its fixed-pixel settings scaled from the
+    500-wide canvas they are specified against to the one being drawn.
+    Everything else in the layout is already a ratio of the canvas."""
+    if cfg.poster_width == _cfg.POSTER_WIDTH:
+        return cfg
+    k = cfg.poster_width / _cfg.POSTER_WIDTH
+    return dataclasses.replace(
+        cfg,
+        badge_height=max(1, round(cfg.badge_height * k)),
+        badge_gap=round(cfg.badge_gap * k),
+        score_glow_blur=round(cfg.score_glow_blur * k),
+    )
 
 
 def build_request_config(params: dict) -> RequestConfig:
@@ -2074,6 +2103,10 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.hide_unreleased_rating = _b("hide_unreleased_rating", cfg.hide_unreleased_rating)
 
     cfg.shape = _normalise_shape(params.get("shape"))
+    _res = (params.get("resolution") or "").strip().lower()
+    _res_width = {"780": 780, "high": 780, "hd": 780}.get(_res)
+    if _res_width in POSTER_WIDTHS and cfg.shape != "landscape":
+        cfg.poster_width = _res_width
     _ls_art = (params.get("landscape_art") or "").strip().lower()
     if _ls_art in ("textless", "original"):
         cfg.landscape_art = _ls_art
@@ -3169,7 +3202,7 @@ def _make_fallback_canvas(genre_ids: list[int] | None = None,
                     break
 
     r_mult, g_mult, b_mult = tint
-    W, H = size or (_cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT)
+    W, H = size or poster_canvas()
     t    = np.linspace(0, np.pi, H, dtype=np.float32)
     # sin curve: peaks at midheight (~18), dark at top/bottom (~10)
     v    = (10 + 8 * np.sin(t)).astype(np.float32)
@@ -3725,7 +3758,8 @@ def build_poster(
         # grow to fill the width instead of being pinned tiny by a char-count
         # heuristic.  The logo size ratios therefore tune the fallback text too.
         max_w          = max(1, int(width * cfg.logo_max_w_ratio))
-        max_h          = max(1, min(int(height * cfg.logo_max_h_ratio), LOGO_ABS_MAX_H))
+        # LOGO_ABS_MAX_H is a 750-tall cap; it scales with the canvas.
+        max_h          = max(1, min(int(height * cfg.logo_max_h_ratio), LOGO_ABS_MAX_H * height // _cfg.POSTER_HEIGHT))
         MIN_FONT_SIZE  = 22
         MAX_LINES      = 2
         FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
@@ -5518,13 +5552,14 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
     procedural gradient canvas).  So selecting a not-yet-populated style never
     breaks — it just falls back to minimal.
 
-    The returned canvas is always POSTER_WIDTH x POSTER_HEIGHT.  build_poster
+    The returned canvas is always the request's poster_canvas().  build_poster
     takes its geometry from the canvas it is handed, so returning the photoreal
     art at its native 1024x1536 made those fallbacks render at a different size
     from every other poster — and paid a 4x encode for the privilege."""
     if style not in _GENRE_BG_STYLES:
         style = "minimal"
-    key = f"{style}/{genre}"
+    canvas = poster_canvas()
+    key = f"{style}/{genre}/{canvas[0]}x{canvas[1]}"
     if key in _genre_bg_cache:
         _genre_bg_cache.move_to_end(key)
     else:
@@ -5536,7 +5571,7 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
         )
         try:
             _genre_bg_cache[key] = (
-                _normalise_fallback_canvas(Image.open(path)) if path else None
+                _normalise_fallback_canvas(Image.open(path), canvas) if path else None
             )
         except Exception:
             _genre_bg_cache[key] = None
@@ -5548,13 +5583,14 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
     return base.copy() if base is not None else None
 
 
-def _normalise_fallback_canvas(image: Image.Image) -> Image.Image:
+def _normalise_fallback_canvas(image: Image.Image,
+                               size: tuple[int, int] | None = None) -> Image.Image:
     """Fit-cover a fallback background to the poster canvas, as RGBA.
 
     Fit-cover rather than a plain resize so a background authored at some other
     aspect ratio is centre-cropped instead of squashed.  The shipped art is
     already 2:3, for which this is just the resize."""
-    target_w, target_h = _cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT
+    target_w, target_h = size or (_cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT)
     src_w, src_h = image.size
     if (src_w, src_h) != (target_w, target_h):
         scale = max(target_w / src_w, target_h / src_h)
@@ -6931,6 +6967,10 @@ async def get_poster(
     if shape != "portrait":
         raw_params["shape"] = shape
     rcfg = build_request_config(raw_params)
+    if rcfg.poster_width != _cfg.POSTER_WIDTH:
+        # Every art fetch below reads it: the right TMDB size, its own cache
+        # key, fitted to this canvas.  Scoped to this request's task.
+        set_poster_canvas(rcfg.poster_width)
 
     # Anime is essentially always Japanese, so the foreign-language slot says
     # nothing here — but ranked highly (a reasonable choice for live-action,
@@ -8708,6 +8748,8 @@ async def get_poster(
         )
 
         _render_cfg = dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg
+        if not _is_landscape:
+            _render_cfg = _scale_render_cfg(_render_cfg)
 
         # Graphic badges: the Commons marks (fetched once per instance), and
         # the title's US certificate, network and studio (one TMDB call per

@@ -468,11 +468,13 @@ def draw_score_bar(
     score = max(0, min(int(score), 100))
     W, H = image.size
     bar_h  = max(8, round(H * 0.012))
+    # side_margin and the radius cap are pixels on the 500-wide canvas.
+    side_margin = round(side_margin * W / 500)
     x0, x1 = side_margin, W - side_margin
     y1, y0  = H - bottom_margin, H - bottom_margin - bar_h
     bar_w   = x1 - x0
     fill_w  = int(bar_w * (score / 100))
-    radius  = min(bar_h // 2, 8)
+    radius  = min(bar_h // 2, round(8 * W / 500))
 
     # ── Track (background pill) ───────────────────────────────────────────
     # Drawn before the early-return so score=0 still shows an empty track

@@ -552,15 +552,17 @@ async def fetch_tvdb_backdrop(
         return None
     url = chosen["url"]
     # Reuse TMDB's crop + cache-version scheme so behaviour and invalidation match.
-    from tmdb import _crop_and_normalise_backdrop, normalise_poster, _CROP_VERSION
+    from tmdb import _crop_and_normalise_backdrop, normalise_poster, _CROP_VERSION, poster_canvas, _canvas_suffix
+    size = poster_canvas()
     cache_key = (
         _cache_key_for(url, "backdrop") + f"_{_CROP_VERSION}" + ("_ta" if avoid_text else "")
+        + _canvas_suffix(size)
     )
     cached = get_cached_tmdb_poster(cache_key)
     if cached:
         logger.info(f"TVDB backdrop cache hit for {tvdb_id}")
         image = Image.open(io.BytesIO(cached)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != size:
             image = normalise_poster(image)
         return image
 
@@ -573,7 +575,7 @@ async def fetch_tvdb_backdrop(
         logger.warning(f"TVDB backdrop parse failed for {tvdb_id}: {exc}")
         return None
     image = await asyncio.get_running_loop().run_in_executor(
-        None, _crop_and_normalise_backdrop, image, f"tvdb:{tvdb_id}", avoid_text
+        None, _crop_and_normalise_backdrop, image, f"tvdb:{tvdb_id}", avoid_text, size
     )
     buf = io.BytesIO()
     image.convert("RGB").save(buf, format="JPEG", quality=92)
@@ -627,13 +629,13 @@ async def fetch_tvdb_poster(
     if not chosen:
         return None
     url = chosen["url"]
-    from tmdb import normalise_poster
-    cache_key = _cache_key_for(url, "poster")
+    from tmdb import normalise_poster, poster_canvas, _canvas_suffix
+    cache_key = _cache_key_for(url, "poster") + _canvas_suffix(poster_canvas())
     cached = get_cached_tmdb_poster(cache_key)
     if cached:
         logger.info(f"TVDB poster cache hit for {tvdb_id}")
         image = Image.open(io.BytesIO(cached)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != poster_canvas():
             image = normalise_poster(image)
         return image
 

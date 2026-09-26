@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Larger posters
+
+- `resolution=780` renders portrait posters at 780×1170 from TMDB's `w780`
+  art (backdrop crops and logos from the originals) for clients that draw
+  posters large. Same layout at either size: pixel settings scale with the
+  canvas. Roughly twice the render time and file size; URLs without it are
+  unchanged and keep their cached composites.
+
 ### Notch on the side, and graphic quality badges
 
 - The frosted notch can sit to one side (`sash_badge_pos=left|right`, the

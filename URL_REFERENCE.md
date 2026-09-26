@@ -81,6 +81,12 @@ The configurator previews both shapes: the landscape button in the preview heade
 
 Landscape renders deliberately skip stream-quality fetching because this layout does not display quality tokens.
 
+### Poster resolution
+
+`resolution=780` renders a portrait poster at 780×1170 instead of 500×750, from TMDB's `w780` art (backdrop crops and title logos from the originals). The layout is the same at either size: fixed-pixel settings such as `badge_height`, `badge_gap` and `score_glow_blur` are still given for the 500-wide canvas and scale with it. `high` and `hd` are accepted for `780`; any other value, and every landscape render, stays at 500×750.
+
+A 780 render costs about twice the CPU of a 500 one and the file is about twice the size, and the first request for each title fetches its larger art once. It is worth it where a client draws posters more than ~500 physical pixels wide: TV grids, tablets, detail pages on high-density phones. The two sizes are cached separately, and URLs without the parameter keep their existing cached composites.
+
 ### Logo endpoint
 
 `/logo` returns the best available title logo as its original PNG, using the same cached TMDB/Metahub selection chain as poster rendering:

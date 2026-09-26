@@ -3,6 +3,7 @@ import asyncio
 import colorsys
 import hashlib
 import io
+from contextvars import ContextVar
 import logging
 import re
 import time
@@ -87,8 +88,39 @@ from config import (
 # Image helpers
 # ---------------------------------------------------------------------------
 
-def normalise_poster(image: Image.Image) -> Image.Image:
-    target_w, target_h = POSTER_WIDTH, POSTER_HEIGHT
+# The portrait canvas this request renders at.  500x750 unless the request asks
+# for the larger size (RequestConfig.poster_width); get_poster sets it once and
+# every art fetcher below reads it, so the right TMDB size is fetched, cached
+# under its own key and fitted to the right canvas.  A ContextVar rather than a
+# parameter threaded through each fetcher: it follows the request's task and the
+# tasks it spawns.  It does NOT reach run_in_executor threads, so the code that
+# normalises in the thread pool takes the size as an argument.
+_POSTER_CANVAS: ContextVar[tuple[int, int]] = ContextVar(
+    "poster_canvas", default=(POSTER_WIDTH, POSTER_HEIGHT)
+)
+
+# Canvas widths a request may ask for, and the TMDB poster size fetched for
+# each — the smallest TMDB rendition at least as wide as the canvas.
+POSTER_WIDTHS = {500: "w500", 780: "w780"}
+
+
+def poster_canvas() -> tuple[int, int]:
+    return _POSTER_CANVAS.get()
+
+
+def set_poster_canvas(width: int) -> None:
+    """Render this request's portrait art at *width* (a POSTER_WIDTHS key), 2:3."""
+    _POSTER_CANVAS.set((width, width * POSTER_HEIGHT // POSTER_WIDTH))
+
+
+def _canvas_suffix(size: tuple[int, int]) -> str:
+    """Cache-key suffix for art cached at *size*.  Empty at the standard size,
+    so every key cached before sizes existed stays valid."""
+    return "" if size == (POSTER_WIDTH, POSTER_HEIGHT) else f"_{size[0]}x{size[1]}"
+
+
+def normalise_poster(image: Image.Image, size: tuple[int, int] | None = None) -> Image.Image:
+    target_w, target_h = size or poster_canvas()
     src_w, src_h = image.size
     scale = max(target_w / src_w, target_h / src_h)
     new_w = round(src_w * scale)
@@ -247,7 +279,7 @@ def logo_centre_y(height: int, bottom_ratio: float = LOGO_BOTTOM_RATIO) -> int:
     fallback title-text renderer can sit on the exact same line, keeping logo
     and text posters visually consistent.
     """
-    max_h = min(int(height * LOGO_MAX_H_RATIO), LOGO_ABS_MAX_H)
+    max_h = min(int(height * LOGO_MAX_H_RATIO), LOGO_ABS_MAX_H * height // POSTER_HEIGHT)
     return int(height - int(height * bottom_ratio) - max_h / 2)
 
 
@@ -658,7 +690,7 @@ def _id_token(tmdb_id: str) -> str:
 
 
 def poster_image_cache_key(tmdb_id: str, media_type: str, poster_path: str) -> str:
-    return f"{media_type}_{_id_token(tmdb_id)}_{_art_token(poster_path)}"
+    return f"{media_type}_{_id_token(tmdb_id)}_{_art_token(poster_path)}{_canvas_suffix(poster_canvas())}"
 
 
 def backdrop_image_cache_key(tmdb_id: str, backdrop_path: str, avoid_text: bool) -> str:
@@ -667,6 +699,7 @@ def backdrop_image_cache_key(tmdb_id: str, backdrop_path: str, avoid_text: bool)
     return (
         f"backdrop_{_id_token(tmdb_id)}_{_art_token(backdrop_path)}_{_CROP_VERSION}"
         + ("_ta" if avoid_text else "")
+        + _canvas_suffix(poster_canvas())
     )
 
 
@@ -704,7 +737,7 @@ async def fetch_poster_image(
         logger.info(f"Poster cache hit for {tmdb_id}")
         # Stored as JPEG RGB — convert to RGBA for the compositing pipeline
         image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != poster_canvas():
             image = normalise_poster(image)
         return image
 
@@ -713,7 +746,8 @@ async def fetch_poster_image(
         img_resp = await client.get(poster_path, follow_redirects=True)
     else:
         logger.info(f"External API Call: Requested poster from TMDB for {tmdb_id}")
-        img_resp = await client.get(f"https://image.tmdb.org/t/p/w500{poster_path}")
+        _tmdb_size = POSTER_WIDTHS.get(poster_canvas()[0], "w500")
+        img_resp = await client.get(f"https://image.tmdb.org/t/p/{_tmdb_size}{poster_path}")
     img_resp.raise_for_status()
     image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
     image = normalise_poster(image)
@@ -931,24 +965,34 @@ async def fetch_backdrop_image(
     if cached_bytes:
         logger.info(f"TMDB backdrop cache hit for {tmdb_id}")
         image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != poster_canvas():
             image = normalise_poster(image)
         return image
 
-    # w1280 gives enough resolution to crop to a quality portrait
+    # w1280 (720 px tall) crops to a quality 500x750 portrait.  A larger canvas
+    # needs more height than that, so it takes the original and shrinks it to
+    # the canvas height first: the crop then works on no more pixels than the
+    # poster needs, whatever size the original is.
+    size = poster_canvas()
+    _large = size[1] > 720
     if is_absolute_art(backdrop_path):
         logger.info(f"External API Call: Requested backdrop art for {tmdb_id}")
         img_resp = await client.get(backdrop_path, follow_redirects=True)
     else:
         logger.info(f"External API Call: Requested backdrop from TMDB for {tmdb_id}")
-        img_resp = await client.get(f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
+        img_resp = await client.get(
+            f"https://image.tmdb.org/t/p/{'original' if _large else 'w1280'}{backdrop_path}"
+        )
     img_resp.raise_for_status()
     image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
+    if _large and image.height > size[1]:
+        image = image.resize((round(image.width * size[1] / image.height), size[1]),
+                             Image.Resampling.LANCZOS, reducing_gap=2.0)
 
     # The crop runs CPU-heavy face/text inference, so do it in the thread pool;
     # running it inline would stall the event loop and delay unrelated requests.
     image = await asyncio.get_running_loop().run_in_executor(
-        None, _crop_and_normalise_backdrop, image, tmdb_id, avoid_text
+        None, _crop_and_normalise_backdrop, image, tmdb_id, avoid_text, size
     )
 
     buf = io.BytesIO()
@@ -1016,7 +1060,8 @@ async def fetch_landscape_image(
 
 
 def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
-                                 avoid_text: bool) -> Image.Image:
+                                 avoid_text: bool,
+                                 size: tuple[int, int] | None = None) -> Image.Image:
     """Synchronous backdrop crop (face-aware → saliency fallback) + normalise.
     Runs in the thread pool; all OpenCV inference is confined here."""
     # Optional text-density profile to steer the crop away from title text.
@@ -1049,7 +1094,9 @@ def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
             )
         image = image.crop((left, 0, left + crop_w, h))
 
-    return normalise_poster(image)
+    # Explicit size: this runs in the thread pool, where the request's
+    # poster_canvas() context does not follow.
+    return normalise_poster(image, size or (POSTER_WIDTH, POSTER_HEIGHT))
 
 
 async def _fetch_metahub_logo(
@@ -1311,7 +1358,12 @@ async def fetch_logo(
     logo_path = candidates[0]["file_path"]
     is_svg    = logo_path.lower().endswith(".svg")
 
-    logo_cache_key = logo_path.strip('/').replace('/', '_')
+    # A larger canvas draws the logo up to 0.75 of a wider poster, past w500's
+    # 500 px, so it takes the original — shrunk to the canvas before it is
+    # cached, so no render ever decodes a multi-thousand-pixel logo.
+    _canvas = poster_canvas()
+    _large = _canvas[0] > POSTER_WIDTH
+    logo_cache_key = logo_path.strip('/').replace('/', '_') + _canvas_suffix(_canvas)
     cached_bytes = get_cached_tmdb_logo(logo_cache_key)
 
     if cached_bytes:
@@ -1321,7 +1373,7 @@ async def fetch_logo(
 
     # SVGs are served at "original" (the sized w500 path doesn't apply to vector);
     # rasters use w500 which is plenty for our ≤~440px rendered width.
-    _size = "original" if is_svg else "w500"
+    _size = "original" if (is_svg or _large) else "w500"
     resp = await client.get(f"https://image.tmdb.org/t/p/{_size}{logo_path}")
     logger.info(f"External API Call: Requested logo from TMDB")
     resp.raise_for_status()
@@ -1338,6 +1390,8 @@ async def fetch_logo(
     bbox = logo.getchannel("A").getbbox()
     if bbox:
         logo = logo.crop(bbox)
+    if _large and (logo.width > _canvas[0] or logo.height > _canvas[1] // 3):
+        logo.thumbnail((_canvas[0], _canvas[1] // 3), Image.Resampling.LANCZOS)
 
     buf = io.BytesIO()
     logo.save(buf, format="PNG")
@@ -2728,8 +2782,10 @@ def composite_logo(
 
     max_w = int(width  * max_w_ratio)
     # Height is bounded by BOTH the ratio and an absolute pixel ceiling, so a
-    # raised Height slider can't let tall logos take over the poster.
-    max_h = min(int(height * max_h_ratio), LOGO_ABS_MAX_H)
+    # raised Height slider can't let tall logos take over the poster.  The
+    # ceiling is set for the 750-tall canvas and scales with a larger one.
+    abs_max_h = LOGO_ABS_MAX_H * height // POSTER_HEIGHT
+    max_h = min(int(height * max_h_ratio), abs_max_h)
 
     # ── Tight crop: ignore faint glow / halo / anti-alias pixels ──────────────
     # A plain getbbox() keys off ANY non-zero alpha, so baked-in soft shadows,
@@ -2758,7 +2814,7 @@ def composite_logo(
     # Orientation, kept for the sizing telemetry below: -1 (tall) .. +1 (wide).
     orient    = float(np.tanh(np.log(aspect / LOGO_ASPECT_PIVOT)))
     eff_max_w = max_w                       # hard width ceiling
-    eff_max_h = max_h                       # hard height ceiling (already ≤ LOGO_ABS_MAX_H)
+    eff_max_h = max_h                       # hard height ceiling (already ≤ abs_max_h)
 
     # Overall size target comes from the BASE caps so the average logo size stays
     # consistent; the flex only relaxes the clamp for the dominant axis.
@@ -2787,7 +2843,7 @@ def composite_logo(
         if new_h < trigger_h:
             t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
             factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
-            new_h  = min(eff_max_h, float(LOGO_ABS_MAX_H), new_h * factor)
+            new_h  = min(eff_max_h, float(abs_max_h), new_h * factor)
         elif new_w < eff_max_w:
             new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
 
