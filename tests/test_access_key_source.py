@@ -43,5 +43,40 @@ class ConfiguratorReadsTheUrlOnly(unittest.TestCase):
         self.assertIn("serverCaps.access_key_required === false", HTML)
 
 
+class ConfiguratorProtectedExternally(unittest.TestCase):
+    """CONFIGURATOR_EXTERNAL_AUTH: the configurator sits behind the operator's
+    own login, so it stops asking for the key and is handed it instead; the
+    poster API keeps requiring it."""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        patches = [mock.patch.object(main._cfg, "ACCESS_KEY", "sekrit"),
+                   mock.patch.object(main._cfg, "CONFIGURATOR_EXTERNAL_AUTH", True)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_configurator_and_its_endpoints_open_without_the_key(self):
+        self.assertEqual(self.client.get("/").status_code, 200)
+        caps = self.client.get("/server-caps")
+        self.assertEqual(caps.status_code, 200)
+        self.assertEqual(caps.json()["access_key"], "sekrit")
+
+    def test_poster_and_logo_still_require_the_key(self):
+        for path in ("/poster?tmdb_id=1&type=movie", "/logo?tmdb_id=1&type=movie", "/stats"):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 403)
+
+    def test_off_by_default_the_configurator_needs_the_key_and_never_sees_it(self):
+        with mock.patch.object(main._cfg, "CONFIGURATOR_EXTERNAL_AUTH", False):
+            self.assertEqual(self.client.get("/").status_code, 403)
+            self.assertEqual(self.client.get("/server-caps").status_code, 403)
+            caps = self.client.get("/server-caps?access_key=sekrit").json()
+        self.assertNotIn("access_key", caps)
+
+    def test_page_takes_the_key_it_is_handed(self):
+        self.assertIn("if (serverCaps.access_key && vEl('cfg-access-key') !== serverCaps.access_key)", HTML)
+
+
 if __name__ == "__main__":
     unittest.main()

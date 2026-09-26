@@ -60,6 +60,16 @@ class HalfSizeRetryTests(unittest.TestCase):
         self.assertEqual(self._boxes(det), [])
         self.assertEqual(len(det.sizes), 2)
 
+    def test_large_input_detected_at_cap_and_mapped_back(self):
+        det = _FakeYuNet(max_w=10_000)
+        boxes = self._boxes(det, (3840, 2160))
+        self.assertEqual(det.sizes, [(1280, 720)])
+        x, y, fw, fh, _score = boxes[0]
+        self.assertAlmostEqual(x, 1920.0, places=3)
+        self.assertAlmostEqual(y, 216.0, places=3)
+        self.assertAlmostEqual(fw, 768.0, places=3)
+        self.assertAlmostEqual(fh, 864.0, places=3)
+
     def test_signature_names_the_retry(self):
         self.assertIn(":half640", face_detect.DETECTOR_SIGNATURE)
 

@@ -7,6 +7,7 @@ instead of bumping _RENDER_CACHE_VERSION and re-rendering the whole cache.
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import cache
 import main
@@ -82,6 +83,7 @@ class RenderMetaStorageTests(unittest.TestCase):
         cache.DB_PATH, cache._initialised, cache._local.conn = self._saved
         self._dir.cleanup()
 
+    @mock.patch.object(cache, "COMPOSITE_MEM_ENTRIES", 500)   # L1 is opt-in
     def test_revision_and_facts_survive_l1_and_l2(self):
         cache.set_cached_final_poster("tt1:1:movie:h", b"x", render_rev=1,
                                       render_facts={"score": "N/A"})

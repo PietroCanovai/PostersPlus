@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 import httpx
 
 logger = logging.getLogger(__name__)
+import pxscale
+from pxscale import fixed
 from PIL import Image, ImageDraw, ImageFont
 
 import config as _cfg
@@ -829,18 +831,25 @@ def render_badges_left(
         return
 
     draw = ImageDraw.Draw(image)
+    # On a larger canvas the badges were resized to a whole-pixel height (34
+    # for 22 * 1.56 = 34.32), each a little narrow, and that added up along the
+    # row.  Advance by each badge's width at the exact scaled height instead,
+    # snapping only where it is pasted.  A no-op at 500 (pxscale).
+    k = pxscale.scale()
+    exact_h = fixed(round(badge_height / k))
+    gap = fixed(round(badge_gap / k))
     x = x_start
 
     for badge_img, label in items:
         if badge_img is not None:
-            image.paste(badge_img, (x, y_top), badge_img)
-            x += badge_img.width + badge_gap
+            image.paste(badge_img, (round(x), y_top), badge_img)
+            x += badge_img.width * exact_h / badge_height + gap
         else:
             # Text fallback
             bb = draw.textbbox((0, 0), label, font=_FALLBACK_FONT)
             text_h = bb[3] - bb[1]
             ty = y_top + (badge_height - text_h) // 2
-            draw.text((x, ty), label, font=_FALLBACK_FONT, fill=(255, 255, 255, 220))
-            x += int(bb[2] - bb[0]) + badge_gap
+            draw.text((round(x), ty), label, font=_FALLBACK_FONT, fill=(255, 255, 255, 220))
+            x += int(bb[2] - bb[0]) + gap
 
 

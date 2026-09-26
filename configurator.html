@@ -445,6 +445,7 @@
   /* Marks the client a plain left-click copies for. */
   .menu-item.is-current { color: var(--gold-bright); }
   .menu-item.is-current::after { content: " \2713"; }
+  .menu-sep { height: 1px; margin: 3px 4px; background: var(--border); }
 
   /* Status readout sits bare next to the preview title — a state dot, not a
      chip, so it doesn't compete with the version pill opposite it.  Qualified
@@ -2324,6 +2325,18 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="stremio_desktop_web">Nuvio Desktop, Nuvio HTPC, Stremio Desktop</option>
               </select>
             </div>
+            <!-- Shown only when the server's MAX_POSTER_RESOLUTION allows more
+                 than the default canvas (serverCaps.max_poster_resolution). -->
+            <div class="field" id="resolution-field" hidden>
+              <label class="field-label" id="resolution-label" data-tip="Portrait poster size. Larger posters look sharper on big screens but take longer to render and download. Landscape is unaffected.">Poster Resolution</label>
+              <select id="cfg-resolution" onchange="build(); if (serverCaps.preview_at_resolution) queuePreviewReload()">
+                <option value="500" selected>500 × 750 (default)</option>
+                <option value="780">780 × 1170</option>
+                <option value="1000">1000 × 1500</option>
+                <option value="1500">1500 × 2250</option>
+                <option value="2000">2000 × 3000</option>
+              </select>
+            </div>
             <div class="field-row">
             <div class="field">
               <label class="field-label" data-tip="★ marks languages whose poster text is fully translated, not just the logo.">Native Language</label>
@@ -3047,7 +3060,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field" id="sash-badge-pos-field" style="display:none;">
-              <label class="field-label" data-tip="Moves the frosted notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
+              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
               <select id="cfg-sash-badge-pos" onchange="build(); queuePreviewReload()">
                 <option value="center" selected>Centre</option>
                 <option value="left">Left</option>
@@ -3676,7 +3689,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 <div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="import-modal-box">
     <div class="import-modal-title">Import URL</div>
-    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
+    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL or shared settings here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
     <div class="import-modal-btns">
       <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" onclick="applyImport()">Import</button>
@@ -4118,6 +4131,30 @@ function openFallbackGallery() {
   window.open(url, '_blank', 'noopener');
 }
 
+// The resolution picker exists only where the operator has raised
+// MAX_POSTER_RESOLUTION; sizes above the limit are hidden, and a restored or
+// imported value above it is brought down to the largest allowed, which is
+// what the server would serve anyway.
+function updateResolutionAvailability() {
+  const field = document.getElementById('resolution-field');
+  const sel   = document.getElementById('cfg-resolution');
+  if (!field || !sel) return;
+  const max = Number(serverCaps.max_poster_resolution) || 500;
+  field.hidden = max <= 500;
+  document.getElementById('resolution-label')?.setAttribute('data-tip',
+    'Portrait poster size. Larger posters look sharper on big screens but take longer to render '
+    + 'and download. Landscape is unaffected. '
+    + (serverCaps.preview_at_resolution ? 'The preview renders at this size.'
+                                        : 'The preview always renders at 500 wide.'));
+  let best = '500';
+  for (const opt of sel.options) {
+    const allowed = Number(opt.value) <= max;
+    opt.hidden = opt.disabled = !allowed;
+    if (allowed && Number(opt.value) <= Number(sel.value)) best = opt.value;
+  }
+  if (sel.value !== best) { sel.value = best; build(); }
+}
+
 async function fetchServerCaps() {
   try {
     const ak = vEl('cfg-access-key');
@@ -4132,8 +4169,18 @@ async function fetchServerCaps() {
       document.getElementById('cfg-access-key').value = '';
       build();
     }
+    // Behind the operator's own login (CONFIGURATOR_EXTERNAL_AUTH) the page is
+    // handed the key instead of carrying it in its URL; previews and copied
+    // URLs need it. A preview requested before this answered was refused, so
+    // it goes again.
+    if (serverCaps.access_key && vEl('cfg-access-key') !== serverCaps.access_key) {
+      document.getElementById('cfg-access-key').value = serverCaps.access_key;
+      build();
+      queuePreviewReload();
+    }
     updateKeyBadges();
     updateImdbSourceAvailability();
+    updateResolutionAvailability();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
@@ -5378,7 +5425,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // see COPY_TEMPLATES.  An unrecognised id (or none, which is what the saved
   // settings and the concrete preview URL pass) falls back to the neutral
   // shape, so a remembered client choice never leaks into stored settings.
-  const template       = COPY_TEMPLATES.find(t => t.id === templateId) || COPY_TEMPLATE_NEUTRAL;
+  const template       = [...COPY_TEMPLATES, COPY_TEMPLATE_SHARE].find(t => t.id === templateId)
+                         || COPY_TEMPLATE_NEUTRAL;
   const domain         = (domainOverride || vEl('cfg-domain')).replace(/\/$/, '') || 'https://your-instance.com';
   const logoLanguage   = vEl('cfg-language') || 'en';
   // Unresolved stays empty rather than falling back to a literal "{imdb_id}":
@@ -5571,6 +5619,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (lShared['tog-vignette-color-bottom'] === true || lShared['tog-vignette-color-bottom'] === 'true')
       params.set('landscape_color_link', vEl('cfg-landscape-color-link') || 'off');
   }
+  // Portrait only (the server ignores it for landscape), and left out at the
+  // default so existing URLs and cache keys are unchanged.
+  const _res = vEl('cfg-resolution');
+  if (_res && _res !== '500' && emitAll) params.set('resolution', _res);
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
   params.set('imdb_rating_source', vEl('cfg-imdb-rating-source') || 'mdblist');
   params.set('tmdb_rating_source', vEl('cfg-tmdb-rating-source') || 'mdblist');
@@ -5736,9 +5788,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
         params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
         if (c('tog-notch-vignette-color')) params.set('notch_vignette_color', 'true');
-        const _pos = vEl('cfg-sash-badge-pos') || 'center';
-        if (_pos !== 'center') params.set('sash_badge_pos', _pos);
       }
+      // Every notch style can float off centre (it was frosted only).
+      const _pos = vEl('cfg-sash-badge-pos') || 'center';
+      if (_pos !== 'center') params.set('sash_badge_pos', _pos);
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -5878,7 +5931,18 @@ function buildPreviewUrl() {
   // When the domain has been rewritten to postersplus:port, the preview image
   // must still load from the actual origin so it resolves in the browser.
   const override = _REWRITE_DOMAIN ? window.location.origin : null;
-  return buildBaseParams({ usePlaceholders: false, domainOverride: override });
+  // 500 wide unless the operator opted in (PREVIEW_AT_RESOLUTION): the
+  // preview is shown far smaller than that, and a large render per settings
+  // change would only cost the server time. Every fixed-pixel setting scales
+  // with the canvas, so the layout is the same either way.
+  const url = buildBaseParams({ usePlaceholders: false, domainOverride: override });
+  if (serverCaps.preview_at_resolution) return url;
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has('resolution')) return url;
+    u.searchParams.delete('resolution');
+    return u.toString();
+  } catch { return url; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5968,6 +6032,36 @@ const COPY_TEMPLATES = [
 const COPY_TEMPLATE_NEUTRAL = { id: '', name: '', ...COPY_SHAPE_REQUIRED };
 const COPY_TEMPLATE_KEY = 'postersplus_copy_template';
 
+// Share settings: the look, for someone else to import into their own
+// configurator — not a URL any client is given. It goes out in the "{shape}"
+// form so the portrait and landscape settings both travel, with every
+// parameter spelled out (full) because the recipient's server may not share
+// this one's defaults. Nothing identifying goes with it: the host is a
+// reserved .invalid name, so a share pasted into a client by mistake fails
+// outright instead of reaching anyone's instance, and keys, the access key
+// and the selected title are dropped. So are the viewer's own choices —
+// language, client and resolution belong to whoever imports it.
+const COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', ...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };
+const SHARE_ORIGIN = 'https://share.postersplus.invalid';
+const _SHARE_DROP  = ['tmdb_id', 'imdb_id', 'stremio_id', 'type', 'access_key', 'tmdb_key',
+                      'mdblist_key', 'logo_language', 'primary_client', 'resolution'];
+
+function buildShareUrl() {
+  const url = buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',
+                                domainOverride: SHARE_ORIGIN });
+  const q = url.indexOf('?');
+  const p = new URLSearchParams(q < 0 ? '' : url.slice(q + 1));
+  _SHARE_DROP.forEach(k => p.delete(k));
+  // The plain list, not the "default,..." diff: the recipient's default order
+  // may not be this server's.
+  if (p.has('sash_priority')) p.set('sash_priority', getSashPriorityParam({ compact: false }));
+  return decodePlaceholders(`${SHARE_ORIGIN}/poster?${p.toString()}`);
+}
+
+function isShareUrl(raw) {
+  try { return new URL(raw).origin === SHARE_ORIGIN; } catch { return false; }
+}
+
 /** The template a plain left-click copies, or null when none is remembered —
  *  the first click opens the menu rather than guessing a client. */
 function rememberedTemplate() {
@@ -6036,6 +6130,19 @@ function renderCopyMenu() {
       item.onclick = () => copyTemplate(t.id);
       menu.appendChild(item);
     }
+    const sep = document.createElement('div');
+    sep.className = 'menu-sep';
+    sep.setAttribute('role', 'separator');
+    menu.appendChild(sep);
+    const share = document.createElement('button');
+    share.type = 'button';
+    share.className = 'menu-item';
+    share.id = 'copy-share';
+    share.setAttribute('role', 'menuitem');
+    share.title = 'Copies these settings for someone else to import — no domain, keys or title.';
+    share.textContent = COPY_TEMPLATE_SHARE.name;
+    share.onclick = copyShare;
+    menu.appendChild(share);
   }
   const current = rememberedTemplate();
   for (const t of COPY_TEMPLATES) {
@@ -6238,6 +6345,28 @@ async function copyTemplate(templateId) {
   setStatus('Clipboard copy failed — check browser permissions.', 'err');
 }
 
+/** Copies the share form of the settings. Never remembered as the left-click
+ *  choice: that is always a client. */
+async function copyShare() {
+  closeCopyMenu();
+  const url = buildShareUrl();
+  const btn = document.getElementById('copy-config-btn');
+  if (await copyText(url)) {
+    setStatus('Settings copied — the recipient pastes them into Import URL.', 'info');
+    flashButton(btn, 'Copied');
+    return;
+  }
+  if (_SHOW_URL_BOX) {
+    const inp = document.getElementById('url-display-input');
+    inp.value = url;
+    inp.focus();
+    inp.select();
+    setStatus('Settings selected — copy them manually and send them on.', 'info');
+    return;
+  }
+  setStatus('Clipboard copy failed — check browser permissions.', 'err');
+}
+
 /** Briefly swaps a button's label to confirm an action, then restores it. */
 function flashButton(btn, text, ms = 1600) {
   if (!btn || btn.dataset.flashing) return;
@@ -6253,7 +6382,7 @@ function flashButton(btn, text, ms = 1600) {
 function resetDefaults() {
   // Core Config is preserved across a Reset: API keys, language and the
   // searched title / selection (domain is server-derived, not user-set here).
-  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query','cfg-language','cfg-primary-client']);
+  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query','cfg-language','cfg-primary-client','cfg-resolution']);
   // Drop any persisted settings so a later reload starts from the reset state.
   try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
   // Reset both cfg-* (inputs / selects) AND tog-* (toggle checkboxes).  The
@@ -6434,7 +6563,8 @@ function updateBadgeStyleFields() {
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
-  document.getElementById('sash-badge-pos-field').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-badge-pos-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch') ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
@@ -7219,7 +7349,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
   'tog-hide-unreleased-rating',
-  'cfg-primary-client', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
+  'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
 function _snapshotControls(ids) {
@@ -7281,7 +7411,9 @@ function closeImportModal() {
 function applyImport() {
   const raw = document.getElementById('import-input').value.trim();
   if (!raw) return;
-  const result = importUrl(raw);
+  // A share carries settings only; the importer's own client, language and
+  // keys stay as they are.
+  const result = importUrl(raw, isShareUrl(raw) ? { settingsOnly: true, share: true } : {});
   if (result) closeImportModal();
 }
 
@@ -7326,7 +7458,7 @@ function _setEl(id, value) {
   }
 }
 
-function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClientInsets = false, preserveShape = false, restoring = false } = {}) {
+function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClientInsets = false, preserveShape = false, restoring = false, share = false } = {}) {
   let parsed;
   try { parsed = new URL(urlStr); } catch {
     if (!silent) setStatus('Import failed — not a valid URL.', 'err');
@@ -7478,6 +7610,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
   if (p.has('hide_year')) _setEl('tog-hide-year', p.get('hide_year'));
   if (p.has('hide_rating')) _setEl('tog-hide-rating', p.get('hide_rating'));
+  // A device choice like the primary client: a preset or a shared config
+  // (neither carries one) leaves it alone, any other URL without it means the
+  // default.
+  if (p.has('resolution') || !(preserveClientInsets || share)) {
+    const r = (p.get('resolution') || '').trim().toLowerCase();
+    const w = { high: '780', hd: '780' }[r] || r;
+    _setEl('cfg-resolution', ['780', '1000', '1500', '2000'].includes(w) ? w : '500');
+  }
   // shape is seeded from the server defaults above, so an ordinary URL without
   // it lands on portrait.  A preset carries no shape and is not a reason to
   // leave the landscape view, hence preserveShape.
@@ -7503,6 +7643,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // call before /server-caps has answered — it no-ops until then, and
   // fetchServerCaps calls it again on arrival.
   updateImdbSourceAvailability();
+  updateResolutionAvailability();
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));

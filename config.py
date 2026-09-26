@@ -64,10 +64,27 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 
 PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="The address clients reach this instance on, e.g. https://posters.example.com. Used for the poster links the trending catalogs addon hands out. Blank derives it from each request's Host / X-Forwarded-Host / X-Forwarded-Proto headers, which works behind most proxies but lets a forged header change the links in a response a shared cache might keep.", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
 ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='secret', label='Access key', help='Shared secret every poster and configurator request must carry as access_key. Leave blank for open access.') or None
+# For operators who protect the configurator with a separate login (Authelia,
+# Pangolin, an SSO proxy...): posters are fetched by clients that can't sign in
+# through a browser, so /poster keeps its access key, but the configurator no
+# longer asks for one and hands the key to the page itself.  Anyone who can open
+# the configurator can therefore read the key — it is only as safe as that login.
+CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login. No effect without an access key.").strip().lower() in ("1", "true", "yes")
 # Off by default: on a public instance an Admin link in every visitor's header
 # only invites people to try keys against the dashboard.  _flag isn't defined
 # yet at this point, hence the inline parse.
 SHOW_ADMIN_LINK       = _env('SHOW_ADMIN_LINK', "false", group='Access & serving', kind='bool', label='Admin link in configurator', help="Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled.").strip().lower() in ("1", "true", "yes")
+# Largest portrait width the resolution URL parameter may ask for.  Off (500,
+# the default canvas) unless raised: a 2000 px render costs ~12x the CPU of a
+# 500 and a large peak of memory, so a public instance must not let anyone
+# request them.  Requests above the cap get the largest allowed size instead.
+MAX_POSTER_RESOLUTION = int(_env('MAX_POSTER_RESOLUTION', "500", group='Access & serving', kind='choice', label='Maximum poster resolution', help="Largest portrait width the resolution URL parameter (500, 780, 1000, 1500, 2000) may request. 500 turns larger sizes off; a request above the limit gets the largest allowed size. Larger posters cost far more CPU and memory to render (2000 px is about 12x a 500), so raise this only on an instance you control.", choices=('500', '780', '1000', '1500', '2000')))
+# Whether the configurator's live preview renders at the resolution picked
+# there.  Off: the preview stays at 500 wide (it is displayed smaller than that
+# anyway, and every fixed-pixel setting scales with the canvas, so it looks the
+# same); on, every settings change while a large size is picked costs a full
+# render at that size.
+PREVIEW_AT_RESOLUTION = _env('PREVIEW_AT_RESOLUTION', "false", group='Access & serving', show_if=('MAX_POSTER_RESOLUTION', ('780', '1000', '1500', '2000')), kind='bool', label='Preview at chosen resolution', help="Render the configurator's live preview at the poster resolution picked there, instead of always at 500 wide. Useful for judging sharpness; each settings change then costs a render at that size (a 2000 px render is about 12x a 500).").strip().lower() in ("1", "true", "yes")
 QUALITY_SOURCE        = _env('QUALITY_SOURCE', "aiostreams", group='Quality source', kind='choice', label='Quality source', help='Where stream-quality badges come from. QualiCache never scrapes on the request path; a cold title returns pending instead of blocking.', choices=('aiostreams', 'scraper', 'qualicache')).lower().strip()
 AIOSTREAMS_URL        = _env('AIOSTREAMS_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='url', label='AIOStreams URL', help='Base URL of your AIOStreams instance. Used when the quality source is aiostreams.', placeholder='https://aiostreams.example.com')
 AIOSTREAMS_AUTH       = _env('AIOSTREAMS_AUTH', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='secret', label='AIOStreams auth', help='AIOStreams credentials as Base64 user:password.')
@@ -543,11 +560,13 @@ COMPOSITE_CACHE_TTL_JITTER = int(_env('COMPOSITE_CACHE_TTL_JITTER', "172800", gr
 # Maximum number of composite cache entries. When exceeded the oldest entries are
 # evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL alone).
 COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "0", group='Caching', kind='int', label='Composite cache max entries', help='Oldest entries are evicted past this many. 0 relies on the TTL alone.', min=0, max=10000000))
-# Number of fully-rendered composites kept in the in-memory LRU (L1) cache.
-# These are served without any SQLite read, keeping the hot working set off the
-# OS page cache.  Each entry is roughly 100-300 KB; 500 entries ≈ 50-150 MB.
-# Set to 0 to disable L1 entirely (fall through to SQLite for every request).
-COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "500", group='Caching', kind='int', label='In-memory composites', help='Rendered posters kept in the in-memory LRU, served without a SQLite read. Each is roughly 100-300 KB; 500 is about 50-150 MB. 0 disables it.', min=0, max=100000, advanced=True))
+# Number of fully-rendered composites kept in each worker's in-memory LRU (L1).
+# Off by default: an L1 hit only saves a SQLite point read (~0.7 ms cold,
+# ~0.04 ms once the OS page cache has it, against ~4 ms for the whole hit),
+# while every worker holds its own copy — ~400 KB per entry measured on a live
+# instance, so 500 entries cost ~200 MB per worker.  Configurator previews are
+# a new composite per change, so they churn it rather than hit it.
+COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "0", group='Caching', kind='int', label='In-memory composites', help="Rendered posters kept in each worker's in-memory LRU, served without a SQLite read. Off (0) by default: the SQLite read it saves is under a millisecond, while each entry costs roughly 100-600 KB per worker.", min=0, max=100000, advanced=True))
 # Set to any truthy value (1, true, yes) to skip composite cache reads and writes
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.

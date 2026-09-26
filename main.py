@@ -790,6 +790,8 @@ async def _background_quality_fetch(
 # Local imports
 from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw_tier_bar, _score_points
 from landscape import build_landscape
+import pxscale
+from pxscale import px, pxi, pxr, pxri, fixed, fixedi
 from awards import dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, reconcile_cached_awards
 from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_heights as notch_heights
@@ -955,6 +957,13 @@ def _make_http_client() -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
+def _configurator_key_ok(supplied: str | None) -> bool:
+    """The access gate for the configurator page and the endpoints only it
+    calls.  Waived when the operator protects the configurator with its own
+    login (CONFIGURATOR_EXTERNAL_AUTH); /poster and the addons keep _key_ok."""
+    return _cfg.CONFIGURATOR_EXTERNAL_AUTH or _key_ok(supplied)
+
 
 def _key_ok(supplied: str | None) -> bool:
     """Whether *supplied* passes the instance access gate (always, when no
@@ -1662,7 +1671,7 @@ class RequestConfig:
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
     sash_mode: str = "sash"               # "sash" (diagonal) | "notch"
     sash_badge_style:  str   = "frosted" # "silver" | "gold" | "frosted"
-    sash_badge_pos:    str   = "center"  # frosted only: "center" | "left" | "right" | "auto" | "auto_hug"
+    sash_badge_pos:    str   = "center"  # notch: "center" | "left" | "right" | "auto" | "auto_hug"
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
@@ -1943,8 +1952,7 @@ def _sash_holds_left(cfg: "RequestConfig") -> bool:
     Bookmark quality badge should take the top right instead."""
     if cfg.sash_mode == "sash":
         return cfg.sash_side == "left"
-    return (cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
-            and cfg.sash_badge_pos == "left")
+    return cfg.sash_mode == "notch" and cfg.sash_badge_pos == "left"
 
 
 def _render_config_signature(cfg: "RequestConfig") -> str:
@@ -2107,7 +2115,10 @@ def build_request_config(params: dict) -> RequestConfig:
     _res = (params.get("resolution") or "").strip().lower()
     _res_width = {"high": 780, "hd": 780}.get(_res) or (int(_res) if _res.isdigit() else None)
     if _res_width in POSTER_WIDTHS and cfg.shape != "landscape":
-        cfg.poster_width = _res_width
+        # Capped by the operator (MAX_POSTER_RESOLUTION): above it, the largest
+        # allowed size, so a client asking for 2000 still gets a poster.
+        _res_cap = max(_cfg.MAX_POSTER_RESOLUTION, _cfg.POSTER_WIDTH)
+        cfg.poster_width = max(w for w in POSTER_WIDTHS if w <= min(_res_width, _res_cap))
     _ls_art = (params.get("landscape_art") or "").strip().lower()
     if _ls_art in ("textless", "original"):
         cfg.landscape_art = _ls_art
@@ -2315,7 +2326,7 @@ def _text_center(
     bbox_width = bbox[2] - bbox[0]
     ascent, descent = font.getmetrics()
     x = cx - bbox_width / 2 - bbox[0]
-    optical_adjust = int(ascent * 0.22)
+    optical_adjust = px(ascent * 0.22)
     y = cy - (ascent + descent) / 2 - descent + optical_adjust
     return x, y
 
@@ -3097,14 +3108,32 @@ def _vignette_fog_ramp(height: int, max_alpha: int, rising: bool) -> np.ndarray:
     return s * s * (3.0 - 2.0 * s) * max_alpha
 
 
-@lru_cache(maxsize=16)
-def _dither_noise(shape: tuple[int, ...]) -> np.ndarray:
-    """Half-a-level dither for _vignette_composite.  Seeded, so identical for a
-    given band shape on every render — generate it once per shape and reuse it
-    (read-only) rather than drawing ~half a million floats each time."""
-    noise = np.random.default_rng(0).uniform(-0.5, 0.5, shape).astype(np.float32)
+# Side of the square noise tile _dither_noise repeats across a band.  Caching
+# noise per exact band shape held one float32 array per shape — up to 16 of
+# them, ~36 MB each at 2000 px wide, and band shapes vary per poster — so a
+# single worker kept ~0.5 GB of noise resident after a high-res burst.  One
+# fixed tile costs 3 MB and its repeat is invisible at half a level.
+_DITHER_TILE = 512
+
+
+@lru_cache(maxsize=1)
+def _dither_tile() -> np.ndarray:
+    noise = np.random.default_rng(0).uniform(
+        -0.5, 0.5, (_DITHER_TILE, _DITHER_TILE, 3)
+    ).astype(np.float32)
     noise.flags.writeable = False
     return noise
+
+
+def _dither_noise(shape: tuple[int, ...]) -> np.ndarray:
+    """Half-a-level dither for _vignette_composite.  Seeded, so identical for a
+    given band shape on every render; tiled from one cached block rather than
+    drawn (or cached) per shape."""
+    h, w, c = shape
+    tile = _dither_tile()
+    rows = np.arange(h) % _DITHER_TILE
+    cols = np.arange(w) % _DITHER_TILE
+    return tile[rows[:, None], cols[None, :], :c]
 
 
 def _vignette_composite(
@@ -3318,7 +3347,15 @@ def _draw_combined_text_badge(
         draw.text((cx, y), fmt, font=font, fill=ink)
 
 
-def build_poster(
+def build_poster(image: Image.Image, *args, **kwargs) -> Image.Image:
+    """Composite the overlays onto *image*.  Sizes are floored in 500-wide units
+    and scaled to the canvas (pxscale), so a large poster is the 500 one
+    enlarged rather than one whose every element rounds a little differently."""
+    with pxscale.render_scale(image.width):
+        return _build_poster(image, *args, **kwargs)
+
+
+def _build_poster(
     image: Image.Image,
     score: int | str,
     genre: str,
@@ -3670,8 +3707,8 @@ def build_poster(
         filtered_tokens = [t for t in tokens if t in allowed_tokens]
 
         if filtered_tokens and _score_points(tokens) >= cfg.badge_min_score:
-            bx = int(width  * cfg.badge_anchor_x)
-            by = int(height * cfg.badge_anchor_y)
+            bx = pxi(width  * cfg.badge_anchor_x)
+            by = pxi(height * cfg.badge_anchor_y)
 
             badge_items: list[BadgeItem] = [
                 (get_resized_badge(token, cfg.badge_height), _cfg.QUALITY_LABELS.get(token, token))
@@ -3688,8 +3725,8 @@ def build_poster(
     elif mode == 5:
         _draw_combined_text_badge(
             _qtarget, tokens,
-            x=int(width  * cfg.badge_anchor_x),
-            y=int(height * cfg.badge_anchor_y),
+            x=pxi(width  * cfg.badge_anchor_x),
+            y=pxi(height * cfg.badge_anchor_y),
             font_size=cfg.badge_height,
             min_score=cfg.badge_min_score,
             stacked=cfg.combined_badge_stacked,
@@ -3959,7 +3996,7 @@ def build_poster(
     if cfg.rating_display_mode != 0:
 
         if cfg.rating_display_mode == 1:
-            font_size = int(width * cfg.accent_bar_font_size_ratio)
+            font_size = px(width * cfg.accent_bar_font_size_ratio)
             # Label suffix is configurable: append year, append sash text, or
             # append both joined by " · ".  Missing data degrades gracefully —
             # if "sash" is requested but no sash triggered, we just show the
@@ -3994,7 +4031,7 @@ def build_poster(
 
             tx, ty = _text_center(draw, label, font_meta, width / 2, rating_cy)  # type: ignore
             draw.text(
-                (tx, ty - int(font_size * 0.10)),
+                (tx, ty - px(font_size * 0.10)),
                 label,
                 font=font_meta,
                 fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
@@ -4011,7 +4048,7 @@ def build_poster(
                     _glow_color = None
                 draw_score_bar(
                     image, score,
-                    bottom_margin=int(height * cfg.accent_bar_bottom_ratio),
+                    bottom_margin=px(height * cfg.accent_bar_bottom_ratio),
                     glow_threshold=cfg.score_glow_threshold,
                     glow_blur=cfg.score_glow_blur,
                     glow_alpha=cfg.score_glow_alpha,
@@ -4021,7 +4058,7 @@ def build_poster(
                 )
 
         elif cfg.rating_display_mode == 2:
-            font_size = int(width * cfg.numeric_score_font_size_ratio)
+            font_size = px(width * cfg.numeric_score_font_size_ratio)
             # Score formatting:
             #   out of 100 (default): "87", "100", "N/A"
             #   out of 10:            "8.7", "8.0" (always one decimal), "10"
@@ -4052,22 +4089,35 @@ def build_poster(
             if label:
                 tx, ty = _text_center(draw, label, font_meta, width / 2, rating_cy)  # type: ignore
                 draw.text(
-                    (tx, ty - int(font_size * 0.10)),
+                    (tx, ty - px(font_size * 0.10)),
                     label,
                     font=font_meta,
                     fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
                 )
 
         elif cfg.rating_display_mode == 3:
-            font_size = int(width * cfg.minimalist_mode_font_size_ratio)
+            font_size = px(width * cfg.minimalist_mode_font_size_ratio)
 
             try:
                 font_meta = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
             except IOError:
                 font_meta = ImageFont.load_default()
+            # The line is laid out with widths measured at the 500-wide font
+            # size and scaled up: hinted advances don't scale exactly (a word at
+            # size 60 isn't quite twice its width at 30), which moved each
+            # segment a pixel or two.  The glyphs are still drawn at full size.
+            _k = pxscale.scale()
+            try:
+                _font_ref = font_meta if _k == 1.0 else ImageFont.truetype(
+                    os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size / _k)
+            except IOError:
+                _font_ref, _k = font_meta, 1.0
 
-            y = round(height * cfg.minimalist_mode_font_y_offset)
-            right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
+            def _tl(text: str) -> float:
+                return draw.textlength(text, font=_font_ref) * _k
+
+            y = pxr(height * cfg.minimalist_mode_font_y_offset)
+            right_edge = width - px(width * cfg.minimalist_mode_font_x_offset)
             _ink = (*cfg.rating_text_color, 255) if cfg.rating_text_color else (235, 235, 235, 255)
 
             # Segments, each tagged with the ROLE of the separator that precedes
@@ -4126,10 +4176,10 @@ def build_poster(
                 if _has_score:
                     parts.append((_score_str, "rating" if parts else None))
 
-            pip_gap = int(font_size * 0.55)
-            pip_w   = max(4, int(font_size * 0.18))
-            pip_h   = int(font_size * 1.4)
-            pip_cy  = round(y + font_size * 0.60)
+            pip_gap = px(font_size * 0.55)
+            pip_w   = max(fixed(4), px(font_size * 0.18))
+            pip_h   = px(font_size * 1.4)
+            pip_cy  = pxr(y + font_size * 0.60)
 
             # Style resolution.  The two field roles share one setting because
             # they are the same slot in different layouts; the rating role has
@@ -4151,7 +4201,7 @@ def build_poster(
 
             def _sep_width(role: str) -> float:
                 glyph = _sep_glyph(role)
-                return pip_w if glyph is None else draw.textlength(glyph, font=font_meta)
+                return pip_w if glyph is None else _tl(glyph)
 
             def _score_int(value) -> "int | None":
                 try:
@@ -4164,7 +4214,7 @@ def build_poster(
             cursor = right_edge
             for i in range(len(parts) - 1, -1, -1):
                 seg, sep = parts[i]
-                seg_x = int(cursor - draw.textlength(seg, font=font_meta))
+                seg_x = px(cursor - _tl(seg))
                 ops.append(("text", seg_x, seg))
                 cursor = seg_x
                 if sep:
@@ -4185,7 +4235,7 @@ def build_poster(
             # by the opposite margins they hang off, so there is no single group
             # left to centre, and the option is hidden in the configurator.
             if cfg.minimalist_center and cfg.minimalist_append_mode != 3 and ops:
-                _shift = round(width / 2 - (cursor + right_edge) / 2)
+                _shift = pxr(width / 2 - (cursor + right_edge) / 2)
                 ops = [(op[0], op[1] + _shift, *op[2:]) for op in ops]
 
             # ...and the split mode's left-hand group the same way but forwards,
@@ -4194,10 +4244,10 @@ def build_poster(
             for seg, sep in left_parts:
                 if sep:
                     cursor += pip_gap
-                    ops.append((sep, int(cursor)))
+                    ops.append((sep, px(cursor)))
                     cursor += _sep_width(sep) + pip_gap
-                ops.append(("text", int(cursor), seg))
-                cursor += draw.textlength(seg, font=font_meta)
+                ops.append(("text", px(cursor), seg))
+                cursor += _tl(seg)
 
             for op in ops:
                 kind, ox = op[0], op[1]
@@ -4343,7 +4393,7 @@ def _group_anchor(cfg: "RequestConfig", anchor: str) -> tuple[bool, bool]:
     chip leaves free: opposite a side chip or diagonal sash, else top right."""
     if anchor != "chip":
         return anchor[0] == "t", anchor[1] == "r"
-    if cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted" and cfg.sash_badge_pos == "right":
+    if cfg.sash_mode == "notch" and cfg.sash_badge_pos == "right":
         return True, False
     if cfg.sash_mode == "sash":
         return True, cfg.sash_side == "left"
@@ -4356,9 +4406,8 @@ def _auto_notch_pos(cfg: "RequestConfig", tokens: list[str], certification: str 
     along the top when there are any — to the right of a top-left group, the
     left of a top-right one (or of a "chip" group, which then takes the right)
     — and centred when the top carries none, so the poster doesn't look empty.
-    Only the frosted notch has side positions."""
-    if not (cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
-            and cfg.badge_display_mode == 7):
+    Every notch style has side positions."""
+    if not (cfg.sash_mode == "notch" and cfg.badge_display_mode == 7):
         return "center"
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
     left = right = beside = False
@@ -4406,27 +4455,26 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
     taken, a group slides away from the edge until its first badge fits;
     whatever doesn't fit beside that is dropped from the end of the group."""
     width, height = image.size
-    margin = int(width * awards_side_margin)
+    margin = pxi(width * awards_side_margin)
     # Kept from the chip, the rating and other groups; fixed, so packing a
     # group's badges tight doesn't also push it up against its neighbours.
-    clear = int(width * 0.028)
+    clear = pxi(width * 0.028)
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
 
     band_top, band_h = side_chip_band(width, height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
                                       cfg.sash_badge_pad, cfg.sash_badge_inset)
     top_line = band_top + band_h / 2
-    if cfg.sash_mode == "notch" and not (cfg.sash_badge_style == "frosted"
-                                          and cfg.sash_badge_pos in ("left", "right")):
+    if cfg.sash_mode == "notch" and cfg.sash_badge_pos not in ("left", "right"):
         # A centred notch hangs from the top edge; share its line.
         _, badge_h, _, _ = notch_heights(height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
                                          cfg.sash_badge_pad)
-        notch_y = max(-badge_h, int(height * cfg.sash_badge_inset))
+        notch_y = max(-badge_h, px(height * cfg.sash_badge_inset))
         top_line = (max(0, notch_y) + notch_y + badge_h) / 2
 
     groups = graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
     for group in groups:
         g_unit = max(8, round(group.size * 1.5 * height / 750))
-        g_gap = int(width * group.spacing)
+        g_gap = px(width * group.spacing)
         items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
                                          group.slots, show_quality, *logos)[:group.max_items]
         if not items:
@@ -5928,7 +5976,7 @@ async def trending_addon(rest: str, request: Request):
 
 @app.get("/server-caps")
 async def server_caps(access_key: str = ""):
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     next_refresh_hours = None
     _now = time.time()
@@ -5938,6 +5986,10 @@ async def server_caps(access_key: str = ""):
 
     return {
         "access_key_required":   bool(_cfg.ACCESS_KEY),
+        # Behind the operator's own login the page is handed the key rather
+        # than carrying it in its URL (CONFIGURATOR_EXTERNAL_AUTH).
+        **({"access_key": _cfg.ACCESS_KEY}
+           if _cfg.CONFIGURATOR_EXTERNAL_AUTH and _cfg.ACCESS_KEY else {}),
         # Operator opt-in, and only when there is a dashboard to link to.
         "admin_link":            _cfg.SHOW_ADMIN_LINK and _admin.enabled(),
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
@@ -5964,6 +6016,10 @@ async def server_caps(access_key: str = ""):
         "sash_priority_diff_seed": _SASH_DIFF_SEED,
         "imdb_dataset_enabled":  imdb_dataset.is_enabled(),
         "imdb_dataset_titles":   imdb_dataset.row_count(),
+        # Largest resolution= the configurator may offer (MAX_POSTER_RESOLUTION);
+        # at the default canvas width it hides the control altogether.
+        "max_poster_resolution": max(_cfg.MAX_POSTER_RESOLUTION, _cfg.POSTER_WIDTH),
+        "preview_at_resolution": bool(_cfg.PREVIEW_AT_RESOLUTION),
     }
 
 
@@ -6048,6 +6104,26 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
             or (cfg.rating_display_mode == 3 and cfg.minimalist_append_mode == 0)
         ),
         stale=lambda cfg, facts: _score_unrated(facts),
+    ),
+    # 3: Overlays on canvases above 500 wide are floored in 500-wide units and
+    #    scaled up (pxscale) instead of rounding at their own size, so a large
+    #    poster is the 500 one enlarged.  500-wide composites are unchanged
+    #    (verified pixel-identical); every larger one re-renders.  (2 was a
+    #    frosted-notch revision that turned out not to change anything and was
+    #    folded into this one; it is skipped so composites stamped 2 re-render.)
+    _RenderRevision(
+        rev=3,
+        applies=lambda cfg: cfg.poster_width != _cfg.POSTER_WIDTH,
+        stale=lambda cfg, facts: True,
+    ),
+    # 4: Black / silver / gold notches honour sash_badge_pos (side chip, auto)
+    #    like the frosted one.  Only a URL naming a position for those styles
+    #    changes, and the configurator never wrote one, so this is rarely hit.
+    _RenderRevision(
+        rev=4,
+        applies=lambda cfg: (cfg.sash_mode == "notch" and cfg.sash_badge_style != "frosted"
+                             and cfg.sash_badge_pos != "center"),
+        stale=lambda cfg, facts: True,
     ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
@@ -6344,7 +6420,7 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
     genre fonts at a glance and compare the minimal vs photoreal sets.  Gated
     behind the access key when configured.
     """
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
     if style not in _GENRE_BG_STYLES:
         style = "minimal"
@@ -6404,7 +6480,7 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
 
 @app.get("/", response_class=HTMLResponse)
 async def get_configurator(request: Request, access_key: str = "", reload: str = ""):
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
     # ?reload=1 re-reads configurator.html from disk — useful while iterating on
     # the UI without restarting the container.  Gated on the access key so it's
@@ -6446,7 +6522,7 @@ async def search_proxy(
     tmdb_key: str = "",
     access_key: str = "",
 ):
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     if len(q) > 200:
         raise HTTPException(status_code=400, detail="Query too long")
@@ -6481,7 +6557,7 @@ async def resolve_imdb(
     tmdb_key: str = "",
     access_key: str = "",
 ):
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     _check_tmdb_id(tmdb_id)
@@ -6513,7 +6589,7 @@ async def resolve_tmdb(
     """The TMDB id for an IMDb id, for the configurator's key-less search:
     TMDB's /find with a key, Cinemeta's moviedb_id without.  ``tmdb_id`` is
     null when neither knows one; the title still renders from its IMDb id."""
-    if not _key_ok(access_key):
+    if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     _check_imdb_id(imdb_id)
     _check_type(type)

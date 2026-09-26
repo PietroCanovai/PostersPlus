@@ -131,6 +131,7 @@ class SnapshotExpiryTests(_TempDb):
 
 
 class AnimeKeyInvalidationTests(_TempDb):
+    @mock.patch.object(cache, "COMPOSITE_MEM_ENTRIES", 500)   # L1 is opt-in
     def test_anime_composites_are_cleared_from_memory(self):
         anime = "kitsu:123:tt0000001:456:tv:abcd"
         plain = "tt0000002:456:movie:abcd"

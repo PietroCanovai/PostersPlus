@@ -48,10 +48,13 @@ class NotchPositionRenderingTests(unittest.TestCase):
         # Integer placement can shift the mirror by a pixel at the edge.
         self.assertLess((diff.max(axis=2) > 8).mean(), 0.002)
 
-    def test_other_styles_stay_centred(self):
-        out = awards.draw_award_badge(_poster(), "#12 Today", notch_style="black", position="left")
-        self.assertGreater(_changed(out, (245, 0, 255, 20)), 0)
-        self.assertEqual(_changed(out, (0, 0, 60, 80)), 0)
+    def test_dark_styles_float_too(self):
+        # Black, silver and gold take the side positions as frosted does.
+        for style in ("black", "silver", "gold"):
+            with self.subTest(style=style):
+                out = awards.draw_award_badge(_poster(), "#12 Today", notch_style=style, position="left")
+                self.assertGreater(_changed(out, (0, 0, 60, 80)), 0)
+                self.assertEqual(_changed(out, (245, 0, 255, 20)), 0)
 
     def test_negative_inset_does_not_raise(self):
         for pos in ("left", "right"):
@@ -71,7 +74,7 @@ class NotchPositionConfigTests(unittest.TestCase):
         cfg = lambda **p: main.build_request_config({"sash_mode": "notch", **p})
         self.assertTrue(main._sash_holds_left(cfg(sash_badge_pos="left")))
         self.assertFalse(main._sash_holds_left(cfg(sash_badge_pos="right")))
-        self.assertFalse(main._sash_holds_left(cfg(sash_badge_pos="left", sash_badge_style="gold")))
+        self.assertTrue(main._sash_holds_left(cfg(sash_badge_pos="left", sash_badge_style="gold")))
         self.assertTrue(main._sash_holds_left(main.build_request_config(
             {"sash_mode": "sash", "sash_side": "left"})))
 

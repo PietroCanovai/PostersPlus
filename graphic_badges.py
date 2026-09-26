@@ -31,6 +31,8 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from pxscale import px, pxr
+
 logger = logging.getLogger(__name__)
 
 _FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
@@ -267,8 +269,9 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
     knocks the text out of a solid light box instead, for resolution, so it
     reads as a different kind of fact from the outlined ones beside it."""
     ss = 4
-    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), int(h * _BOX_TEXT) * ss)
-    w = int(font.getlength(text) / ss + h * _BOX_PAD)
+    # 500-wide rounding (pxscale), snapped to whole pixels for the image.
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss)
+    w = round(px(font.getlength(text) / ss + h * _BOX_PAD))
     im = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     bw = max(1, round(h * 0.07)) * ss
@@ -276,14 +279,14 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
     # one would leave the box's ink a pixel short of the marks beside it.
     box = [0, 0, w * ss - 1, h * ss - 1]
     if filled:
-        d.rounded_rectangle(box, radius=int(h * _BOX_RADIUS * ss), fill=(*_INK, 235))
+        d.rounded_rectangle(box, radius=px(h * _BOX_RADIUS * ss), fill=(*_INK, 235))
         # Cut the label out of the plate so the poster shows through it.
         cut = Image.new("L", im.size, 0)
         ImageDraw.Draw(cut).text((w * ss / 2, h * ss / 2), text, font=font, fill=255, anchor="mm")
         im.putalpha(Image.fromarray(np.minimum(np.asarray(im.getchannel("A")),
                                                255 - np.asarray(cut))))
     else:
-        d.rounded_rectangle(box, radius=int(h * _BOX_RADIUS * ss), outline=(*_INK, 235), width=bw)
+        d.rounded_rectangle(box, radius=px(h * _BOX_RADIUS * ss), outline=(*_INK, 235), width=bw)
         d.text((w * ss / 2, h * ss / 2), text, font=font, fill=(*_INK, 245), anchor="mm")
     return im.reduce(ss)
 
@@ -653,8 +656,10 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
 # Layout
 # ---------------------------------------------------------------------------
 
-def row_width(items: list[tuple[str, Image.Image]], gap: int) -> int:
-    return sum(im.width for _, im in items) + gap * max(0, len(items) - 1)
+def row_width(items: list[tuple[str, Image.Image]], gap: float) -> float:
+    # In 500-wide units (pxscale), as draw_row advances; rounding each item's
+    # width at a larger canvas would otherwise add up along the row.
+    return sum(pxr(im.width) for _, im in items) + gap * max(0, len(items) - 1)
 
 
 def fit(items: list[tuple[str, Image.Image]], budget: int, gap: int) -> list[tuple[str, Image.Image]]:
@@ -693,7 +698,7 @@ def draw_row(image: Image.Image, items: list[tuple[str, Image.Image]], *,
     x = left_x
     for _, im in items:
         shadow, pad = _shadowed(im)
-        sx, sy = x - pad, int(round(center_y - im.height / 2)) - pad
+        sx, sy = round(x) - pad, int(round(center_y - im.height / 2)) - pad
         cl, ct = max(0, -sx), max(0, -sy)
         image.alpha_composite(shadow.crop((cl, ct, shadow.width, shadow.height)), (sx + cl, sy + ct))
-        x += im.width + gap
+        x += pxr(im.width) + gap

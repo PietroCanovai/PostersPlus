@@ -19,6 +19,7 @@ import os
 import threading
 
 import numpy as np
+from PIL import Image
 
 import config as _cfg
 
@@ -41,6 +42,14 @@ _SCORE_THRESHOLD = 0.6
 # cached backdrops it found faces in 12 of the 56 with none, improving 4 crops
 # and worsening none.
 _RETRY_MIN_WIDTH = 640
+
+# Longest side inference ever runs at.  YuNet sizes its buffers to the input
+# and keeps them: a 3840x2160 original (what 1500/2000 px canvases fetch)
+# peaked at ~770 MB and left ~250 MB resident per worker, against ~140 MB at
+# 1280.  Larger images are detected at this size and the boxes scaled back.
+# The default canvases (w1280 backdrops, 500/780 posters) are within it, so
+# their results are unchanged.
+_MAX_SIDE = 1280
 
 # Part of every face_box_cache key, so a different model or threshold never
 # reuses boxes another detector found.
@@ -123,10 +132,15 @@ def detect_face_boxes(image) -> list[tuple[float, float, float, float, float]]:
     if det is None:
         return []
     try:
+        iw, ih = image.size
+        if iw == 0 or ih == 0:
+            return []
+        scale = max(iw, ih) / _MAX_SIDE
+        if scale > 1:
+            image = image.resize((max(1, round(iw / scale)), max(1, round(ih / scale))),
+                                 Image.Resampling.BILINEAR, reducing_gap=2.0)
         arr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()  # RGB→BGR
         h, w = arr.shape[:2]
-        if h == 0 or w == 0:
-            return []
         faces = _detect_at(det, arr)
         if not faces and w >= _RETRY_MIN_WIDTH:
             # Nothing at native size: look again at half size, for faces too
@@ -135,6 +149,10 @@ def detect_face_boxes(image) -> list[tuple[float, float, float, float, float]]:
             sx, sy = w / (w // 2), h / (h // 2)
             faces = [(x * sx, y * sy, fw * sx, fh * sy, score)
                      for x, y, fw, fh, score in _detect_at(det, small)]
+        if scale > 1:
+            sx, sy = iw / w, ih / h
+            faces = [(x * sx, y * sy, fw * sx, fh * sy, score)
+                     for x, y, fw, fh, score in faces]
         return faces
     except Exception as exc:
         logger.warning(f"face detect error: {exc}")

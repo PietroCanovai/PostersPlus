@@ -118,8 +118,8 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
         # would leak into stored settings and into every exported URL.
         self.assertIn("templateId = null } = {}", self.html)
         self.assertIn(
-            "const template       = COPY_TEMPLATES.find(t => t.id === templateId) "
-            "|| COPY_TEMPLATE_NEUTRAL;",
+            "const template       = [...COPY_TEMPLATES, COPY_TEMPLATE_SHARE].find(t => t.id === templateId)\n"
+            "                         || COPY_TEMPLATE_NEUTRAL;",
             self.html,
         )
         self.assertIn("const COPY_TEMPLATE_NEUTRAL = { id: '', name: '',", self.html)
@@ -202,6 +202,36 @@ class CopyButtonBehaviourTests(unittest.TestCase):
         self.assertIn(
             "'#external-menu, #external-link, #copy-menu, #copy-config-btn'", self.html
         )
+
+
+
+class ShareSettingsTests(unittest.TestCase):
+    """Share settings hands the look to someone else, so it must carry nothing
+    that identifies the sender's instance or unlocks their accounts."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = Path("configurator.html").read_text(encoding="utf-8")
+
+    def test_host_is_a_reserved_name_that_never_resolves(self):
+        self.assertIn("const SHARE_ORIGIN = 'https://share.postersplus.invalid';", self.html)
+        self.assertIn("domainOverride: SHARE_ORIGIN", self.html)
+
+    def test_keys_ids_and_personal_choices_are_dropped(self):
+        start = self.html.index("const _SHARE_DROP")
+        drop = self.html[start:self.html.index("];", start)]
+        for key in ("tmdb_key", "mdblist_key", "access_key", "tmdb_id", "imdb_id",
+                    "stremio_id", "type", "logo_language", "primary_client", "resolution"):
+            with self.subTest(key=key):
+                self.assertIn(f"'{key}'", drop)
+
+    def test_both_shapes_travel_with_every_parameter(self):
+        self.assertIn("COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', "
+                      "...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };", self.html)
+        self.assertIn("buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',", self.html)
+
+    def test_import_takes_settings_only(self):
+        self.assertIn("isShareUrl(raw) ? { settingsOnly: true, share: true } : {}", self.html)
 
 
 if __name__ == "__main__":

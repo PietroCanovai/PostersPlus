@@ -297,6 +297,7 @@ class AniListTrendingTests(unittest.TestCase):
 
 
 class AnimeRankTests(_AddonTest):
+    @mock.patch.object(cache, "COMPOSITE_MEM_ENTRIES", 500)   # L1 is opt-in
     def test_anime_rank_change_invalidates_anilist_composites(self):
         cache.set_cached_final_poster("anilist:5:tt1:77:series:h", b"x")
         cache.set_cached_final_poster("anilist:55:tt2:78:series:h", b"x")

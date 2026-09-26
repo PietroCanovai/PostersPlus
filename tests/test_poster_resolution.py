@@ -2,11 +2,20 @@
 with the fixed-pixel settings scaled to match, without disturbing 500x750."""
 import contextvars
 import unittest
+from unittest import mock
 
 from PIL import Image
 
 import main
 import tmdb
+
+
+def setUpModule():
+    # Larger sizes are off unless the operator raises MAX_POSTER_RESOLUTION;
+    # the rest of this module exercises them, so allow every size here.
+    patcher = mock.patch.object(main._cfg, "MAX_POSTER_RESOLUTION", 2000)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 class ResolutionParamTests(unittest.TestCase):
@@ -31,6 +40,36 @@ class ResolutionParamTests(unittest.TestCase):
     def test_landscape_ignores_it(self):
         cfg = main.build_request_config({"resolution": "780", "shape": "landscape"})
         self.assertEqual(cfg.poster_width, 500)
+
+
+class ResolutionCapTests(unittest.TestCase):
+    def _width(self, raw, cap):
+        with mock.patch.object(main._cfg, "MAX_POSTER_RESOLUTION", cap):
+            return main.build_request_config({"resolution": raw}).poster_width
+
+    def test_default_cap_keeps_every_request_at_500(self):
+        for raw in ("780", "high", "1000", "2000"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._width(raw, 500), 500)
+
+    def test_requests_above_the_cap_get_the_largest_allowed(self):
+        self.assertEqual(self._width("2000", 1000), 1000)
+        self.assertEqual(self._width("1500", 780), 780)
+
+    def test_requests_within_the_cap_are_unchanged(self):
+        self.assertEqual(self._width("780", 1500), 780)
+        self.assertEqual(self._width("1500", 1500), 1500)
+
+    def test_setting_defaults_to_500(self):
+        import settings as _settings
+        self.assertEqual(_settings.REGISTRY["MAX_POSTER_RESOLUTION"].default, "500")
+
+    def test_preview_at_resolution_is_off_and_follows_the_cap(self):
+        import settings as _settings
+        entry = _settings.REGISTRY["PREVIEW_AT_RESOLUTION"]
+        self.assertEqual(entry.default, "false")
+        self.assertEqual(entry.show_if[0], "MAX_POSTER_RESOLUTION")
+        self.assertNotIn("500", entry.show_if[1])
 
 
 class SignatureTests(unittest.TestCase):

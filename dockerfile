@@ -84,6 +84,15 @@ RUN python3 -m compileall -q -l /app \
     && mkdir -p /app/cache \
     && chown appuser:appuser /app/cache
 
+# Pin glibc's mmap threshold at 4 MB.  Left dynamic, it ratchets up to 32 MB
+# after the first large free, so a big canvas's image buffers (16-24 MB at
+# 2000 px) are carved from the malloc arenas instead of mmap'd; freed, they
+# fragment the arenas and stay resident.  Measured per worker after a
+# 1000-2000 px burst: ~0.8-1.1 GB held dynamic vs ~350 MB pinned, peak ~1.3 GB
+# vs ~0.85 GB.  500 px renders (1.5 MB buffers) are unaffected; above that,
+# renders run ~10-20% slower from page-faulting fresh mappings.
+ENV MALLOC_MMAP_THRESHOLD_=4194304
+
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.
 #

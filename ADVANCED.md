@@ -138,9 +138,9 @@ Default: `500`
 
 ### `COMPOSITE_MEM_ENTRIES`
 
-Fully-rendered composites kept in an in-memory LRU (L1) cache, served without a SQLite read. ~100-300 KB each; 500 entries is roughly 50-150 MB. Set to 0 to disable the in-memory cache entirely. Default: 500.
+Fully-rendered composites kept in each worker's in-memory LRU (L1) cache, served without a SQLite read. Off by default: the SQLite read it saves takes well under a millisecond (the OS page cache, shared by all workers, keeps hot rows in memory anyway), while each entry costs roughly 100-600 KB per worker. Configurator previews produce a new composite for every change, so they churn the cache rather than hit it.
 
-Default: `500`
+Default: `0`
 
 ### `DISABLE_COMPOSITE_CACHE`
 

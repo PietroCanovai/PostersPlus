@@ -245,9 +245,31 @@ class AutoNotchTests(unittest.TestCase):
         self.assertEqual(self.pos(badge_group1="0.9,0.9,r:2:res,cert"), "center")
         self.assertEqual(self.pos(badge_group1="tl:1:res", badge_group2="tr:1:cert"), "center")
 
-    def test_only_with_graphic_badges_and_the_frosted_notch(self):
+    def test_only_with_graphic_badges(self):
         self.assertEqual(self.pos(badge_display_mode="4"), "center")
-        self.assertEqual(self.pos(sash_badge_style="gold"), "center")
+
+    def test_every_notch_style_moves_alike(self):
+        frosted = self.pos()
+        for style in ("black", "silver", "gold"):
+            with self.subTest(style=style):
+                self.assertEqual(self.pos(sash_badge_style=style), frosted)
+
+    def test_dark_styles_draw_a_side_chip(self):
+        img = Image.new("RGBA", (500, 750), (120, 140, 160, 255))
+        for style in ("black", "silver", "gold"):
+            with self.subTest(style=style):
+                def draw(mode):
+                    cfg = main.build_request_config({"sash_mode": mode, "sash_badge_style": style,
+                                                     "sash_badge_pos": "left", "rating_display_mode": "0"})
+                    return np.asarray(main.build_poster(
+                        img.copy(), 80, "Drama", cfg,
+                        discovery_meta=DiscoveryMeta(award_wins=["Oscar Winner"])))[:120, :, :3].astype(int)
+                # Against the same poster without it, so the gradients drop out.
+                changed = np.abs(draw("notch") - draw("hidden")).sum(2) > 30
+                cols = changed.any(0)
+                self.assertTrue(cols[25:60].all())      # a chip in from the left edge
+                self.assertFalse(cols[:15].any())       # floated in by the margin
+                self.assertFalse(cols[245:256].any())   # nothing left at the centre
 
     def test_the_render_draws_the_resolved_position(self):
         img = Image.new("RGBA", (500, 750), (40, 90, 140, 255))
