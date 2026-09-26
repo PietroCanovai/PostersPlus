@@ -386,10 +386,11 @@ async def ensure_logo(client, logo: Logo | None) -> None:
 # A logo that is mostly one solid block (a badge, a shield: Marvel Studios'
 # red box, ABC's disc) carries its lettering as lighter colour inside it, which
 # a plain white mark would lose.  Those have their light parts cut out — but
-# only where the light parts are a minority of the block: a logo that is
-# itself light lettering (Marvel's wordmark, STARZ) would otherwise vanish.
+# only where the light parts don't swamp the block: a logo that is itself
+# light lettering (Marvel's wordmark, STARZ: all light) would otherwise
+# vanish.  Warner Bros.' shield is just over half gold (rim, letters, banner).
 _KNOCKOUT_FILL = 0.55
-_KNOCKOUT_LIGHT = (0.03, 0.5)
+_KNOCKOUT_LIGHT = (0.03, 0.65)
 
 
 def logo_alpha(im: Image.Image) -> np.ndarray:
