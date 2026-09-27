@@ -3125,6 +3125,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <div id="sash-trending-mark-fields" style="display:none;">
               <div class="field">
+                <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes.">Trending Rank Side</label>
+                <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
+                  <option value="left" selected>Left</option>
+                  <option value="right">Right</option>
+                </select>
+                <div class="segmented" data-for="cfg-trending-side"></div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
+                <select class="segmented-source" id="cfg-trending-sash" onchange="build(); queuePreviewReload()">
+                  <option value="keep" selected>Do Nothing</option>
+                  <option value="hide">Hide</option>
+                  <option value="opposite">Opposite Side</option>
+                </select>
+                <div class="segmented" data-for="cfg-trending-sash"></div>
+              </div>
+              <div class="field">
                 <label class="field-label" data-tip="Size of the Trending number or ribbon against its default.">Trending Rank Size</label>
                 <div class="range-row">
                   <input type="range" id="cfg-trending-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-trs'); build(); queuePreviewReload()">
@@ -6204,6 +6221,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll && _trStyle !== 'sash') {
     params.set('trending_style', _trStyle);
     if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
+    if (vEl('cfg-trending-side') === 'right') params.set('trending_side', 'right');
+    if (vEl('cfg-trending-sash') !== 'keep') params.set('trending_sash', vEl('cfg-trending-sash'));
     if (_trStyle === 'ribbon') {
       if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
       if (vEl('cfg-trending-ribbon-style') === 'frosted') {
@@ -8157,6 +8176,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-sash-side', p.get('sash_side') === 'left' ? 'left' : 'right');
   _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
+  _setEl('cfg-trending-side', p.get('trending_side') === 'right' ? 'right' : 'left');
+  _setEl('cfg-trending-sash', ['hide', 'opposite'].includes(p.get('trending_sash')) ? p.get('trending_sash') : 'keep');
   _setEl('tog-trending-label', p.get('trending_label') === 'true');
   _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
   _setEl('cfg-trending-frost-opacity', p.get('trending_frost_opacity') || '0.75');

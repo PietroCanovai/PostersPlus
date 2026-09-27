@@ -240,18 +240,54 @@ class RibbonStyleTests(unittest.TestCase):
 
 
 class RankSideTests(unittest.TestCase):
-    def test_left_unless_the_sash_or_chip_is_there(self):
+    def test_side_is_the_setting_alone(self):
         cases = (
             ({}, False),
-            ({"sash_side": "left"}, True),
-            ({"sash_mode": "notch"}, False),
-            ({"sash_mode": "notch", "sash_badge_pos": "left"}, True),
-            ({"sash_mode": "notch", "sash_badge_pos": "right"}, False),
-            ({"sash_mode": "hidden", "sash_side": "left"}, False),
+            ({"trending_side": "right"}, True),
+            ({"trending_side": "RIGHT"}, True),
+            ({"trending_side": "middle"}, False),
+            # The sash no longer pushes the mark: trending_sash decides what
+            # the sash does instead.
+            ({"sash_side": "left"}, False),
+            ({"sash_mode": "notch", "sash_badge_pos": "left"}, False),
         )
         for params, right in cases:
             with self.subTest(**params):
                 self.assertEqual(main._rank_on_right(main.build_request_config(params)), right)
+
+    def test_do_nothing_leaves_the_sash_alone(self):
+        cfg = main.build_request_config({"sash_mode": "notch", "sash_badge_pos": "left"})
+        self.assertEqual(cfg.trending_sash, "keep")
+        self.assertIs(main._sash_beside_rank(cfg), cfg)
+
+    def test_hide_turns_the_sash_off(self):
+        for mode in ("sash", "notch"):
+            with self.subTest(mode=mode):
+                cfg = main.build_request_config({"sash_mode": mode, "trending_sash": "hide"})
+                self.assertEqual(main._sash_beside_rank(cfg).sash_mode, "hidden")
+
+    def test_opposite_moves_the_sash_to_the_free_corner(self):
+        cases = (
+            # (params, sash_side after, sash_badge_pos after)
+            ({"sash_side": "left"}, "right", "center"),
+            ({"sash_side": "right", "trending_side": "right"}, "left", "center"),
+            ({"sash_mode": "notch"}, "right", "right"),
+            ({"sash_mode": "notch", "sash_badge_pos": "right", "trending_side": "right"}, "right", "left"),
+            ({"sash_mode": "notch", "sash_badge_pos": "left"}, "right", "right"),
+        )
+        for params, side, pos in cases:
+            with self.subTest(**params):
+                cfg = main._sash_beside_rank(main.build_request_config({**params, "trending_sash": "opposite"}))
+                self.assertEqual((cfg.sash_side, cfg.sash_badge_pos), (side, pos))
+
+    def test_opposite_leaves_a_hidden_sash_hidden(self):
+        cfg = main.build_request_config({"sash_mode": "hidden", "trending_sash": "opposite"})
+        self.assertEqual(main._sash_beside_rank(cfg).sash_mode, "hidden")
+
+    def test_defaults_stay_out_of_the_cache_key(self):
+        sig = main._render_config_signature(main.build_request_config({}))
+        self.assertNotIn("trending_side", sig)
+        self.assertNotIn("trending_sash", sig)
 
     def test_numeral_clears_what_the_sash_drew_beside_it(self):
         cfg = main.build_request_config({"trending_style": "number"})
@@ -264,6 +300,49 @@ class RankSideTests(unittest.TestCase):
         out = main._draw_trending_rank(blocked, cfg, 24, before)
         lit = lambda im: np.flatnonzero(np.asarray(im)[40:120, :150, :3].max(axis=(0, 2)) > 100)
         self.assertLess(lit(out)[-1], lit(free)[-1])
+
+
+class SashBesideRankRenderTests(unittest.TestCase):
+    """Through build_poster: a titled trending at #3 with a New Season sash."""
+
+    def setUp(self):
+        patcher = mock.patch.object(discovery._cfg, "TRENDING_FETCH_COUNT", 40)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _render(self, **params):
+        cfg = main.build_request_config({"trending_style": "ribbon", "sash_mode": "notch",
+                                         "sash_badge_style": "black", "top_gradient": "off",
+                                         "bottom_gradient": "off", "rating_display_mode": "0",
+                                         "badge_display_mode": "0", "hide_genre": "true",
+                                         "hide_year": "true",
+                                         "sash_priority": "trending,new_season", **params})
+        meta = discovery.DiscoveryMeta(trending_rank=3, is_new_season=True)
+        art = Image.new("RGBA", (500, 750), (120, 120, 120, 255))
+        return np.asarray(main.build_poster(art, 80, "Drama", cfg, discovery_meta=meta).convert("RGB")).astype(int)
+
+    def _dark(self, out, x0, x1):
+        # Dark pixels in the top band between x0 and x1 (the art is mid-grey):
+        # the ribbon's charcoal, or the notch's black whether centred or a chip.
+        return int((out[5:60, x0:x1].max(axis=2) < 60).sum())
+
+    def test_keep_draws_the_centred_notch(self):
+        out = self._render()
+        self.assertGreater(self._dark(out, 200, 300), 0)
+
+    def test_hide_drops_the_notch_but_keeps_the_ribbon(self):
+        out = self._render(trending_sash="hide")
+        self.assertEqual(self._dark(out, 150, 500), 0)
+        self.assertGreater(self._dark(out, 0, 120), 0)
+
+    def test_opposite_sends_the_notch_to_the_free_corner(self):
+        out = self._render(trending_sash="opposite")
+        # The centre the notch left (the chip starts a little right of it).
+        self.assertEqual(self._dark(out, 180, 260), 0)
+        self.assertGreater(self._dark(out, 380, 500), 0)
+        out = self._render(trending_sash="opposite", trending_side="right")
+        self.assertGreater(self._dark(out, 0, 120), 0)      # the chip, now on the left
+        self.assertGreater(self._dark(out, 400, 480), 0)    # the ribbon, on the right
 
 
 if __name__ == "__main__":

@@ -1876,6 +1876,11 @@ class RequestConfig:
     trending_ribbon_style: str = "charcoal"  # ribbon: "charcoal" or a notch style (frosted/black/silver/gold)
     trending_frost_opacity:    float = 0.75  # frosted ribbon: frost layer opacity (0.0–1.0)
     trending_frost_saturation: float = 1.2   # frosted ribbon: colour-cast strength (0 = grey)
+    trending_side:     str   = "left"   # top corner the number / ribbon takes: "left" | "right"
+    # What the sash or notch does on a poster showing a rank mark: "keep" (as
+    # configured) | "hide" | "opposite" (the diagonal sash, or the notch as a
+    # side chip, moves to the corner the mark leaves free).
+    trending_sash:     str   = "keep"
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
     rating_text_color: tuple[int, int, int] | None = None
@@ -2197,7 +2202,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
                               "trending_scale": 1.0, "trending_label": False, "trending_corner": False,
                               "trending_ribbon_style": "charcoal",
-                              "trending_frost_opacity": 0.75, "trending_frost_saturation": 1.2}
+                              "trending_frost_opacity": 0.75, "trending_frost_saturation": 1.2,
+                              "trending_side": "left", "trending_sash": "keep"}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2394,6 +2400,12 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.trending_ribbon_style = _trs_raw
     cfg.trending_frost_opacity    = _f("trending_frost_opacity",    cfg.trending_frost_opacity,    0.0, 1.0)
     cfg.trending_frost_saturation = _f("trending_frost_saturation", cfg.trending_frost_saturation, 0.0, 2.0)
+    _tside_raw = (params.get("trending_side") or "").strip().lower()
+    if _tside_raw in ("left", "right"):
+        cfg.trending_side = _tside_raw
+    _tsash_raw = (params.get("trending_sash") or "").strip().lower()
+    if _tsash_raw in ("keep", "hide", "opposite"):
+        cfg.trending_sash = _tsash_raw
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
@@ -3688,6 +3700,8 @@ def _build_poster(
     if cfg.trending_style != "sash" and discovery_meta is not None:
         _rank = shown_trending_rank(discovery_meta, _sash_priority)
         _sash_priority = [s for s in _sash_priority if s not in TRENDING_SLOTS]
+    if _rank is not None:
+        cfg = _sash_beside_rank(cfg)
     sash_result = (
         pick_sash(discovery_meta, _sash_priority)
         if discovery_meta is not None
@@ -4724,11 +4738,24 @@ def _build_poster(
 
 
 def _rank_on_right(cfg: "RequestConfig") -> bool:
-    """The trending rank mark takes the top-left corner unless the diagonal
-    sash or a side chip is there.  Decided by the config, not by whether this
-    title has a sash, so a row of posters keeps its ranks on one side."""
-    return ((cfg.sash_mode == "sash" and cfg.sash_side == "left")
-            or (cfg.sash_mode == "notch" and cfg.sash_badge_pos == "left"))
+    """Whether the trending rank mark takes the top-right corner."""
+    return cfg.trending_side == "right"
+
+
+def _sash_beside_rank(cfg: "RequestConfig") -> "RequestConfig":
+    """The config the sash draws with on a poster showing a rank mark, per
+    cfg.trending_sash: unchanged, hidden, or moved to the corner the mark
+    leaves free — the diagonal sash to that corner, the notch (centred or
+    not) to a side chip there."""
+    if cfg.trending_sash == "hide":
+        return dataclasses.replace(cfg, sash_mode="hidden")
+    if cfg.trending_sash == "opposite":
+        free = "left" if _rank_on_right(cfg) else "right"
+        if cfg.sash_mode == "sash":
+            return dataclasses.replace(cfg, sash_side=free)
+        if cfg.sash_mode == "notch":
+            return dataclasses.replace(cfg, sash_badge_pos=free)
+    return cfg
 
 
 def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
