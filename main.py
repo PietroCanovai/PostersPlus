@@ -1873,6 +1873,7 @@ class RequestConfig:
     trending_scale:    float = 1.0      # number / ribbon size against its default
     trending_label:    bool  = False    # ribbon: FILM / SERIES / ANIME under the rank
     trending_corner:   bool  = False    # ribbon: nested into the corner, not inset from it
+    trending_ribbon_style: str = "charcoal"  # ribbon: "charcoal" or a notch style (frosted/black/silver/gold)
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
     rating_text_color: tuple[int, int, int] | None = None
@@ -2192,7 +2193,8 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
 _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
                               "rating_badge_style": "color",
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
-                              "trending_scale": 1.0, "trending_label": False, "trending_corner": False}
+                              "trending_scale": 1.0, "trending_label": False, "trending_corner": False,
+                              "trending_ribbon_style": "charcoal"}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2384,6 +2386,9 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.trending_scale  = _f("trending_scale", cfg.trending_scale, 0.5, 2.0)
     cfg.trending_label  = _b("trending_label", cfg.trending_label)
     cfg.trending_corner = _b("trending_corner", cfg.trending_corner)
+    _trs_raw = (params.get("trending_ribbon_style") or "").strip().lower()
+    if _trs_raw in trending_rank.RIBBON_STYLES:
+        cfg.trending_ribbon_style = _trs_raw
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
@@ -4206,9 +4211,11 @@ def _build_poster(
     if cfg.hide_rating:
         _bar_style = {"rating_frosted": "frosted", "rating_black": "pure_black"}.get(_bar_style, _bar_style)
     _bar_frosted   = cfg.rating_display_mode == 4 and _bar_style in ("frosted", "rating_frosted")
+    _ribbon_frosted = (_rank is not None and cfg.trending_style == "ribbon"
+                       and cfg.trending_ribbon_style == "frosted")
     _frost_tint: tuple[float, float, float] | None = (
         dominant_frost_rgb(_frost_color_src)
-        if (_bar_frosted or _notch_frosted or _sash_poster) else None
+        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted) else None
     )
     # A tinted vignette and a frosted notch sample the same artwork but answer
     # different questions — the vignette asks what the band's own stretch of art is
@@ -4698,7 +4705,8 @@ def _build_poster(
     # --- Trending rank mark ---
     # After the sash, so the numeral can shrink to clear a notch beside it.
     if _rank is not None:
-        image = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind)
+        image = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind,
+                                    frost=(_frost_tint, _frost_sat, _frost_ref))
 
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
@@ -4719,11 +4727,14 @@ def _rank_on_right(cfg: "RequestConfig") -> bool:
 
 
 def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
-                        before: np.ndarray | None, media_kind: str | None = None) -> Image.Image:
+                        before: np.ndarray | None, media_kind: str | None = None,
+                        frost: tuple = (None, 1.2, False)) -> Image.Image:
     """Draw the rank as cfg.trending_style's mark.  *before* is the numeral's
     band as it was before the sash drew; the numeral shrinks to clear
     whatever the sash put there, such as a centred notch.  *media_kind* picks
-    the ribbon's label; without one the ribbon goes unlabelled."""
+    the ribbon's label; without one the ribbon goes unlabelled.  *frost* is
+    the (tint, saturation, reference) every frosted element shares, for a
+    frosted ribbon."""
     right = _rank_on_right(cfg)
     if cfg.trending_style == "ribbon":
         label = None
@@ -4732,7 +4743,13 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                                cfg.logo_language), cfg.logo_language)
         return trending_rank.draw_rank_ribbon(image, rank, right=right, label=label,
                                               scale=cfg.trending_scale,
-                                              corner=cfg.trending_corner)
+                                              corner=cfg.trending_corner,
+                                              style=cfg.trending_ribbon_style,
+                                              tint_rgb=frost[0],
+                                              frost_opacity=cfg.sash_badge_frost_opacity,
+                                              frost_saturation=frost[1],
+                                              frost_reference=frost[2],
+                                              text_color=cfg.sash_text_color)
     max_w = None
     if before is not None:
         w = image.width

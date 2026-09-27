@@ -3131,6 +3131,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-trs">1.00</span>
                 </div>
               </div>
+              <div class="field" id="sash-trending-ribbon-style-field">
+                <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour, opacity and saturation from the same settings as a frosted notch.">Ribbon Style</label>
+                <select id="cfg-trending-ribbon-style" onchange="build(); queuePreviewReload()">
+                  <option value="charcoal" selected>Charcoal</option>
+                  <option value="frosted">Frosted</option>
+                  <option value="black">Pure Black</option>
+                  <option value="silver">Black, Silver Trim</option>
+                  <option value="gold">Black, Gold Trim</option>
+                </select>
+              </div>
               <div class="toggle-row" id="sash-trending-label-row">
                 <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
                 <label class="toggle-switch">
@@ -6179,6 +6189,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('trending_style', _trStyle);
     if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
     if (_trStyle === 'ribbon') {
+      if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
       if (c('tog-trending-label'))  params.set('trending_label', 'true');
       if (c('tog-trending-corner')) params.set('trending_corner', 'true');
     }
@@ -6920,6 +6931,7 @@ function updateTrendingStyleFields() {
   if (c('tog-landscape')) return;
   const style = vEl('cfg-trending-style');
   document.getElementById('sash-trending-mark-fields').style.display = style !== 'sash' ? '' : 'none';
+  document.getElementById('sash-trending-ribbon-style-field').style.display = style === 'ribbon' ? '' : 'none';
   document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
   document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
   if (style !== 'sash') initCustomMobileSliders();
@@ -8125,6 +8137,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
   _setEl('tog-trending-label', p.get('trending_label') === 'true');
   _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
+  _setEl('cfg-trending-ribbon-style', ['frosted', 'black', 'silver', 'gold'].includes(p.get('trending_ribbon_style')) ? p.get('trending_ribbon_style') : 'charcoal');
   updateTrendingStyleFields();
   updateSashBadgeFields();
 

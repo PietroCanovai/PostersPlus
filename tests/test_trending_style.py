@@ -171,6 +171,55 @@ class RibbonOptionTests(unittest.TestCase):
         self.assertEqual(seen, ["FILM", "SERIES", "ANIME", None, "SERIE"])
 
 
+class RibbonStyleTests(unittest.TestCase):
+    def _art(self):
+        return Image.new("RGBA", (500, 750), (40, 90, 160, 255))
+
+    def _pixel(self, im, xy):
+        return np.asarray(im)[xy[1], xy[0], :3].astype(int)
+
+    def test_every_style_draws(self):
+        for style in trending_rank.RIBBON_STYLES:
+            with self.subTest(style=style):
+                out = trending_rank.draw_rank_ribbon(self._art(), 3, label="FILM", style=style)
+                self.assertFalse(np.array_equal(np.asarray(out), np.asarray(self._art())))
+
+    def test_unknown_style_is_charcoal(self):
+        a = np.asarray(trending_rank.draw_rank_ribbon(self._art(), 3, style="plaid"))
+        b = np.asarray(trending_rank.draw_rank_ribbon(self._art(), 3))
+        np.testing.assert_array_equal(a, b)
+
+    def test_frosted_is_a_light_tinted_panel_with_dark_ink(self):
+        out = trending_rank.draw_rank_ribbon(self._art(), 3, style="frosted", tint_rgb=(40, 90, 160))
+        # Just inside the ribbon's top-left, clear of the number.
+        body = self._pixel(out, (round(trending_rank._RIB_INSET * 500) + 3, 3))
+        self.assertGreater(body.mean(), 140)
+        self.assertGreater(body[2], body[0])     # the blue of the art shows through
+
+    def test_gold_trim_down_the_side(self):
+        out = np.asarray(trending_rank.draw_rank_ribbon(self._art(), 3, style="gold")).astype(int)
+        x0 = round(trending_rank._RIB_INSET * 500)
+        side = out[30, x0:x0 + 4, :3]
+        # Some pixel in from the edge is gold: red and green well above blue.
+        self.assertTrue(((side[:, 0] - side[:, 2]) > 60).any())
+
+    def test_label_sits_clear_of_the_notch_point(self):
+        art = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
+        out = np.asarray(trending_rank.draw_rank_ribbon(art, 3, label="FILM")).astype(int)
+        rib_w = trending_rank._RIB_W * 500
+        apex = rib_w * (trending_rank._RIB_BODY + trending_rank._RIB_LABEL_BAND - trending_rank._RIB_NOTCH)
+        cx = round(trending_rank._RIB_INSET * 500 + rib_w / 2)
+        col = out[:, cx - 12:cx + 12, :3].max(axis=(1, 2))
+        text_rows = np.flatnonzero(col > 150)
+        self.assertLess(text_rows[-1], apex - 0.08 * rib_w)
+
+    def test_config_parses(self):
+        self.assertEqual(main.build_request_config({}).trending_ribbon_style, "charcoal")
+        self.assertEqual(main.build_request_config({"trending_ribbon_style": "gold"}).trending_ribbon_style, "gold")
+        self.assertEqual(main.build_request_config({"trending_ribbon_style": "x"}).trending_ribbon_style, "charcoal")
+        self.assertNotIn("trending_ribbon_style", main._render_config_signature(main.build_request_config({})))
+
+
 class RankSideTests(unittest.TestCase):
     def test_left_unless_the_sash_or_chip_is_there(self):
         cases = (

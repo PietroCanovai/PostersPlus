@@ -10,6 +10,7 @@
 # Either one frees the sash for the next label in the user's priority list, so
 # a title can read "#3" and "New Season" at once.  Both are laid out as ratios
 # of the canvas width, so every poster width draws the same mark.
+import math
 import os
 from functools import lru_cache
 
@@ -20,6 +21,10 @@ _FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "
 STYLES = ("sash", "number", "ribbon")
 # What the ribbon's label says for each kind of title, as sashLabels keys.
 KIND_LABELS = {"movie": "Film", "series": "Series", "anime": "Anime"}
+# The ribbon's own charcoal, then the notch's styles.
+RIBBON_STYLES = ("charcoal", "frosted", "black", "silver", "gold")
+# The notch's silver and gold trim.
+_TRIM = {"silver": (192, 192, 200), "gold": (212, 175, 55)}
 
 # Drawn at SS× on a layer just big enough for the mark, then box-reduced:
 # anti-aliased edges for the ribbon's point and the numeral's gradient.
@@ -45,6 +50,9 @@ _RIB_DIGIT  = 0.46   # digit ink height, of the ribbon width
 # ink height, both of the ribbon width.
 _RIB_LABEL_BAND = 0.36
 _RIB_LABEL_CAP  = 0.13
+# How far up the label's band its baseline sits from the notch's point: the
+# share of the band's spare height left beneath the capitals.
+_RIB_LABEL_LIFT = 0.80
 
 
 @lru_cache(maxsize=16)
@@ -145,17 +153,54 @@ def _spaced_width(text: str, font: ImageFont.FreeTypeFont, track: float) -> floa
     return sum(font.getlength(ch) for ch in text) + track * max(0, len(text) - 1)
 
 
+def _ribbon_body(style: str, size: tuple[int, int], yb: float, region: Image.Image | None,
+                 tint: tuple[int, int, int] | None, frost_opacity: float) -> Image.Image:
+    """The ribbon's fill at SS, before its shape is cut: the notch's surface
+    for each of its styles, plus the ribbon's own charcoal."""
+    lw, lh = size
+    if style == "frosted" and region is not None and tint is not None:
+        # The poster under the ribbon, blurred, with the frost colour laid over
+        # it at the notch's opacity.
+        body = region.resize(size, Image.Resampling.BILINEAR).convert("RGBA")
+        frost = Image.new("RGBA", size, (*tint, round(255 * frost_opacity)))
+        return Image.alpha_composite(body, frost)
+    if style == "black":
+        return Image.new("RGBA", size, (10, 10, 12, 230))
+    grad = Image.new("RGBA", (1, lh))
+    for y in range(lh):
+        t = min(1.0, y / max(1.0, yb))
+        if style in ("silver", "gold"):
+            # The notch's dark body: near-black, lifting a little mid-way.
+            c = round(4 + 10 * math.sin(t * math.pi))
+            grad.putpixel((0, y), (c, c, min(255, round(c * 1.3)), 235))
+        else:
+            # Charcoal, a shade lighter at the top.
+            c = round(46 * (1 - t) + 20 * t)
+            grad.putpixel((0, y), (c, c, c + 2, 235))
+    return grad.resize(size)
+
+
 def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
                      label: str | None = None, scale: float = 1.0,
-                     corner: bool = False) -> Image.Image:
-    """The rank on a dark ribbon hanging from the top edge, its foot cut into
-    a notch: just in from the top-left (or top-right) corner, or with
-    *corner*, nested right into it.
+                     corner: bool = False, style: str = "charcoal",
+                     tint_rgb: tuple[float, float, float] | None = None,
+                     frost_opacity: float = 0.75, frost_saturation: float = 1.2,
+                     frost_reference: bool | str = False,
+                     text_color: tuple[int, int, int] | None = None) -> Image.Image:
+    """The rank on a ribbon hanging from the top edge, its foot cut into a
+    notch: just in from the top-left (or top-right) corner, or with *corner*,
+    nested right into it.
 
     *label* ("FILM", "SERIES", ...) goes in small letter-spaced capitals under
     the rank, the ribbon growing to hold it.  *scale* sizes the whole ribbon
-    against its default.
+    against its default.  *style* is one of RIBBON_STYLES: its own charcoal,
+    or any of the notch's, drawn as the notch draws it — frosted from the same
+    colour sample (*tint_rgb*) and settings, silver and gold with their trim.
+    *text_color* overrides the label colour except on frosted, which picks
+    dark or light ink for its panel, as the notch does.
     """
+    if style not in RIBBON_STYLES:
+        style = "charcoal"
     w = image.width
     text = str(rank)
     widen = 1 + 0.28 * max(0, len(text) - 2)
@@ -163,6 +208,8 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     body_h = rib_w * (_RIB_BODY + (_RIB_LABEL_BAND if label else 0))
     notch = rib_w * _RIB_NOTCH
     pad = round(0.03 * w)                # room for the shadow's blur
+    inset = 0 if corner else _RIB_INSET * w
+    rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
 
     S = _SS
     lw, lh = round(rib_w + 2 * pad), round(body_h + pad)
@@ -172,27 +219,46 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     yb, yn = body_h * S, (body_h - notch) * S
     outline = [(x0, 0), (x1, 0), (x1, yb), ((x0 + x1) / 2, yn), (x0, yb)]
 
+    tint = region = None
+    if style == "frosted":
+        from awards import _frosted_tint, dominant_frost_rgb
+        src = image.convert("RGBA")
+        region = src.crop((rx, 0, rx + lw, lh)).filter(
+            ImageFilter.GaussianBlur(max(2.0, 0.12 * rib_w)))
+        tint = _frosted_tint(*(tint_rgb if tint_rgb is not None else dominant_frost_rgb(src)),
+                             saturation=frost_saturation, reference=frost_reference)
+
     mask = Image.new("L", layer.size, 0)
     ImageDraw.Draw(mask).polygon(outline, fill=255)
-    # Charcoal body, a shade lighter at the top, like the notch's dark styles.
-    grad = Image.new("RGBA", (1, layer.height))
-    for y in range(layer.height):
-        t = min(1.0, y / max(1, yb))
-        c = round(46 * (1 - t) + 20 * t)
-        grad.putpixel((0, y), (c, c, c + 2, 235))
-    body = grad.resize(layer.size)
-    body.putalpha(Image.eval(mask, lambda v: v * 235 // 255))
+    body = _ribbon_body(style, layer.size, yb, region, tint, frost_opacity)
+    body_a = 255 if style == "frosted" else (230 if style == "black" else 235)
+    body.putalpha(Image.eval(mask, lambda v: v * body_a // 255))
     layer.alpha_composite(body)
 
-    # A hairline rim down the sides and round the notch; none on top, where it
-    # meets the poster edge, nor down a side nested against the poster's.
-    rim_w = max(S, round(0.0035 * w * S))
-    rim = outline[1:] + outline[:1]
-    if corner:
-        rim = outline[2:] + outline[:1] if right else outline[1:]
-    ImageDraw.Draw(layer).line(rim, fill=(255, 255, 255, 46), width=rim_w, joint="curve")
-    # The rim is centred on the outline; keep only its inner half.
-    layer.putalpha(ImageChops.darker(layer.getchannel("A"), mask))
+    # An edge down the sides and round the notch; none on top, where it meets
+    # the poster edge, nor down a side nested against the poster's.  Charcoal
+    # has a faint hairline, silver and gold the notch's trim; frosted and pure
+    # black have none, like their notches.
+    edge = {"charcoal": ((255, 255, 255, 46), 0.0035),
+            "silver":   ((*_TRIM["silver"], 215), 0.007),
+            "gold":     ((*_TRIM["gold"], 215), 0.007)}.get(style)
+    if edge is not None:
+        rim = outline[1:] + outline[:1]
+        if corner:
+            rim = outline[2:] + outline[:1] if right else outline[1:]
+        # Twice the width: it is centred on the outline, and only the inner
+        # half survives the cut below.
+        ImageDraw.Draw(layer).line(rim, fill=edge[0], width=max(S, round(2 * edge[1] * rib_w / _RIB_W * S)),
+                                   joint="curve")
+        layer.putalpha(ImageChops.darker(layer.getchannel("A"), mask))
+
+    if style == "frosted":
+        from awards import _frost_ink
+        ink_rgb, num_a, label_a = _frost_ink(*tint), 245, 225
+    elif style == "black":
+        ink_rgb, num_a, label_a = text_color or (210, 210, 218), 245, 215
+    else:
+        ink_rgb, num_a, label_a = text_color or (255, 255, 255), 255, 200
 
     draw = ImageDraw.Draw(layer)
     cx_mid = (x0 + x1) / 2
@@ -213,8 +279,9 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
             span = _spaced_width(label, lfont, track)
         lcap = -lfont.getbbox("H", anchor="ls")[1]
         band = _RIB_LABEL_BAND * rib_w * S
-        base = yn - (band - lcap) * 0.55
-        _spaced(draw, (cx_mid - span / 2, base), label, lfont, track, (255, 255, 255, 200))
+        # Clear of the notch's point below, so the label has room to breathe.
+        base = yn - (band - lcap) * _RIB_LABEL_LIFT
+        _spaced(draw, (cx_mid - span / 2, base), label, lfont, track, (*ink_rgb, label_a))
         num_bottom = yn - band
 
     font, _ = _digit_font(_RIB_DIGIT * rib_w * S / widen ** 0.5)
@@ -224,13 +291,11 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
         font = _font(max(6, round(font.size * fit / (ink[2] - ink[0]))))
         ink = font.getbbox(text, anchor="ls")
     cx = cx_mid - (ink[0] + ink[2]) / 2
-    cy = num_bottom / 2 - (ink[1] + ink[3]) / 2 + (0.06 * rib_w * S if label else 0)
-    draw.text((cx, cy), text, font=font, fill=(255, 255, 255, 255), anchor="ls")
+    cy = num_bottom / 2 - (ink[1] + ink[3]) / 2 + (0.04 * rib_w * S if label else 0)
+    draw.text((cx, cy), text, font=font, fill=(*ink_rgb, num_a), anchor="ls")
 
     ribbon = layer.reduce(S)
     shadow = _shadow(ribbon, 0.012 * w, 140)
-    inset = 0 if corner else _RIB_INSET * w
-    rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
 
     result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
     _paste(result, shadow, rx + max(1, round(0.004 * w)), max(1, round(0.004 * w)))
