@@ -369,9 +369,9 @@ def _native(provider: str, value: float) -> str:
         return f"{round(value)}%"
     if provider == "metacritic":
         return str(round(value))
-    if provider == "myanimelist":
-        return f"{value:.2f}"
-    # IMDb and Metacritic users out of 10, Letterboxd out of 5, Ebert out of 4.
+    # IMDb, MyAnimeList and Metacritic users out of 10 (MDBList gives
+    # MyAnimeList to one decimal, so no second one to show), Letterboxd out
+    # of 5, Ebert out of 4.
     return f"{value:.1f}"
 
 

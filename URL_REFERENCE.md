@@ -188,7 +188,9 @@ The frosted notch can also sit to one side with `sash_badge_pos` (default `cente
 
 Scores from multiple providers are normalised to a 0–100 scale and combined using configurable weights. Default weights use Letterboxd with Trakt fallback for movies, and Trakt (80%) and Rotten Tomatoes (20%) for TV. Weights are fully adjustable in the web configurator.
 
-Weights renormalise over the sources actually present for a title, so a source with no score contributes nothing rather than dragging the average down. That makes the anime-only sources safe to weight: `myanimelist` (via MDBList, for anything with an IMDb id) and `anilist` / `kitsu` (only for titles requested by [anime id](#anime-ids-anilist--kitsu)) are inert on everything else. All three default to a weight of `0`.
+Weights renormalise over the sources actually present for a title, so a source with no score contributes nothing rather than dragging the average down. That makes the anime-only sources safe to weight: `myanimelist` (via MDBList, for anything with an IMDb id) and `anilist` / `kitsu` are inert on everything else. All three default to a weight of `0`.
+
+AniList and Kitsu scores come from those sites, not MDBList. A title requested by [anime id](#anime-ids-anilist--kitsu) has its own site's score. Any other anime title, and the other site for an anime-id request, is matched to both sites through the anime id list (`ANIME_ID_MAP_ENABLED`): its TMDB or IMDb id finds each site's entry, and a series with several seasons uses the first. The scores are fetched only when a weight or a [rating badge](#rating-badges) uses them, and cached with the anime metadata.
 
 ### Anime Weights
 

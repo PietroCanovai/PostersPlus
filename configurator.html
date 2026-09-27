@@ -3825,9 +3825,10 @@ const _SHOW_URL_BOX   = _NO_CLIPBOARD || qs.get('urlbox') === '1';
   }
 })();
 
-// anilist/kitsu only ever carry a value for titles requested by anilist_id /
-// kitsu_id. A source with no value contributes nothing and the remaining
-// weights renormalise, so a non-zero weight here is inert for everything else.
+// anilist/kitsu only carry a value for anime: the title's own site when it is
+// requested by anilist_id / kitsu_id, otherwise both through the anime id list.
+// A source with no value contributes nothing and the remaining weights
+// renormalise, so a non-zero weight here is inert for everything else.
 // Both score noticeably higher than the Western sources (anime clusters ~65-80,
 // and a poor show still scores mid-50s), so blend them deliberately.
 const MOVIE_SOURCES = ['letterboxd','trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','rogerebert','myanimelist','anilist','kitsu'];

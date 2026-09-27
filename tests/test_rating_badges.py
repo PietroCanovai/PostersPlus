@@ -103,7 +103,7 @@ class ScoreTests(unittest.TestCase):
         cases = {"imdb": (8.4, "8.4"), "tomatoes": (92, "92%"), "popcorn": (58, "58%"),
                  "letterboxd": (4.4, "4.4"), "metacritic": (79, "79"), "metacriticuser": (8.3, "8.3"),
                  "trakt": (86, "86%"), "tmdb": (81.4, "81%"), "rogerebert": (3.5, "3.5"),
-                 "myanimelist": (8.8, "8.80"), "anilist": (84, "84%"), "kitsu": (82.1, "82%")}
+                 "myanimelist": (8.8, "8.8"), "anilist": (84, "84%"), "kitsu": (82.1, "82%")}
         for provider, (value, text) in cases.items():
             self.assertEqual(rb.score_text(provider, value, "native", True), text, provider)
 

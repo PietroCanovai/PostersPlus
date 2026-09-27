@@ -806,6 +806,7 @@ if not _awards_mod._HAS_SKIA:
 from festivals import match_festival_keyword
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
+    get_cached_tvdb_json,
     get_cached_trending_snapshot_entry,
     get_cached_trending_details,
     next_trending_fetch_at,
@@ -1114,6 +1115,61 @@ def _merge_imdb_dataset_rating(
     if value is None:
         return ratings_dict
     return {**ratings_dict, "imdb": value}
+
+
+_ANIME_FILL_SOURCES = ("anilist", "kitsu")
+
+
+def _anime_sources_wanted(rcfg: "RequestConfig", weight_sets) -> set[str]:
+    """The AniList / Kitsu scores this request has a use for: a badge that
+    shows one, or a weight set that counts one.  Nothing else fetches them."""
+    wanted: set[str] = set()
+    if rcfg.rating_badges and rcfg.rating_display_mode in (2, 3, 4) and not rcfg.hide_rating:
+        wanted |= set(rcfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES)
+    for weights in weight_sets:
+        wanted |= {s for s in _ANIME_FILL_SOURCES if (weights or {}).get(s, 0) > 0}
+    return wanted
+
+
+async def _fill_anime_scores(client, ratings_dict, wanted, *, media_type: str,
+                             tmdb_id: str | None, imdb_id: str | None):
+    """Add the AniList and Kitsu scores *wanted* that *ratings_dict* lacks.
+
+    MDBList carries only MyAnimeList for anime, and a request by anime id
+    brings only its own site's score, so without this a title shows AniList
+    or Kitsu only when asked for by that site's id.  The anime id list maps
+    the title's TMDB / IMDb id to each site's entry (see
+    anime_ids.reverse_lookup), whose score comes from the same cached
+    metadata an anime-id request reads.  Merged per request, like the other
+    extras, never into the rating row.
+
+    Returns (ratings, pending): pending when a fetch failed for a reason
+    other than the site having no such entry, so the render isn't kept.
+    """
+    if not isinstance(ratings_dict, dict):
+        return ratings_dict, False
+    missing = [ns for ns in _ANIME_FILL_SOURCES if ns in wanted and ns not in ratings_dict]
+    if not missing:
+        return ratings_dict, False
+    ids = anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id)
+    todo = [(ns, ids[ns]) for ns in missing if ns in ids]
+    if not todo:
+        return ratings_dict, False
+    results = await asyncio.gather(
+        *(anime.fetch_anime_metadata(client, ns, aid) for ns, aid in todo), return_exceptions=True)
+    out, pending = dict(ratings_dict), False
+    for (ns, aid), result in zip(todo, results):
+        if isinstance(result, tuple):
+            score = (result[7] or {}).get("anime_score")
+            if score is not None:
+                out[ns] = score
+        else:
+            # None is also what a genuine miss returns, and that one is
+            # negative-cached; without the marker it was a blip or a throttle.
+            cached = get_cached_tvdb_json(anime._cache_key(ns, aid))
+            if not (cached and cached.get("__miss__")):
+                pending = True
+    return out, pending
 
 
 def _mdblist_row_ratings(ratings_dict):
@@ -6227,6 +6283,17 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
             {"letterboxd", "trakt"} & set(cfg.rating_badges.split(","))),
         stale=lambda cfg, facts: True,
     ),
+    # 7: AniList and Kitsu scores for every anime title (_fill_anime_scores),
+    #    and MyAnimeList badges to one decimal.  Only posters that show or
+    #    weight one of them can differ.
+    _RenderRevision(
+        rev=7,
+        applies=lambda cfg: cfg.shape != "landscape" and bool(
+            _anime_sources_wanted(cfg, (cfg.movie_weights, cfg.tv_weights,
+                                        cfg.anime_movie_weights, cfg.anime_tv_weights))
+            or "myanimelist" in cfg.rating_badges.split(",")),
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 
@@ -7473,6 +7540,21 @@ async def get_poster(
     effective_anime_movie_weights = rcfg.anime_movie_weights or effective_movie_weights
     effective_anime_tv_weights    = rcfg.anime_tv_weights    or effective_tv_weights
 
+    _anime_fill_wanted = _anime_sources_wanted(rcfg, (
+        effective_movie_weights, effective_tv_weights,
+        effective_anime_movie_weights, effective_anime_tv_weights))
+    _anime_scores_pending = False
+
+    async def _with_anime_scores(ratings):
+        nonlocal _anime_scores_pending
+        if not _anime_fill_wanted:
+            return ratings
+        ratings, pending = await _fill_anime_scores(
+            client, ratings, _anime_fill_wanted - ({anime_namespace} if is_anime else set()),
+            media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None, imdb_id=effective_imdb_id)
+        _anime_scores_pending = _anime_scores_pending or pending
+        return ratings
+
     def _weights_for(ratings: dict) -> dict:
         return _select_rating_weights(
             ratings, type, anime_native=is_anime,
@@ -8476,6 +8558,7 @@ async def get_poster(
             # is safe even when neither source has anything to offer.
             ratings_dict     = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
             ratings_dict     = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
+            ratings_dict     = await _with_anime_scores(ratings_dict)
             rating_weights   = _weights_for(ratings_dict)
             score            = calculate_weighted_score(
                 ratings_dict,
@@ -8543,6 +8626,7 @@ async def get_poster(
             if isinstance(ratings_dict, dict):
                 ratings_dict = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
                 ratings_dict = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
+                ratings_dict = await _with_anime_scores(ratings_dict)
                 rating_weights = _weights_for(ratings_dict)
                 score = calculate_weighted_score(
                     ratings_dict,
@@ -9070,13 +9154,15 @@ async def get_poster(
         #   _cinemeta_missing      — same, for a Cinemeta-spined render that got
         #                            the genre canvas because Cinemeta had nothing.
         #   _rating_badges_missing — a provider's mark couldn't be fetched yet.
+        #   _anime_scores_pending  — an AniList / Kitsu score it wanted didn't
+        #                            arrive (see _fill_anime_scores).
         #
         # The same flag decides what the *client* is told: a render we won't
         # keep must not be handed an ETag either (see _apply_poster_cache_headers).
         _render_provisional = bool(
             quality_pending or _detection_deferred or rating_failed
             or _rating_backoff_active or _anime_art_missing or _cinemeta_missing
-            or _rating_badges_missing
+            or _rating_badges_missing or _anime_scores_pending
         )
         _composite_expires_at: int | None = None
         if final_cache_key is not None and not _render_provisional:

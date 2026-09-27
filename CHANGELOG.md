@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### AniList and Kitsu scores for every anime title
+
+- AniList and Kitsu scores used to reach only titles requested by that
+  site's own id; MDBList carries only MyAnimeList. Any anime title is now
+  matched to both sites through the anime id list (a series uses its first
+  season), when a weight or a rating badge uses them. Fetched once and cached
+  with the anime metadata.
+- Fixed: a title's first fetch saved that request's own extras (its anime
+  site's score and age rating, the IMDb dataset value, TMDB's average) into
+  the rating record every request shares, so what a title showed depended on
+  which request reached it first.
+
 ### Rating badges
 
 - New Rating Badges list in the Rating tab (`rating_badges=imdb,tomatoes`):
