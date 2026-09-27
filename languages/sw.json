@@ -29,6 +29,9 @@
   "monthsShort": ["Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ago", "Sep", "Okt", "Nov", "Des"],
   "sashLabels": {
     "trendingToday": "#{rank} leo",
+    "Film": "Filamu",
+    "Series": "Mfululizo",
+    "Anime": "Anime",
     "releaseDay": "{day} {month} {window}",
     "releaseMonth": "{month} {year} {window}",
     "releaseDayStreaming": "{day} {month} Mtandaoni",

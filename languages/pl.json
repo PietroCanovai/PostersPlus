@@ -29,6 +29,9 @@
   "monthsShort": ["Sty", "Lut", "Mar", "Kwi", "Maj", "Cze", "Lip", "Sie", "Wrz", "Paź", "Lis", "Gru"],
   "sashLabels": {
     "trendingToday": "#{rank} Dziś",
+    "Film": "Film",
+    "Series": "Serial",
+    "Anime": "Anime",
     "releaseDay": "{day} {month} {window}",
     "releaseMonth": "{month} {year} {window}",
     "releaseDayStreaming": "{day} {month} Streaming",

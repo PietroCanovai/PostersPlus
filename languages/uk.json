@@ -29,6 +29,9 @@
   "monthsShort": ["Січ", "Лют", "Бер", "Кві", "Тра", "Чер", "Лип", "Сер", "Вер", "Жов", "Лис", "Гру"],
   "sashLabels": {
     "trendingToday": "#{rank} сьогодні",
+    "Film": "Фільм",
+    "Series": "Серіал",
+    "Anime": "Аніме",
     "releaseDay": "{window} {day} {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Стримінг {day} {month}",

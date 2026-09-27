@@ -3114,6 +3114,39 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
+            <div class="field" id="sash-trending-style-field">
+              <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
+              <select class="segmented-source" id="cfg-trending-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
+                <option value="sash" selected>Sash Label</option>
+                <option value="number">Number</option>
+                <option value="ribbon">Ribbon</option>
+              </select>
+              <div class="segmented" data-for="cfg-trending-style"></div>
+            </div>
+            <div id="sash-trending-mark-fields" style="display:none;">
+              <div class="field">
+                <label class="field-label" data-tip="Size of the Trending number or ribbon against its default.">Trending Rank Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-trending-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-trs'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-trs">1.00</span>
+                </div>
+              </div>
+              <div class="toggle-row" id="sash-trending-label-row">
+                <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-trending-label" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row" id="sash-trending-corner-row">
+                <span class="toggle-label" data-tip="Tucks the ribbon right into the corner. Off leaves a small gap, so apps that round poster corners don't clip it.">Ribbon: Nest in Corner</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-trending-corner" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+            </div>
+
             <div class="cfg-sep">
               <span class="group-title">Behaviour</span>
               <div class="toggle-row" id="sash-cinema-greyscale-row">
@@ -6140,12 +6173,23 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (vEl('cfg-sash-side') === 'left') params.set('sash_side', 'left');
     }
   }
+  // Drawn apart from the sash, so it is emitted whatever the mode.
+  const _trStyle = vEl('cfg-trending-style');
+  if (emitAll && _trStyle !== 'sash') {
+    params.set('trending_style', _trStyle);
+    if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
+    if (_trStyle === 'ribbon') {
+      if (c('tog-trending-label'))  params.set('trending_label', 'true');
+      if (c('tog-trending-corner')) params.set('trending_corner', 'true');
+    }
+  }
   // sash_priority is consumed not just by the diagonal sash but also by:
   //   - Compact rating mode (mode 4) — always pulls a sash label
   //   - Score Bar mode (mode 1) with Label Suffix = Info sash | Year + Info sash
   // Emit it whenever ANY of those is active so the user's drag-to-reorder /
   // disable choices are respected, not silently overridden by server defaults.
   const _sashTextNeeded = (emitAll && showSash) || (emitLandscape && lShowSash)
+    || (emitAll && vEl('cfg-trending-style') !== 'sash')
     || (emitAll && ratingMode === 1 && ni('cfg-bar-append') !== 0)
     || (emitAll && ratingMode === 4 && vEl('cfg-bar4-append') === 'sash');
   if (_sashTextNeeded) {
@@ -6865,9 +6909,20 @@ function updateSashBadgeFields() {
   document.getElementById('sash-badge-offsets').style.display    = isNotch ? '' : 'none';
   document.getElementById('sash-size-fields').style.display      = isBand ? '' : 'none';
   if (isNotch) initCustomMobileSliders();
+  updateTrendingStyleFields();
   // Unconditional: the reference toggle is outside #sash-badge-offsets now, so
   // leaving notch mode has to actively hide it rather than rely on its wrapper.
   updateBadgeStyleFields();
+}
+
+function updateTrendingStyleFields() {
+  // Landscape keeps the sash label, so none of this shows there.
+  if (c('tog-landscape')) return;
+  const style = vEl('cfg-trending-style');
+  document.getElementById('sash-trending-mark-fields').style.display = style !== 'sash' ? '' : 'none';
+  document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
+  document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
+  if (style !== 'sash') initCustomMobileSliders();
 }
 
 function _syncSashColorPicker() {
@@ -7176,6 +7231,7 @@ function updateShapeFields() {
   // Sash tab: the mode (drawn or not), the release-status filters and the
   // priority list are read; the rest styles the portrait sash / notch.
   for (const id of ['sash-cinema-greyscale-row', 'sash-winner-star-row', 'sash-text-color-field',
+                    'sash-trending-style-field', 'sash-trending-mark-fields',
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
@@ -8065,6 +8121,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   _setEl('cfg-sash-side', p.get('sash_side') === 'left' ? 'left' : 'right');
+  _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
+  _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
+  _setEl('tog-trending-label', p.get('trending_label') === 'true');
+  _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
+  updateTrendingStyleFields();
   updateSashBadgeFields();
 
   // A diff can only be expanded against the server's default order.  Settings

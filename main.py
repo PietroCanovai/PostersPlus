@@ -864,13 +864,14 @@ from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash
 from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_heights as notch_heights
 import graphic_badges
 import rating_badges
+import trending_rank
 import awards as _awards_mod
 if not _awards_mod._HAS_SKIA:
     # Still correct, just ~3x slower per sash — worth saying once, since the
     # usual cause is an image missing the libEGL/libGL stubs (see dockerfile).
     logger.warning("skia unavailable — diagonal sashes use the slower PIL fallback")
 from festivals import match_festival_keyword
-from i18n import load_languages, translate_genre, translate_sash
+from i18n import load_languages, translate_genre, translate_sash, upper_label
 from cache import (
     get_cached_tvdb_json,
     get_cached_trending_snapshot_entry,
@@ -915,7 +916,9 @@ from discovery import (
     RELEASE_STATUS_SLOTS,
     DiscoveryMeta,
     extract_discovery_meta,
+    TRENDING_SLOTS,
     pick_sash,
+    shown_trending_rank,
     tv_release_facts,
 )
 from quality import (
@@ -1861,6 +1864,15 @@ class RequestConfig:
     sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     sash_side:         str   = "right"  # diagonal sash corner: "right" | "left"
+    # How a trending rank shows: "sash" (the "#3 Today" sash label, in its
+    # priority slot) | "number" (a large silver numeral in the top corner) |
+    # "ribbon" (a bookmark ribbon hanging from the top edge).  The last two are
+    # drawn apart from the sash, which moves on to the next label.  Portrait
+    # only; a landscape render keeps the sash label.
+    trending_style:    str   = "sash"
+    trending_scale:    float = 1.0      # number / ribbon size against its default
+    trending_label:    bool  = False    # ribbon: FILM / SERIES / ANIME under the rank
+    trending_corner:   bool  = False    # ribbon: nested into the corner, not inset from it
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
     rating_text_color: tuple[int, int, int] | None = None
@@ -2179,7 +2191,8 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
 
 _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
                               "rating_badge_style": "color",
-                              "cinema_greyscale_without_sash": False}
+                              "cinema_greyscale_without_sash": False, "trending_style": "sash",
+                              "trending_scale": 1.0, "trending_label": False, "trending_corner": False}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2365,6 +2378,12 @@ def build_request_config(params: dict) -> RequestConfig:
     _side_raw = (params.get("sash_side") or "").strip().lower()
     if _side_raw in ("left", "right"):
         cfg.sash_side = _side_raw
+    _ts_raw = (params.get("trending_style") or "").strip().lower()
+    if _ts_raw in trending_rank.STYLES:
+        cfg.trending_style = _ts_raw
+    cfg.trending_scale  = _f("trending_scale", cfg.trending_scale, 0.5, 2.0)
+    cfg.trending_label  = _b("trending_label", cfg.trending_label)
+    cfg.trending_corner = _b("trending_corner", cfg.trending_corner)
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
@@ -3586,6 +3605,7 @@ def _build_poster(
     certification: str | None = None,
     badge_logos: tuple = (None, None),   # (network, studio) graphic_badges.Logo, or None each
     ratings: dict | None = None,         # per-provider scores, for rating badges
+    media_kind: str | None = None,       # "movie" | "series" | "anime", for the ribbon's label
 ) -> Image.Image:
 
     width, height = image.size
@@ -3652,6 +3672,12 @@ def _build_poster(
         _status = discovery_meta.release_status.lower()
         if _status in _sash_priority or "release_status" in _sash_priority:
             _sash_priority = [s for s in _sash_priority if s in ("release_status", _status)] + [s for s in _sash_priority if s not in ("release_status", _status)]
+    # A trending rank drawn as a number or ribbon is its own mark, so the sash
+    # skips the trending slots and shows the next label in the list.
+    _rank = None
+    if cfg.trending_style != "sash" and discovery_meta is not None:
+        _rank = shown_trending_rank(discovery_meta, _sash_priority)
+        _sash_priority = [s for s in _sash_priority if s not in TRENDING_SLOTS]
     sash_result = (
         pick_sash(discovery_meta, _sash_priority)
         if discovery_meta is not None
@@ -3736,7 +3762,7 @@ def _build_poster(
         _bg_preset = (cfg.bottom_gradient_height, _gradient_alpha(cfg.bottom_gradient_opacity))
     else:
         _bg_preset = _BOTTOM_GRADIENT_LEVELS.get(cfg.bottom_gradient, _BOTTOM_GRADIENT_LEVELS["high"])
-    if cfg.top_vignette_sash_only and sash_result is None:
+    if cfg.top_vignette_sash_only and sash_result is None and _rank is None:
         _tg_preset = None
 
     # A tinted band is a coloured fog and uses the smoothstep profile (see
@@ -4630,6 +4656,13 @@ def _build_poster(
                 center_run       = _bar_run,
             )
 
+    # The band a rank numeral sits in, before the sash draws, to find what
+    # the sash took of it.
+    _before_rank = None
+    if (_rank is not None and cfg.trending_style == "number"
+            and cfg.sash_mode != "hidden" and sash_result is not None):
+        _before_rank = np.asarray(image)[:trending_rank.number_box(image.width, cfg.trending_scale)[1]].copy()
+
     # --- Discovery sash / badge ---
     if cfg.sash_mode != "hidden" and sash_result is not None:
         label, sash_type = sash_result
@@ -4662,6 +4695,11 @@ def _build_poster(
                                     text_color=cfg.sash_text_color,
                                     side=cfg.sash_side)
 
+    # --- Trending rank mark ---
+    # After the sash, so the numeral can shrink to clear a notch beside it.
+    if _rank is not None:
+        image = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind)
+
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
     if _before_overlays is not None:
@@ -4670,6 +4708,42 @@ def _build_poster(
                              logos=badge_logos)
 
     return image
+
+
+def _rank_on_right(cfg: "RequestConfig") -> bool:
+    """The trending rank mark takes the top-left corner unless the diagonal
+    sash or a side chip is there.  Decided by the config, not by whether this
+    title has a sash, so a row of posters keeps its ranks on one side."""
+    return ((cfg.sash_mode == "sash" and cfg.sash_side == "left")
+            or (cfg.sash_mode == "notch" and cfg.sash_badge_pos == "left"))
+
+
+def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
+                        before: np.ndarray | None, media_kind: str | None = None) -> Image.Image:
+    """Draw the rank as cfg.trending_style's mark.  *before* is the numeral's
+    band as it was before the sash drew; the numeral shrinks to clear
+    whatever the sash put there, such as a centred notch.  *media_kind* picks
+    the ribbon's label; without one the ribbon goes unlabelled."""
+    right = _rank_on_right(cfg)
+    if cfg.trending_style == "ribbon":
+        label = None
+        if cfg.trending_label and media_kind in trending_rank.KIND_LABELS:
+            label = upper_label(translate_sash(trending_rank.KIND_LABELS[media_kind],
+                                               cfg.logo_language), cfg.logo_language)
+        return trending_rank.draw_rank_ribbon(image, rank, right=right, label=label,
+                                              scale=cfg.trending_scale,
+                                              corner=cfg.trending_corner)
+    max_w = None
+    if before is not None:
+        w = image.width
+        inset, bottom = trending_rank.number_box(w, cfg.trending_scale)
+        cols = _occupied_cols(np.asarray(image), before, inset, bottom)
+        cols = cols[:w - inset][::-1] if right else cols[inset:]
+        taken = np.flatnonzero(cols)
+        if taken.size:
+            max_w = max(1.0, taken[0] - 0.03 * w)
+    return trending_rank.draw_rank_number(image, rank, right=right, max_w=max_w,
+                                          scale=cfg.trending_scale)
 
 
 # How far a group may move off its anchor's line to find room, as a fraction
@@ -9262,7 +9336,12 @@ async def get_poster(
         # Activate with ?debug=1 (never cached, never stored).
         # ------------------------------------------------------------------
         if _debug:
-            _sash_result = pick_sash(discovery_meta, _sash_priority)
+            _rank_mark = None
+            _debug_priority = _sash_priority
+            if rcfg.trending_style != "sash":
+                _rank_mark = shown_trending_rank(discovery_meta, _sash_priority)
+                _debug_priority = [s for s in _sash_priority if s not in TRENDING_SLOTS]
+            _sash_result = pick_sash(discovery_meta, _debug_priority)
             return JSONResponse({
                 "imdb_id":           imdb_id or None,
                 "effective_imdb_id": effective_imdb_id,
@@ -9289,6 +9368,7 @@ async def get_poster(
                 "festival_keyword":  festival_keyword,
                 "festival_label":    discovery_meta.festival_label,
                 "sash":              {"label": _sash_result[0], "type": _sash_result[1]} if _sash_result else None,
+                "trending_mark":     {"style": rcfg.trending_style, "rank": _rank_mark} if _rank_mark else None,
                 "is_cult":           discovery_meta.is_cult,
                 "is_true_story":     discovery_meta.is_true_story,
                 "is_metacritic":     discovery_meta.is_metacritic_must_see,
@@ -9468,6 +9548,7 @@ async def get_poster(
             discovery_meta=discovery_meta,
             quality_tokens=quality_tokens,
             release_year=release_year,
+            media_kind="anime" if is_anime else ("series" if type in ("tv", "series") else "movie"),
             age_rating=age_rating,
             no_poster=is_no_poster,
             # Only a confirmed True suppresses the tinted vignette. _suppress_overlay
@@ -9565,7 +9646,9 @@ async def get_poster(
             _ttl_override = None
             if discovery_meta is not None:
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
-                if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
+                if ((_sash_result and _sash_result[1] in ("trending", "trending_broad"))
+                        or (rcfg.trending_style != "sash"
+                            and shown_trending_rank(discovery_meta, _sash_priority))):
                     _ttl_override = (
                         max(60, int(trending_expires_at - time.time()))
                         if trending_expires_at else 86400

@@ -29,6 +29,9 @@
   "monthsShort": ["Led", "Úno", "Bře", "Dub", "Kvě", "Čvn", "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro"],
   "sashLabels": {
     "trendingToday": "#{rank} dnes",
+    "Film": "Film",
+    "Series": "Seriál",
+    "Anime": "Anime",
     "releaseDay": "{window} {day}. {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Streaming {day}. {month}",

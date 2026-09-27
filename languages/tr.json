@@ -29,6 +29,9 @@
   "monthsShort": ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"],
   "sashLabels": {
     "trendingToday": "Bugün #{rank}",
+    "Film": "Film",
+    "Series": "Dizi",
+    "Anime": "Anime",
     "releaseDay": "{window} {day} {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Dijital {day} {month}",

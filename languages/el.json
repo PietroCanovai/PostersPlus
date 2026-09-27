@@ -29,6 +29,9 @@
   "monthsShort": ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μαΐ", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"],
   "sashLabels": {
     "trendingToday": "#{rank} σήμερα",
+    "Film": "Ταινία",
+    "Series": "Σειρά",
+    "Anime": "Άνιμε",
     "releaseDay": "{window} {day} {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Streaming {day} {month}",
