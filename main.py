@@ -4438,7 +4438,10 @@ def _build_poster(
                 _lead_sep = "  ·  " if len(_lead_parts) + 1 <= 2 else " · "
 
                 def _bar_run(font_size, measure, budget):
-                    lead = [("text", p + _lead_sep) for p in _lead_parts]
+                    # No "·" before the first badge: the badge itself reads as
+                    # the break, and a dot beside it looks like two separators.
+                    lead = ([("text", _lead_sep.join(_lead_parts)), ("gap", font_size * 0.62)]
+                            if _lead_parts else [])
                     return [lead + _rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
                                            rating_badges.run_width(lead, measure))]
             image = draw_frosted_bar(
@@ -6297,6 +6300,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     #    room those leave, instead of spreading them across the whole bar.
     _RenderRevision(
         rev=8,
+        applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
+                             and bool(cfg.rating_badges)),
+        stale=lambda cfg, facts: True,
+    ),    # 9: ...with no "·" before the first badge, which already reads as one.
+    _RenderRevision(
+        rev=9,
         applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
                              and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
