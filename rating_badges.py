@@ -343,13 +343,14 @@ _WHITE = (255, 255, 255)
 
 
 def _pplus_lockup(path: str) -> Image.Image:
-    """The favicon's "P" with a "+" set beside its bowl, the plus's strokes a
-    little lighter than the P's stem so it reads as the lesser half."""
+    """The favicon's "P" with a "+" beside it, centred on the letter's height
+    (set up by the bowl it looked like a superscript and lost weight), its
+    strokes a little lighter than the P's stem so it reads as the lesser half."""
     p = Image.open(path).convert("RGBA")
     h = p.height
     stem = 0.138 * h          # the favicon's stem, of its height
     arm, weight = 0.42 * h, 0.85 * stem
-    x0, cy = p.width + 0.05 * h, 0.30 * h
+    x0, cy = p.width + 0.05 * h, 0.50 * h
     out = Image.new("RGBA", (round(x0 + arm) + 2, h), (0, 0, 0, 0))
     out.alpha_composite(p, (0, 0))
     ink = tuple(int(c) for c in np.median(np.asarray(p)[..., :3][np.asarray(p)[..., 3] > 128], axis=0)) + (255,)
