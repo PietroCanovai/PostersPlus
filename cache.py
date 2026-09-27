@@ -391,12 +391,23 @@ def init_db() -> None:
     # computed at write time from whichever input expires soonest.  NULL rows
     # predate the column and fall back to cached_at + TTL + jitter.
     _add_column_if_missing(conn, "final_poster_cache", "expires_at", "INTEGER")
+    # For prune_caches: without it the expiry predicate scans the table, and
+    # since expires_at is stored after the image blob, reading it follows every
+    # blob's overflow chain — the whole file, on every prune.  The build is a
+    # one-time pass on an existing cache.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_final_poster_expires_at "
+        "ON final_poster_cache(expires_at)"
+    )
 
     # Render revision and facts, for invalidating only the composites a drawing
     # change affects (see _RENDER_REVISIONS in main.py).  NULL rows predate the
     # columns: revision 0, no facts recorded.
     _add_column_if_missing(conn, "final_poster_cache", "render_rev", "INTEGER")
     _add_column_if_missing(conn, "final_poster_cache", "render_facts", "TEXT")
+    # A provisional render kept for PROVISIONAL_CACHE_TTL: a hit on it must
+    # be answered as one (no validator).
+    _add_column_if_missing(conn, "final_poster_cache", "provisional", "INTEGER")
 
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
@@ -441,10 +452,10 @@ def _quality_ttl(release_date: str | None) -> int:
 
 # L1: bounded in-memory LRU — most-recently-used composites served without
 # any SQLite read, keeping the hot set off the OS page cache.  Each value is
-# (expires_at, jpeg_bytes, render_rev, render_facts): L1 carries the same
+# (expires_at, jpeg_bytes, render_rev, render_facts, provisional): L1 carries the same
 # deadline as its L2 row, because an entry that never ages out in RAM would
 # happily serve a Cinema sash for as long as the LRU kept it resident.
-_composite_l1: OrderedDict[str, tuple[int, bytes, int, "dict | None"]] = OrderedDict()
+_composite_l1: OrderedDict[str, tuple[int, bytes, int, "dict | None", bool]] = OrderedDict()
 _composite_l1_lock = threading.Lock()
 
 
@@ -466,10 +477,10 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
     return None if entry is None else entry[0]
 
 
-def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int] | None":
-    """(jpeg_bytes, expires_at) from the in-memory LRU alone — no disk I/O, so
-    cheap enough to call on the event loop before handing an L2 read to a
-    thread."""
+def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int, bool] | None":
+    """(jpeg_bytes, expires_at, provisional) from the in-memory LRU alone — no
+    disk I/O, so cheap enough to call on the event loop before handing an L2
+    read to a thread."""
     if COMPOSITE_MEM_ENTRIES <= 0:
         return None
     now = time.time()
@@ -480,15 +491,16 @@ def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int] | None":
         expires_at, data = entry[0], entry[1]
         if now <= expires_at:
             _composite_l1.move_to_end(cache_key)
-            return data, int(expires_at)
+            return data, int(expires_at), bool(entry[4])
         # Nothing sweeps L1 on a timer, so an aged-out entry is dropped on the
         # read that finds it and the L2 check takes over.
         del _composite_l1[cache_key]
     return None
 
 
-def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
-    """Return (jpeg_bytes, expires_at) for a composited poster, or None on miss.
+def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int, bool] | None":
+    """Return (jpeg_bytes, expires_at, provisional) for a composited poster, or
+    None on miss.
 
     Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
     and promotes the result to L1 so the next hit is served entirely from RAM.
@@ -502,13 +514,13 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
     # L2: SQLite with TTL check
     try:
         row = get_db().execute(
-            "SELECT jpeg_bytes, cached_at, expires_at, render_rev, render_facts "
+            "SELECT jpeg_bytes, cached_at, expires_at, render_rev, render_facts, provisional "
             "FROM final_poster_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        jpeg_bytes, cached_at, expires_at, render_rev, render_facts = row
+        jpeg_bytes, cached_at, expires_at, render_rev, render_facts, provisional = row
         if expires_at is None:
             expires_at = _composite_expiry(cache_key, cached_at)
         if now > expires_at:
@@ -527,12 +539,13 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
                 _composite_l1[cache_key] = (
-                    int(expires_at), data, render_rev or 0, _load_render_facts(render_facts)
+                    int(expires_at), data, render_rev or 0, _load_render_facts(render_facts),
+                    bool(provisional),
                 )
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
-        return data, int(expires_at)
+        return data, int(expires_at), bool(provisional)
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None
@@ -584,6 +597,7 @@ def set_cached_final_poster(
     ttl_override: int = None,
     render_rev: int = 0,
     render_facts: "dict | None" = None,
+    provisional: bool = False,
 ) -> int:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
 
@@ -595,7 +609,8 @@ def set_cached_final_poster(
 
     *render_rev* and *render_facts* record which drawing-code revision made
     the poster and what was on it, so a later revision can invalidate just the
-    posters it changes.
+    posters it changes.  *provisional* marks a render missing a piece, kept
+    only briefly (the caller caps its TTL) and served without a validator.
 
     Returns the unix time this composite expires.
     """
@@ -608,7 +623,7 @@ def set_cached_final_poster(
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
-            _composite_l1[cache_key] = (expires_at, jpeg_bytes, render_rev, render_facts)
+            _composite_l1[cache_key] = (expires_at, jpeg_bytes, render_rev, render_facts, provisional)
             _composite_l1.move_to_end(cache_key)
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
@@ -620,11 +635,12 @@ def set_cached_final_poster(
                 """
                 INSERT OR REPLACE INTO final_poster_cache
                     (cache_key, jpeg_bytes, cached_at, request_params, expires_at,
-                     render_rev, render_facts)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                     render_rev, render_facts, provisional)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (cache_key, jpeg_bytes, now, request_params, expires_at, render_rev,
-                 json.dumps(render_facts) if render_facts is not None else None),
+                 json.dumps(render_facts) if render_facts is not None else None,
+                 1 if provisional else None),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 _enforce_composite_cap()
@@ -752,6 +768,21 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
         logger.error(f"Final poster cache invalidate error: {exc}")
 
 
+# {cache_key: request_params} of composites a trending turnover deleted, for
+# the trending loop to re-render (see pop_trending_turnover_replay).  Capped,
+# so a turnover no loop drains (trending off) can't grow it without bound.
+_turnover_replay: dict[str, str] = {}
+_turnover_replay_lock = threading.Lock()
+_TURNOVER_REPLAY_MAX = 2000
+
+
+def pop_trending_turnover_replay() -> dict[str, str]:
+    with _turnover_replay_lock:
+        out = dict(_turnover_replay)
+        _turnover_replay.clear()
+    return out
+
+
 def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> int:
     """Invalidate the composites of every title whose trending rank changed,
     in one pass over the composite keys.
@@ -790,6 +821,17 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
             (k,) for (k,) in get_db().execute("SELECT cache_key FROM final_poster_cache")
             if _match(k)
         ]
+        # Kept for the trending loop to render again warm: once deleted, these
+        # are no longer there for its scan to find.
+        with _turnover_replay_lock:
+            for (k,) in keys:
+                if len(_turnover_replay) >= _TURNOVER_REPLAY_MAX:
+                    break
+                row = get_db().execute(
+                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                ).fetchone()
+                if row and row[0]:
+                    _turnover_replay[k] = row[0]
         if keys:
             with _db_lock:
                 get_db().executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", keys)
@@ -846,6 +888,9 @@ def get_cache_stats() -> dict:
     return stats
 
 
+_PRUNE_BATCH = 1000
+
+
 def prune_caches() -> None:
     """
     Delete expired rows from every SQLite cache table.
@@ -861,22 +906,34 @@ def prune_caches() -> None:
     """
     now = int(time.time())
     try:
+        # Composites — per-row deadline (a render can be pinned to a trending
+        # rank or a release status that expires well before
+        # COMPOSITE_CACHE_TTL).  Rows predating the expires_at column fall back
+        # to the flat TTL plus the largest jitter any key can draw, so this
+        # never deletes one the read path would still call fresh.  Deleted in
+        # batches, each its own transaction, so a big eviction (freeing every
+        # blob's pages) doesn't hold _db_lock, and with it every write in this
+        # process, for the whole pass.
+        pruned = 0
+        while True:
+            with _db_lock:
+                db = get_db()
+                r = db.execute(
+                    "DELETE FROM final_poster_cache WHERE cache_key IN ("
+                    "SELECT cache_key FROM final_poster_cache WHERE "
+                    "(expires_at IS NOT NULL AND expires_at < ?) OR "
+                    "(expires_at IS NULL AND cached_at < ?) LIMIT ?)",
+                    (now, now - COMPOSITE_CACHE_TTL - COMPOSITE_CACHE_TTL_JITTER // 2, _PRUNE_BATCH),
+                )
+                db.commit()
+            pruned += max(r.rowcount, 0)
+            if r.rowcount < _PRUNE_BATCH:
+                break
+        if pruned:
+            logger.info(f"Pruned {pruned} expired composite cache entries")
+
         with _db_lock:
             db = get_db()
-
-            # Composites — per-row deadline (a render can be pinned to a
-            # trending rank or a release status that expires well before
-            # COMPOSITE_CACHE_TTL).  Rows predating the expires_at column fall
-            # back to the flat TTL plus the largest jitter any key can draw, so
-            # this never deletes one the read path would still call fresh.
-            r = db.execute(
-                "DELETE FROM final_poster_cache WHERE "
-                "(expires_at IS NOT NULL AND expires_at < ?) OR "
-                "(expires_at IS NULL AND cached_at < ?)",
-                (now, now - COMPOSITE_CACHE_TTL - COMPOSITE_CACHE_TTL_JITTER // 2),
-            )
-            if r.rowcount:
-                logger.info(f"Pruned {r.rowcount} expired composite cache entries")
 
             # Ratings / quality / metadata — use the most generous TTL so we
             # never evict something that could still be considered fresh.
@@ -961,9 +1018,14 @@ def prune_caches() -> None:
         with _db_lock:
             db = get_db()
             auto_vac = db.execute("PRAGMA auto_vacuum").fetchone()[0]
-            if auto_vac == 2:   # INCREMENTAL — cheap, moves a few pages, no long lock
-                db.execute("PRAGMA incremental_vacuum(100)")
-                db.commit()
+            if auto_vac == 2:   # INCREMENTAL — moves pages, no long lock
+                # Up to ~100 MB (at 4 KB pages) a pass: a fixed 100 pages freed
+                # 400 KB per six hours, so the file never shrank after a big
+                # eviction.  Free pages are reused either way.
+                free = db.execute("PRAGMA freelist_count").fetchone()[0]
+                if free:
+                    db.execute(f"PRAGMA incremental_vacuum({min(int(free), 25000)})")
+                    db.commit()
             else:
                 # Legacy DB created before incremental auto-vacuum (auto_vacuum=0):
                 # the incremental pragma is a no-op there, so freed pages (e.g. from

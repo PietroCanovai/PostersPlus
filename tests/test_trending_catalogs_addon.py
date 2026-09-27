@@ -333,7 +333,7 @@ class AnimeRankTests(_AddonTest):
                 cache.set_cached_trending_snapshot("anime", {"anilist:5": 1}, "anilist")
             return cache.get_cached_trending_snapshot_entry(endpoint)
 
-        async def _regen(matches, *, log_prefix):
+        async def _regen(matches, *, log_prefix, replay=None):
             seen["matches"] = matches
             return 0
 

@@ -96,7 +96,7 @@ def parse_anime_id(namespace: str, raw: str) -> int | None:
         if prefix.strip().lower() != namespace:
             return None
         raw = rest.strip()
-    if not raw.isdigit():
+    if not (raw.isascii() and raw.isdigit()):
         return None
     value = int(raw)
     return value if 0 < value < 10_000_000 else None

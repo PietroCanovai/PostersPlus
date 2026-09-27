@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Code review fixes (27 Sep 2026)
+
+- Badge logos: a re-uploaded file on Wikimedia Commons no longer loses its
+  mark. The pinned revision is found in the file's history and fetched from
+  its archive URL, which never changes. A mark that no revision matches is
+  left out and the poster is cached as usual; before, every poster showing
+  that badge was re-rendered on every view. Graphic badges now back off
+  after a failed download (10 min) instead of retrying on every render.
+- Provisional posters (quality still loading, a rating source down, a text
+  scan queued) are kept for `PROVISIONAL_CACHE_TTL` (default 300 s), with no
+  ETag and a max-age no longer than that. Before, they were never kept, so a
+  long upstream outage meant a full render on every view. `0` restores the
+  old behaviour.
+- Quality: a source that fails one title (a 4xx for an id it doesn't index,
+  or AIOStreams with no results because one of its scrapers errored) backs
+  off only that title, for an hour, instead of the whole source.
+- Deferred text scans on a busy worker run anyway after waiting 30 s, one
+  at a time, rather than waiting for the worker to go idle.
+- The trending refresh re-renders the titles whose rank changed. Before, it
+  re-rendered only the ones whose rank stayed put.
+- Cache warming reads and writes metadata and logos in
+  `DEFAULT_LOGO_LANGUAGE`, not always English. Series poster art is stored
+  under one key whether the client says `series` or `tv`.
+- The SIMKL "Get a link code" button and unlinking wake the watchlist loop
+  immediately, instead of at its next cycle.
+- A TMDB error while checking an IMDb id sent beside a TMDB id keeps the IMDb
+  id (the render is provisional) instead of dropping it and caching the
+  poster under another identity. The failed lookup isn't repeated for 60 s.
+- `WORKERS>1`: saving settings no longer reverts what another worker saved,
+  and the dashboard shows the file as it is now. Prune, cache warming, the
+  digital-release poll, the trending refresh and the watchlist (with its
+  SIMKL link flow) run in one worker; another takes over if it exits.
+- Performance: image decoding, resizing and encoding, logo rasterising, and
+  the remaining cache writes run off the event loop. `/stats` is computed
+  off the loop and reused for 30 s. The composite prune has an index and
+  runs in batches, and the database file shrinks after a big eviction.
+- Bounds: `logo_language` must be a language code, float parameters are
+  rounded to 3 places, and `COMPOSITE_MAX_ENTRIES` now defaults to 500000
+  (about 50 GB). Set it to `0` to keep the old unbounded behaviour.
+- Security and hygiene:
+  - `/debug/canvas` accepts only known genres (before, it could read any
+    `.png` on disk).
+  - `?debug=1` returns JSON even for cached posters.
+  - Non-ASCII digits in ids and numbers are rejected cleanly instead of
+    causing a 500.
+  - The trending addon's access key is redacted from logs, and so are the
+    keys in the Plex and Jellyfin sync logs.
+  - An `ACCESS_KEY` shorter than 12 characters logs a warning, and wrong
+    guesses against it lock the address out.
+  - A failed TVDB login backs off: 5 min, or until restart for a rejected
+    key.
+  - The PP-OCR download has a timeout and is retried hourly, and renders
+    wait at most 30 s for a text scan.
+  - `/search` and `/resolve-imdb` answer 502/504 when TMDB is unreachable
+    or times out.
+  - uvicorn runs with `--no-server-header`.
+  - Actions are pinned to commits and the base image to a digest, with
+    Dependabot keeping them current.
+
 ### AniList and Kitsu scores for every anime title
 
 - AniList and Kitsu scores used to reach only titles requested by that

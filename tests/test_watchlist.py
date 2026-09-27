@@ -468,3 +468,12 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RequestRefreshTests(unittest.TestCase):
+    def test_it_wakes_the_loop_and_reopens_the_link_prompt(self):
+        with mock.patch.object(watchlist, "_wake", asyncio.Event()), \
+             mock.patch.object(watchlist, "_simkl_next_device_prompt", 1e18):
+            watchlist.request_refresh()
+            self.assertTrue(watchlist._wake.is_set())
+            self.assertEqual(watchlist._simkl_next_device_prompt, 0.0)

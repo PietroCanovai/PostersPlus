@@ -128,6 +128,10 @@ Default: `10`
 
 +/- half this many seconds of per-title jitter applied to COMPOSITE_CACHE_TTL, so a large batch of composites rendered around the same time (e.g. cache warming) don't all expire and re-render at once. Default: 172800 (2 days).
 
+### `PROVISIONAL_CACHE_TTL`
+
+How long a *provisional* poster is kept: one rendered with a piece missing — quality badges still being fetched, a rating source rate-limited or down, a text-detection scan still queued. It is served without an ETag and with `Cache-Control: public, max-age` no longer than what is left of this window, so neither the server nor a client holds an incomplete poster for long, while an outage of the thing it waits on costs one render per title and configuration per window rather than one per view. `0` never keeps them: every view renders again until the poster is complete (the behaviour before this setting). Default: `300`.
+
 Default: `172800`
 
 ### `TRENDING_SOURCE_MAX_ITEMS`

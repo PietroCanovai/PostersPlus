@@ -667,7 +667,8 @@ async def fetch_poster_metadata(
         "langs": _lang_pools,
     }
 
-    set_cached_tmdb_metadata(
+    await asyncio.to_thread(
+        set_cached_tmdb_metadata,
         metadata_cache_key,
         title,
         release_year,
@@ -753,7 +754,9 @@ def _id_token(tmdb_id: str) -> str:
 
 
 def poster_image_cache_key(tmdb_id: str, media_type: str, poster_path: str) -> str:
-    return f"{media_type}_{_id_token(tmdb_id)}_{_art_token(poster_path)}{_canvas_suffix(poster_canvas())}"
+    # Stremio asks for "series", the warmer and TMDB say "tv": one file either way.
+    kind = "tv" if media_type == "series" else media_type
+    return f"{kind}_{_id_token(tmdb_id)}_{_art_token(poster_path)}{_canvas_suffix(poster_canvas())}"
 
 
 def backdrop_image_cache_key(tmdb_id: str, backdrop_path: str, avoid_text: bool) -> str:
@@ -771,6 +774,27 @@ def landscape_image_cache_key(tmdb_id: str, backdrop_path: str) -> str:
         f"landscape_{_id_token(tmdb_id)}_{_art_token(backdrop_path)}"
         f"_{LANDSCAPE_WIDTH}x{LANDSCAPE_HEIGHT}"
     )
+
+
+def _cached_art(cache_key: str, size: tuple[int, int], fit) -> "Image.Image | None":
+    """A cached art file as RGBA, fitted to *size* when it was stored at
+    another, or None on a miss.  Blocking (a file read and a decode); run
+    through asyncio.to_thread, which carries the request's canvas along."""
+    cached_bytes = get_cached_tmdb_poster(cache_key)
+    if not cached_bytes:
+        return None
+    image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
+    if image.size != size:
+        image = fit(image)
+    return image
+
+
+def _store_art(cache_key: str, image: Image.Image) -> None:
+    """Cache *image* as JPEG q92 RGB (no alpha needed for base art; restoring
+    it on load is free).  Blocking: an encode and an fsync'd write."""
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="JPEG", quality=92)
+    set_cached_tmdb_poster(cache_key, buf.getvalue())
 
 
 async def fetch_poster_image(
@@ -794,14 +818,12 @@ async def fetch_poster_image(
     # cache/normalise/return path below is identical either way.
     _is_absolute = is_absolute_art(poster_path)
     poster_cache_key = poster_image_cache_key(tmdb_id, media_type, poster_path)
-    cached_bytes = get_cached_tmdb_poster(poster_cache_key)
-
-    if cached_bytes:
+    # Decoding, resizing and encoding are off the loop: at the larger canvases
+    # a LANCZOS resize alone is a few hundred ms, and every request in the
+    # worker would wait on it.
+    image = await asyncio.to_thread(_cached_art, poster_cache_key, poster_canvas(), normalise_poster)
+    if image is not None:
         logger.info(f"Poster cache hit for {tmdb_id}")
-        # Stored as JPEG RGB — convert to RGBA for the compositing pipeline
-        image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        if image.size != poster_canvas():
-            image = normalise_poster(image)
         return image
 
     if _is_absolute:
@@ -812,15 +834,13 @@ async def fetch_poster_image(
         _tmdb_size = POSTER_WIDTHS.get(poster_canvas()[0], "w500")
         img_resp = await client.get(f"https://image.tmdb.org/t/p/{_tmdb_size}{poster_path}")
     img_resp.raise_for_status()
-    image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
-    image = normalise_poster(image)
 
-    # Save as JPEG RGB (no alpha needed for base poster; restoring alpha on load is free)
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="JPEG", quality=92)
-    set_cached_tmdb_poster(poster_cache_key, buf.getvalue())
+    def _decode_and_store(content: bytes) -> Image.Image:
+        image = normalise_poster(Image.open(io.BytesIO(content)).convert("RGBA"))
+        _store_art(poster_cache_key, image)
+        return image
 
-    return image
+    return await asyncio.to_thread(_decode_and_store, img_resp.content)
 
 
 # Bumped whenever the backdrop crop logic changes, so cached crops from the old
@@ -1023,13 +1043,9 @@ async def fetch_backdrop_image(
     """
     # Bump _CROP_VERSION on any crop change — it is part of the key.
     cache_key = backdrop_image_cache_key(tmdb_id, backdrop_path, avoid_text)
-    cached_bytes = get_cached_tmdb_poster(cache_key)
-
-    if cached_bytes:
+    image = await asyncio.to_thread(_cached_art, cache_key, poster_canvas(), normalise_poster)
+    if image is not None:
         logger.info(f"TMDB backdrop cache hit for {tmdb_id}")
-        image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        if image.size != poster_canvas():
-            image = normalise_poster(image)
         return image
 
     # w1280 (720 px tall) crops to a quality 500x750 portrait.  A larger canvas
@@ -1047,22 +1063,20 @@ async def fetch_backdrop_image(
             f"https://image.tmdb.org/t/p/{'original' if _large else 'w1280'}{backdrop_path}"
         )
     img_resp.raise_for_status()
-    image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
-    if _large and image.height > size[1]:
-        image = image.resize((round(image.width * size[1] / image.height), size[1]),
-                             Image.Resampling.LANCZOS, reducing_gap=2.0)
 
-    # The crop runs CPU-heavy face/text inference, so do it in the thread pool;
-    # running it inline would stall the event loop and delay unrelated requests.
-    image = await asyncio.get_running_loop().run_in_executor(
-        None, _crop_and_normalise_backdrop, image, tmdb_id, avoid_text, size
-    )
+    # The decode, the downscale of an original, the crop (CPU-heavy face/text
+    # inference) and the encode all run in the thread pool; inline they would
+    # stall the event loop and delay unrelated requests.
+    def _decode_crop_store(content: bytes) -> Image.Image:
+        image = Image.open(io.BytesIO(content)).convert("RGBA")
+        if _large and image.height > size[1]:
+            image = image.resize((round(image.width * size[1] / image.height), size[1]),
+                                 Image.Resampling.LANCZOS, reducing_gap=2.0)
+        image = _crop_and_normalise_backdrop(image, tmdb_id, avoid_text, size)
+        _store_art(cache_key, image)
+        return image
 
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="JPEG", quality=92)
-    set_cached_tmdb_poster(cache_key, buf.getvalue())
-
-    return image
+    return await asyncio.to_thread(_decode_crop_store, img_resp.content)
 
 
 def normalise_landscape(image: Image.Image) -> Image.Image:
@@ -1097,13 +1111,11 @@ async def fetch_landscape_image(
     are different images and must not share a key.
     """
     cache_key = landscape_image_cache_key(tmdb_id, backdrop_path)
-    cached_bytes = get_cached_tmdb_poster(cache_key)
-
-    if cached_bytes:
+    image = await asyncio.to_thread(
+        _cached_art, cache_key, (LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT), normalise_landscape
+    )
+    if image is not None:
         logger.info(f"TMDB landscape cache hit for {tmdb_id}")
-        image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        if image.size != (LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT):
-            image = normalise_landscape(image)
         return image
 
     if is_absolute_art(backdrop_path):
@@ -1113,13 +1125,13 @@ async def fetch_landscape_image(
         logger.info(f"External API Call: Requested landscape backdrop from TMDB for {tmdb_id}")
         img_resp = await client.get(f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
     img_resp.raise_for_status()
-    image = normalise_landscape(Image.open(io.BytesIO(img_resp.content)).convert("RGBA"))
 
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="JPEG", quality=92)
-    set_cached_tmdb_poster(cache_key, buf.getvalue())
+    def _decode_and_store(content: bytes) -> Image.Image:
+        image = normalise_landscape(Image.open(io.BytesIO(content)).convert("RGBA"))
+        _store_art(cache_key, image)
+        return image
 
-    return image
+    return await asyncio.to_thread(_decode_and_store, img_resp.content)
 
 
 def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
@@ -1162,6 +1174,21 @@ def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
     return normalise_poster(image, size or (POSTER_WIDTH, POSTER_HEIGHT))
 
 
+def _cached_logo(cache_key: str) -> "Image.Image | None":
+    """A cached logo as RGBA, or None.  Blocking; run via asyncio.to_thread."""
+    cached_bytes = get_cached_tmdb_logo(cache_key)
+    if not cached_bytes:
+        return None
+    return Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
+
+
+def _store_logo(cache_key: str, logo: Image.Image) -> None:
+    """Cache *logo* as PNG.  Blocking (an encode, ~15-55 ms, and a write)."""
+    buf = io.BytesIO()
+    logo.save(buf, format="PNG")
+    set_cached_tmdb_logo(cache_key, buf.getvalue())
+
+
 async def _fetch_metahub_logo(
     client: httpx.AsyncClient,
     imdb_id: str,
@@ -1177,11 +1204,10 @@ async def _fetch_metahub_logo(
     URL pattern: https://images.metahub.space/logo/medium/{imdb_id}/img
     """
     cache_key = f"metahub_logo_{imdb_id}"
-    cached_bytes = get_cached_tmdb_logo(cache_key)
-
-    if cached_bytes:
+    cached = await asyncio.to_thread(_cached_logo, cache_key)
+    if cached is not None:
         logger.info(f"Metahub logo cache hit for {imdb_id}")
-        return Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
+        return cached
 
     # Try medium first (smaller payload), fall back to large — some titles only
     # have a large-size entry on Metahub and the medium URL 404s.
@@ -1205,21 +1231,19 @@ async def _fetch_metahub_logo(
     if resp is None:
         return None
 
-    try:
-        logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-    except Exception as exc:
-        logger.warning(f"Metahub logo parse failed for {imdb_id}: {exc}")
-        return None
+    def _decode_and_store(content: bytes) -> Image.Image | None:
+        try:
+            logo = Image.open(io.BytesIO(content)).convert("RGBA")
+        except Exception as exc:
+            logger.warning(f"Metahub logo parse failed for {imdb_id}: {exc}")
+            return None
+        bbox = logo.getchannel("A").getbbox()
+        if bbox:
+            logo = logo.crop(bbox)
+        _store_logo(cache_key, logo)
+        return logo
 
-    bbox = logo.getchannel("A").getbbox()
-    if bbox:
-        logo = logo.crop(bbox)
-
-    buf = io.BytesIO()
-    logo.save(buf, format="PNG")
-    set_cached_tmdb_logo(cache_key, buf.getvalue())
-
-    return logo
+    return await asyncio.to_thread(_decode_and_store, resp.content)
 
 
 def _normalise_image_locale(value: str | None) -> str:
@@ -1476,12 +1500,10 @@ async def fetch_logo(
     _canvas = poster_canvas()
     _large = _canvas[0] > POSTER_WIDTH
     logo_cache_key = logo_path.strip('/').replace('/', '_') + _canvas_suffix(_canvas)
-    cached_bytes = get_cached_tmdb_logo(logo_cache_key)
-
-    if cached_bytes:
+    cached = await asyncio.to_thread(_cached_logo, logo_cache_key)
+    if cached is not None:
         logger.info("TMDB logo cache hit")
-        logo = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
-        return logo
+        return cached
 
     # SVGs are served at "original" (the sized w500 path doesn't apply to vector);
     # rasters use w500 which is plenty for our ≤~440px rendered width.
@@ -1490,25 +1512,27 @@ async def fetch_logo(
     logger.info(f"External API Call: Requested logo from TMDB")
     resp.raise_for_status()
 
-    if is_svg:
-        logo = _rasterize_svg(resp.content)
-        if logo is None:
-            # Rasterise failed — fall back to Metahub, then None.
-            logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
-            return await _fetch_metahub_logo(client, imdb_id) if (use_metahub and imdb_id) else None
-    else:
-        logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    # Rasterising, decoding, trimming and the PNG encode run off the loop.
+    def _decode_and_store(content: bytes) -> Image.Image | None:
+        if is_svg:
+            logo = _rasterize_svg(content)
+            if logo is None:
+                return None
+        else:
+            logo = Image.open(io.BytesIO(content)).convert("RGBA")
+        bbox = logo.getchannel("A").getbbox()
+        if bbox:
+            logo = logo.crop(bbox)
+        if _large and (logo.width > _canvas[0] or logo.height > _canvas[1] // 3):
+            logo.thumbnail((_canvas[0], _canvas[1] // 3), Image.Resampling.LANCZOS)
+        _store_logo(logo_cache_key, logo)
+        return logo
 
-    bbox = logo.getchannel("A").getbbox()
-    if bbox:
-        logo = logo.crop(bbox)
-    if _large and (logo.width > _canvas[0] or logo.height > _canvas[1] // 3):
-        logo.thumbnail((_canvas[0], _canvas[1] // 3), Image.Resampling.LANCZOS)
-
-    buf = io.BytesIO()
-    logo.save(buf, format="PNG")
-    set_cached_tmdb_logo(logo_cache_key, buf.getvalue())
-
+    logo = await asyncio.to_thread(_decode_and_store, resp.content)
+    if logo is None:
+        # Rasterise failed — fall back to Metahub, then None.
+        logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
+        return await _fetch_metahub_logo(client, imdb_id) if (use_metahub and imdb_id) else None
     return logo
 
 
@@ -1605,7 +1629,7 @@ def _trending_item_details(item: dict) -> dict:
     """Name, year, IMDb id and poster path from one trending-list row, for the
     trending catalogs addon.  Covers TMDB's and MDBList's field names."""
     date = str(item.get("release_date") or item.get("first_air_date") or "")
-    year = item.get("release_year") or item.get("year") or (date[:4] if date[:4].isdigit() else None)
+    year = item.get("release_year") or item.get("year") or (date[:4] if date[:4].isascii() and date[:4].isdigit() else None)
     out = {
         "name": item.get("title") or item.get("name"),
         "year": str(year) if year else None,
@@ -1652,7 +1676,7 @@ def _parse_trending_payload(payload, media_type: str, details_out: dict | None =
         # Reject anything that is not a bare TMDB id — an IMDb id here means the
         # payload is keyed on a different id space and silently importing it
         # would produce a snapshot that never matches a request.
-        if raw is None or not str(raw).isdigit():
+        if raw is None or not (str(raw).isascii() and str(raw).isdigit()):
             continue
         order = item.get("rank") if ranked else None
         rows.append((float(order) if isinstance(order, (int, float)) else position, str(raw)))
@@ -1840,7 +1864,7 @@ async def ensure_trending_snapshot(
                 return None
             _trending_source_failed_at.pop("anime", None)
             rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
-            set_cached_trending_snapshot(endpoint, rankings, source_sig, details)
+            await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
             return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
                 rankings, time.time() + 86400
             )
@@ -1877,7 +1901,7 @@ async def ensure_trending_snapshot(
             _trending_source_failed_at.pop(cooldown_key, None)
 
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
-        set_cached_trending_snapshot(endpoint, rankings, source_sig, details)
+        await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
         return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
             rankings, time.time() + 86400
         )
@@ -1983,7 +2007,8 @@ async def fetch_trending_candidates(
     for _media_type, _ids in sources.items():
         _sig = trending_source_signature(_media_type)
         if _ids and get_cached_trending_snapshot(_media_type, _sig) is None:
-            set_cached_trending_snapshot(
+            await asyncio.to_thread(
+                set_cached_trending_snapshot,
                 _media_type,
                 {entry_id: position for position, entry_id in enumerate(_ids, start=1)},
                 _sig,
@@ -2321,6 +2346,10 @@ def _reverse_idmap_key(tmdb_id: str, media_type: str) -> str:
     return f"idmap:{_IDMAP_VERSION}:tmdb:{kind}:{tmdb_id}"
 
 
+_REVERSE_IDMAP_RETRY_SECS = 60.0
+_reverse_idmap_failed_at: dict[str, float] = {}
+
+
 async def resolve_tmdb_to_imdb(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -2339,6 +2368,12 @@ async def resolve_tmdb_to_imdb(
     cached = get_cached_tvdb_json(key)
     if cached is not None:
         return cached.get("imdb_id") or None
+    # A lookup that just failed isn't sent again for a while: during a TMDB
+    # blip (a 429 above all) every request for the title would otherwise add
+    # another call.
+    failed_at = _reverse_idmap_failed_at.get(key)
+    if failed_at is not None and time.monotonic() - failed_at < _REVERSE_IDMAP_RETRY_SECS:
+        raise IdResolveError(f"TMDB external_ids for {tmdb_id} failed moments ago")
 
     inflight = _idmap_inflight.get(key)
     if inflight is not None:
@@ -2355,7 +2390,11 @@ async def resolve_tmdb_to_imdb(
             resp.raise_for_status()
             imdb_id = (resp.json().get("imdb_id") or "").strip() or None
         except Exception as exc:
+            if len(_reverse_idmap_failed_at) >= 10000:
+                _reverse_idmap_failed_at.clear()
+            _reverse_idmap_failed_at[key] = time.monotonic()
             raise IdResolveError(f"TMDB external_ids failed for {kind}/{tmdb_id}: {exc}") from exc
+        _reverse_idmap_failed_at.pop(key, None)
         # A link TMDB adds later should be picked up, so "none" is kept only a day.
         set_cached_tvdb_json(
             key, {"imdb_id": imdb_id or ""},
@@ -3090,7 +3129,7 @@ async def fetch_badge_facts(client: httpx.AsyncClient, tmdb_id: str, media_type:
     cached = get_cached_badge_facts(cache_key)
     if cached is not None:
         return cached
-    if not tmdb_key or not str(tmdb_id).isdigit():
+    if not tmdb_key or not (str(tmdb_id).isascii() and str(tmdb_id).isdigit()):
         return None
     append = "content_ratings" if endpoint == "tv" else "release_dates"
     try:

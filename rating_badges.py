@@ -7,8 +7,9 @@ star), Minimalist (small icons before each score) and the frosted Bar
 Bar, whose score is the bar itself.
 
 Nothing trademarked ships in the repo.  Each mark is fetched once, pinned by
-SHA-1 so an edit upstream can never change a poster, and kept in the cache
-volume beside the graphic badges' marks:
+SHA-1 so an edit upstream can never change a poster (a Commons re-upload is
+looked past to the pinned revision), and kept in the cache volume beside the
+graphic badges' marks:
 
   IMDb, Rotten Tomatoes (Tomatometer fresh / rotten, Popcornmeter up / down),
   Metacritic, Letterboxd, Trakt, MyAnimeList, AniList
@@ -30,7 +31,6 @@ red-to-purple gradient and the thumb in gold on black.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import logging
 import os
@@ -42,7 +42,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from config import SCORE_NORMALISERS
-from graphic_badges import ASSET_DIR, _USER_AGENT, _runs
+from graphic_badges import ASSET_DIR, PinnedGone, _runs, commons_url, fetch_pinned
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,11 @@ class _Source:
     url: str
     sha1: str   # of the exact file these marks were built against
     ext: str
+    commons_title: str | None = None   # searched for the pinned revision if the URL moves on
 
 
 def _commons(title: str, sha1: str) -> _Source:
-    return _Source("https://commons.wikimedia.org/wiki/Special:FilePath/" + title.replace(" ", "_"),
-                   sha1, os.path.splitext(title)[1])
+    return _Source(commons_url(title), sha1, os.path.splitext(title)[1], title)
 
 
 _FILES = {
@@ -142,7 +142,9 @@ def _keys_for(providers, style: str = "color") -> set[str]:
 
 
 def assets_ready(providers, style: str = "color") -> bool:
-    return all(os.path.exists(_asset_path(k)) for k in _keys_for(providers, style))
+    """Every mark the providers draw is on disk, or known not to be coming
+    (no revision upstream matches its pin), so nothing is left to wait for."""
+    return all(os.path.exists(_asset_path(k)) or k in _gone for k in _keys_for(providers, style))
 
 
 _fetch_lock = asyncio.Lock()
@@ -150,12 +152,15 @@ _fetch_lock = asyncio.Lock()
 # (Commons answers a burst with 429) isn't asked again on every request.
 _RETRY_AFTER = 600.0
 _failed_at: dict[str, float] = {}
+# Marks no upstream revision of which matches the pin.  Their badges are left
+# out until restart, and the poster is cached as usual: waiting can't help.
+_gone: set[str] = set()
 
 
 async def ensure_assets(client, providers, style: str = "color") -> bool:
     """Download any missing mark the request's providers draw.  Cheap once
     they are on disk; a failed download leaves that badge out rather than
-    failing the render.  True when every mark they need is on disk."""
+    failing the render.  True when nothing they need is still to come."""
     if assets_ready(providers, style):
         return True
     async with _fetch_lock:
@@ -163,26 +168,25 @@ async def ensure_assets(client, providers, style: str = "color") -> bool:
         fetched = False
         for key in sorted(_keys_for(providers, style)):
             path = _asset_path(key)
-            if os.path.exists(path) or time.monotonic() - _failed_at.get(key, -_RETRY_AFTER) < _RETRY_AFTER:
+            if (os.path.exists(path) or key in _gone
+                    or time.monotonic() - _failed_at.get(key, -_RETRY_AFTER) < _RETRY_AFTER):
                 continue
             f = _FILES[key]
             try:
-                resp = await client.get(f.url, headers={"User-Agent": _USER_AGENT},
-                                        follow_redirects=True, timeout=15)
-                resp.raise_for_status()
+                body = await fetch_pinned(client, f.url, f.sha1, f.commons_title)
+            except PinnedGone:
+                # Upstream now serves a different file.  Keep drawing without
+                # it rather than put an unreviewed logo on every poster.
+                _gone.add(key)
+                logger.warning(f"Rating badges: {key} no longer matches its pinned SHA-1; skipped")
+                continue
             except Exception as exc:
                 _failed_at[key] = time.monotonic()
                 logger.warning(f"Rating badges: fetch failed for {key}: {exc}")
                 continue
-            if hashlib.sha1(resp.content).hexdigest() != f.sha1:
-                # Upstream now serves a different file.  Keep drawing without
-                # it rather than put an unreviewed logo on every poster.
-                _failed_at[key] = time.monotonic()
-                logger.warning(f"Rating badges: {key} no longer matches its pinned SHA-1; skipped")
-                continue
             tmp = path + ".part"
             with open(tmp, "wb") as fh:
-                fh.write(resp.content)
+                fh.write(body)
             os.replace(tmp, path)
             fetched = True
             logger.info(f"Rating badges: cached {key}")

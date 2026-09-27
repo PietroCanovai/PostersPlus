@@ -10,7 +10,9 @@ import logging
 from queue import LifoQueue
 import os
 import re
+import shutil
 import threading
+import time
 import unicodedata
 import urllib.request
 
@@ -128,6 +130,12 @@ _ocr_sessions = []
 _model_lock = threading.Lock()
 _load_failed = False
 _load_error = None
+# A model that failed to download or load is tried again after this long (a
+# transient network failure shouldn't disable detection until a restart).
+# None when the failure is permanent (no RapidOCR runtime).
+_load_failed_at: float | None = None
+_LOAD_RETRY_SECS = 3600.0
+_DOWNLOAD_TIMEOUT = 60.0
 
 
 def text_detection_available() -> bool:
@@ -189,7 +197,10 @@ def _new_ocr_session():
 
 def _ensure_model():
     """Download and load the bounded PP-OCR session pool once."""
-    global _ocr_pool, _ocr_sessions, _load_failed, _load_error
+    global _ocr_pool, _ocr_sessions, _load_failed, _load_error, _load_failed_at
+    if (_load_failed and _load_failed_at is not None
+            and time.monotonic() - _load_failed_at >= _LOAD_RETRY_SECS):
+        _load_failed = False   # try again
     if not _HAS_RAPIDOCR:
         if not _load_failed:
             _load_error = _RAPIDOCR_IMPORT_ERROR
@@ -209,7 +220,12 @@ def _ensure_model():
                 )
                 os.makedirs(os.path.dirname(_MODEL_PATH) or ".", exist_ok=True)
                 tmp = _MODEL_PATH + ".part"
-                urllib.request.urlretrieve(_MODEL_URL, tmp)
+                # With a timeout: this runs holding _model_lock, and a stalled
+                # download would hold every scan (and the renders awaiting
+                # them) behind it.
+                with urllib.request.urlopen(_MODEL_URL, timeout=_DOWNLOAD_TIMEOUT) as resp, \
+                        open(tmp, "wb") as out:
+                    shutil.copyfileobj(resp, out)
                 if not _valid_model(tmp):
                     raise ValueError("downloaded model failed SHA-256 validation")
                 os.replace(tmp, _MODEL_PATH)
@@ -233,10 +249,11 @@ def _ensure_model():
         except Exception as exc:
             _load_error = f"{type(exc).__name__}: {exc}"
             logger.exception(
-                "PP-OCR model unavailable; text detection disabled: "
-                f"{_load_error}"
+                "PP-OCR model unavailable; text detection off, retried in "
+                f"{_LOAD_RETRY_SECS / 60:.0f} min: {_load_error}"
             )
             _load_failed = True
+            _load_failed_at = time.monotonic()
     return _ocr_pool
 
 

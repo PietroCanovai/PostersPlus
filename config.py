@@ -69,7 +69,7 @@ ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='s
 # through a browser, so /poster keeps its access key, but the configurator no
 # longer asks for one and hands the key to the page itself.  Anyone who can open
 # the configurator can therefore read the key — it is only as safe as that login.
-CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login. No effect without an access key.").strip().lower() in ("1", "true", "yes")
+CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key.").strip().lower() in ("1", "true", "yes")
 # Off by default: on a public instance an Admin link in every visitor's header
 # only invites people to try keys against the dashboard.  _flag isn't defined
 # yet at this point, hence the inline parse.
@@ -565,9 +565,17 @@ COMPOSITE_CACHE_TTL        = int(_env('COMPOSITE_CACHE_TTL', "604800", group='Ca
 # spread of 6-8 days for the default 7-day TTL. Same cache_key always gets
 # the same jitter.
 COMPOSITE_CACHE_TTL_JITTER = int(_env('COMPOSITE_CACHE_TTL_JITTER', "172800", group='Caching', kind='int', label='Composite TTL jitter (s)', help='Plus or minus half this many seconds of per-key jitter on the composite TTL, so a batch rendered together does not all expire at once.', min=0, max=31536000, advanced=True))
+# How long a provisional render (one missing a piece: quality still being
+# fetched, an OCR scan queued, a rating source cooling down) is kept.  Not
+# keeping them at all turned a long upstream outage into a full render on
+# every view, just when the instance was already degraded; a short life still
+# lets the finished poster replace it soon.  Never sent with an ETag.
+PROVISIONAL_CACHE_TTL      = int(_env('PROVISIONAL_CACHE_TTL', "300", group='Caching', kind='int', label='Provisional render TTL (s)', help='How long a poster rendered with a piece missing (quality still loading, a rating source down, text detection queued) is kept and may be cached by clients. 0 never keeps them, so each view renders again until the poster is complete.', min=0, max=86400, advanced=True))
 # Maximum number of composite cache entries. When exceeded the oldest entries are
-# evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL alone).
-COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "0", group='Caching', kind='int', label='Composite cache max entries', help='Oldest entries are evicted past this many. 0 relies on the TTL alone.', min=0, max=10000000))
+# evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL
+# alone), which let any client that can request posters fill the disk with
+# distinct render settings.
+COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "500000", group='Caching', kind='int', label='Composite cache max entries', help='Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound.', min=0, max=10000000))
 # Number of fully-rendered composites kept in each worker's in-memory LRU (L1).
 # Off by default: an L1 hit only saves a SQLite point read (~0.7 ms cold,
 # ~0.04 ms once the OS page cache has it, against ~4 ms for the whole hit),

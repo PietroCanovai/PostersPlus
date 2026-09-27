@@ -157,7 +157,7 @@ def _sweep(now: float) -> None:
             del _lockouts[ip]
 
 
-def _record_failure(ip: str) -> None:
+def _record_failure(ip: str, label: str = "Admin") -> None:
     now = time.monotonic()
     if len(_failures) >= _MAX_TRACKED or len(_lockouts) >= _MAX_TRACKED:
         _sweep(now)
@@ -167,7 +167,7 @@ def _record_failure(ip: str) -> None:
     if len(recent) >= _FAIL_LIMIT:
         _lockouts[ip] = now + _LOCKOUT_SECS
         logger.warning(
-            f"Admin: {ip} locked out for {int(_LOCKOUT_SECS)}s after {len(recent)} bad keys"
+            f"{label}: {ip} locked out for {int(_LOCKOUT_SECS)}s after {len(recent)} bad keys"
             + (_PROXY_HINT if _looks_like_proxy(ip) else "")
         )
 

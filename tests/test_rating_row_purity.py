@@ -33,7 +33,7 @@ class WriteBackTests(unittest.TestCase):
 
     def test_the_request_path_writes_the_captured_row(self):
         start = self.src.index("# Write rating + awards to cache (only on a fresh fetch).")
-        call = self.src[start:self.src.index(")", self.src.index("set_cached_rating(", start) + 300)]
+        call = self.src[start:self.src.index(")", self.src.index("set_cached_rating,", start) + 300)]
         self.assertRegex(call, r"_row_ratings if isinstance\(_row_ratings, dict\)")
         self.assertIn("age_rating=_row_age_rating", call)
 

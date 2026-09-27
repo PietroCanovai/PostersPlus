@@ -175,7 +175,7 @@ def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) ->
         return {}
     col = "tmdb_movie" if media_type == "movie" else "tmdb_tv"
     tries = []
-    if tmdb_id and str(tmdb_id).isdigit():
+    if tmdb_id and str(tmdb_id).isascii() and str(tmdb_id).isdigit():
         tries.append((col, int(tmdb_id)))
     if imdb_id and str(imdb_id).startswith("tt"):
         tries.append(("imdb_id", imdb_id))

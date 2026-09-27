@@ -4,7 +4,8 @@ main._draw_graphic_badges).
 
 Nothing trademarked ships in the repo.  The marks are fetched once from
 Wikimedia Commons, pinned by SHA-1 so an edit upstream can never change a
-poster, and kept in the cache volume:
+poster (a re-upload is looked past to the pinned revision, see fetch_pinned),
+and kept in the cache volume:
 
   Dolby Vision 2021 logo   public domain (below the threshold of originality)
   Dolby Cinema 2021 logo   public domain; only its letters are used
@@ -25,6 +26,7 @@ import hashlib
 import io
 import logging
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -59,44 +61,95 @@ def _asset_path(key: str) -> str:
     return os.path.join(ASSET_DIR, f"{f.sha1}{os.path.splitext(f.title)[1]}")
 
 
+def commons_url(title: str) -> str:
+    """The latest revision of a Commons file.  It moves when the file is
+    re-uploaded, so a pinned hash can stop matching; see fetch_pinned."""
+    return "https://commons.wikimedia.org/wiki/Special:FilePath/" + title.replace(" ", "_")
+
+
+_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+
+
+class PinnedGone(Exception):
+    """Neither the URL nor the file's Commons history serves the pinned bytes."""
+
+
+async def fetch_pinned(client, url: str, sha1: str, commons_title: str | None = None) -> bytes:
+    """The file at ``url``, verified against ``sha1``.  When upstream now
+    serves something else and the file is on Commons, the file's revision
+    history is searched for the pinned hash: a superseded revision stays at an
+    archive URL that never changes, so a re-upload doesn't lose the mark.
+
+    Raises PinnedGone when no revision matches (retrying won't help) and any
+    other exception for a failure that may pass (network, 429, 5xx)."""
+    resp = await client.get(url, headers={"User-Agent": _USER_AGENT}, follow_redirects=True, timeout=15)
+    resp.raise_for_status()
+    if hashlib.sha1(resp.content).hexdigest() == sha1:
+        return resp.content
+    if commons_title is None:
+        raise PinnedGone(url)
+    api = await client.get(_COMMONS_API, headers={"User-Agent": _USER_AGENT}, timeout=15, params={
+        "action": "query", "titles": "File:" + commons_title, "prop": "imageinfo",
+        "iiprop": "sha1|url", "iilimit": "50", "format": "json", "formatversion": "2"})
+    api.raise_for_status()
+    pages = (api.json().get("query") or {}).get("pages") or [{}]
+    for info in pages[0].get("imageinfo") or []:
+        if info.get("sha1") == sha1 and info.get("url"):
+            old = await client.get(info["url"], headers={"User-Agent": _USER_AGENT},
+                                   follow_redirects=True, timeout=15)
+            old.raise_for_status()
+            if hashlib.sha1(old.content).hexdigest() == sha1:
+                return old.content
+    raise PinnedGone(url)
+
+
 def assets_ready() -> bool:
-    return all(os.path.exists(_asset_path(k)) for k in _FILES)
+    return all(os.path.exists(_asset_path(k)) or k in _gone for k in _FILES)
 
 
 _fetch_lock = asyncio.Lock()
+# A failed file is left alone this long, so a slow, throttling (Commons
+# answers a burst with 429) or unreachable host isn't asked on every render.
+_RETRY_AFTER = 600.0
+_failed_at: dict[str, float] = {}
+# Files no revision of which matches the pin: drawn without until restart.
+_gone: set[str] = set()
 
 
 async def ensure_assets(client) -> bool:
     """Download any missing Commons file.  Cheap once they are all on disk;
     a failed download leaves that mark out rather than failing the render,
-    and is retried on the next request."""
+    and is retried after _RETRY_AFTER.  True once nothing is left to fetch."""
     if assets_ready():
         return True
     async with _fetch_lock:
         os.makedirs(ASSET_DIR, exist_ok=True)
+        fetched = False
         for key, f in _FILES.items():
             path = _asset_path(key)
-            if os.path.exists(path):
+            if (os.path.exists(path) or key in _gone
+                    or time.monotonic() - _failed_at.get(key, -_RETRY_AFTER) < _RETRY_AFTER):
                 continue
-            url = "https://commons.wikimedia.org/wiki/Special:FilePath/" + f.title.replace(" ", "_")
             try:
-                resp = await client.get(url, headers={"User-Agent": _USER_AGENT},
-                                        follow_redirects=True, timeout=15)
-                resp.raise_for_status()
-            except Exception as exc:
-                logger.warning(f"Graphic badges: Commons fetch failed for {f.title}: {exc}")
+                body = await fetch_pinned(client, commons_url(f.title), f.sha1, f.title)
+            except PinnedGone:
+                # No revision on Commons is the reviewed one.  Keep drawing
+                # without it rather than put an unreviewed file on every poster.
+                _gone.add(key)
+                logger.warning(f"Graphic badges: no revision of {f.title} matches its pinned SHA-1; skipped")
                 continue
-            if hashlib.sha1(resp.content).hexdigest() != f.sha1:
-                # Commons now serves a different revision.  Keep drawing without
-                # it rather than put an unreviewed file on every poster.
-                logger.warning(f"Graphic badges: {f.title} no longer matches its pinned SHA-1; skipped")
+            except Exception as exc:
+                _failed_at[key] = time.monotonic()
+                logger.warning(f"Graphic badges: Commons fetch failed for {f.title}: {exc}")
                 continue
             tmp = path + ".part"
             with open(tmp, "wb") as fh:
-                fh.write(resp.content)
+                fh.write(body)
             os.replace(tmp, path)
+            fetched = True
             logger.info(f"Graphic badges: cached {f.title}")
-        _marks.cache_clear()
+        if fetched:
+            _marks.cache_clear()
     return assets_ready()
 
 

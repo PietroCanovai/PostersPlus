@@ -54,7 +54,7 @@ _SENTINEL_MISS = {"__miss__": True}
 # built by the old logic are re-fetched rather than served.
 _METADATA_VERSION = "v2"   # v2: dvdRelease and the episode summary joined the slim row
 
-_IMDB_ID_RE = re.compile(r"^tt\d{1,10}$")
+_IMDB_ID_RE = re.compile(r"^tt[0-9]{1,10}\Z")
 
 
 class _TransientError(Exception):
@@ -299,7 +299,7 @@ def normalise(meta: dict, imdb_id: str) -> tuple:
         tmdb_data["tmdb_status"] = _STATUS.get(str(status).strip().lower(), status)
 
     tmdb_id = meta.get("moviedb_id")
-    if tmdb_id is not None and str(tmdb_id).isdigit():
+    if tmdb_id is not None and str(tmdb_id).isascii() and str(tmdb_id).isdigit():
         tmdb_data["cinemeta_tmdb_id"] = str(tmdb_id)
 
     # Cast / director in TMDB's credits shape, so the studio/director/cast
@@ -521,7 +521,7 @@ async def search(client: httpx.AsyncClient, query: str, limit: int = _SEARCH_LIM
     def _row(meta: dict, media_type: str) -> dict:
         imdb = meta.get("imdb_id") or meta.get("id")
         year = str(meta.get("releaseInfo") or meta.get("year") or "")[:4]
-        date = f"{year}-01-01" if year.isdigit() else ""
+        date = f"{year}-01-01" if year.isascii() and year.isdigit() else ""
         row = {
             "media_type":  media_type,
             "id":          None,
@@ -555,6 +555,6 @@ async def resolve_tmdb_id(
     if not meta:
         return None
     tmdb_id = meta.get("moviedb_id")
-    return str(tmdb_id) if tmdb_id is not None and str(tmdb_id).isdigit() else None
+    return str(tmdb_id) if tmdb_id is not None and str(tmdb_id).isascii() and str(tmdb_id).isdigit() else None
 
 

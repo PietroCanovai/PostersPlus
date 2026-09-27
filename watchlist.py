@@ -65,6 +65,10 @@ logger = logging.getLogger(__name__)
 _STATE_KEY_SNAPSHOT   = "watchlist_snapshot"
 _STATE_KEY_SIMKL_TOK  = "simkl_tokens"
 _STATE_KEY_SIMKL_ACT  = "simkl_activities"
+# Shared with the other workers (WORKERS>1): only one runs the refresh loop,
+# but the dashboard may be answered by any of them.
+_STATE_KEY_PENDING    = "simkl_pending"
+_STATE_KEY_REFRESH    = "watchlist_refresh_requested"
 
 _SIMKL_API   = "https://api.simkl.com"
 _SIMKL_UA    = f"postersplus/{_cfg.APP_VERSION} (https://github.com/UmbraProjects/PostersPlus)"
@@ -213,6 +217,13 @@ def link_status() -> dict:
     out = status()
     if source_mode() == "simkl":
         pending = _simkl_pending
+        if pending is None:
+            # Issued by the worker running the loop, if not this one.
+            try:
+                raw = get_app_state(_STATE_KEY_PENDING)
+                pending = json.loads(raw) if raw else None
+            except Exception:
+                pending = None
         if pending and pending["expires_at"] <= time.time():
             pending = None
         out["simkl"] = {
@@ -227,50 +238,10 @@ def request_refresh() -> None:
     fresh link code immediately when the account is not linked yet."""
     global _simkl_next_device_prompt
     _simkl_next_device_prompt = 0.0
-
-
-async def simkl_unlink(client: httpx.AsyncClient) -> dict:
-    """Forget the SIMKL grant: revoke it upstream when we can, drop the
-    stored tokens, the activities fingerprint and the snapshot, and clear
-    every cached poster that carried the marker.  The next refresh issues a
-    fresh link code.
-
-    A V2 grant is revoked through /oauth2/revoke (either token ends the
-    grant).  V1 has no revoke endpoint, so that token stays valid at SIMKL
-    until the user removes PostersPlus at simkl.com/settings/connected-apps
-    — the result says which happened.
-    """
-    global _simkl_next_device_prompt
-    tokens = _simkl_load_tokens()
-    revoked = False
-    if tokens and tokens.get("refresh_token"):
-        try:
-            form = {"client_id": _cfg.SIMKL_CLIENT_ID, "token": tokens["refresh_token"]}
-            if _cfg.SIMKL_CLIENT_SECRET:
-                form["client_secret"] = _cfg.SIMKL_CLIENT_SECRET
-            resp = await client.post(
-                f"{_SIMKL_API}/oauth2/revoke", data=form,
-                headers={"User-Agent": _SIMKL_UA, "Content-Type": "application/x-www-form-urlencoded"},
-                timeout=20.0,
-            )
-            # RFC 7009: always 200, so success cannot be confirmed — only attempted.
-            revoked = resp.status_code == 200
-        except Exception as exc:
-            logger.warning(f"Watchlist: SIMKL revoke request failed: {exc}")
-    set_app_state(_STATE_KEY_SIMKL_TOK, "")
-    set_app_state(_STATE_KEY_SIMKL_ACT, "")
-    changed = _apply([])
-    _simkl_next_device_prompt = 0.0
-    logger.info("Watchlist: SIMKL account unlinked" + (" (grant revoked)" if revoked else ""))
-    return {
-        "unlinked":  True,
-        "revoked":   revoked,
-        "had_token": bool(tokens),
-        "flow":      "v2" if tokens and tokens.get("refresh_token") else ("v1" if tokens else None),
-        "changed":   changed,
-    }
     if _wake is not None:
         _wake.set()
+    # For the worker that runs the loop, when it isn't this one.
+    set_app_state(_STATE_KEY_REFRESH, repr(time.time()))
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +275,7 @@ def _persist(snapshot: Snapshot) -> None:
     }))
 
 
-def load_persisted() -> Snapshot:
+def load_persisted(quiet: bool = False) -> Snapshot:
     """Restore the last snapshot written for the *same* source, else empty."""
     global _snapshot, _loaded
     _loaded = True
@@ -314,7 +285,8 @@ def load_persisted() -> Snapshot:
     try:
         data = json.loads(raw)
         if data.get("source") != _source_signature():
-            logger.info("Watchlist: persisted snapshot is for a different source — starting empty")
+            if not quiet:
+                logger.info("Watchlist: persisted snapshot is for a different source — starting empty")
             return _snapshot
         _snapshot = Snapshot(
             imdb=frozenset(str(i) for i in data.get("imdb", [])),
@@ -322,7 +294,8 @@ def load_persisted() -> Snapshot:
             fetched_at=float(data.get("fetched_at") or 0.0),
             count=int(data.get("count") or 0),
         )
-        logger.info(f"Watchlist: restored snapshot of {_snapshot.count} titles from the last run")
+        if not quiet:
+            logger.info(f"Watchlist: restored snapshot of {_snapshot.count} titles from the last run")
     except Exception as exc:
         logger.warning(f"Watchlist: could not restore persisted snapshot: {exc}")
     return _snapshot
@@ -735,11 +708,13 @@ def _set_pending(user_code: str | None, link: str | None, expires_in: float, flo
         "expires_at": int(time.time() + expires_in),
         "flow":       flow,
     }
+    set_app_state(_STATE_KEY_PENDING, json.dumps(_simkl_pending))
 
 
 def _clear_pending() -> None:
     global _simkl_pending
     _simkl_pending = None
+    set_app_state(_STATE_KEY_PENDING, "")
 
 
 async def _simkl_pin_flow_v1(client: httpx.AsyncClient) -> dict | None:
@@ -825,7 +800,6 @@ async def simkl_unlink(client: httpx.AsyncClient) -> dict:
     until the user removes PostersPlus at simkl.com/settings/connected-apps
     — the result says which happened.
     """
-    global _simkl_next_device_prompt
     tokens = _simkl_load_tokens()
     revoked = False
     if tokens and tokens.get("refresh_token"):
@@ -845,7 +819,7 @@ async def simkl_unlink(client: httpx.AsyncClient) -> dict:
     set_app_state(_STATE_KEY_SIMKL_TOK, "")
     set_app_state(_STATE_KEY_SIMKL_ACT, "")
     changed = _apply([])
-    _simkl_next_device_prompt = 0.0
+    request_refresh()   # a fresh link code now, not at the next cycle
     logger.info("Watchlist: SIMKL account unlinked" + (" (grant revoked)" if revoked else ""))
     return {
         "unlinked":  True,
@@ -1014,19 +988,46 @@ async def watchlist_refresh_loop(
     logger.info(
         f"Watchlist: source {source_mode()}, refreshing every {_cfg.WATCHLIST_REFRESH_MINUTES} min"
     )
-    global _wake
+    global _wake, _simkl_next_device_prompt
     _wake = asyncio.Event()
     await asyncio.sleep(20)   # let startup settle before the first outbound call
     while True:
         _wake.clear()
+        seen_request = get_app_state(_STATE_KEY_REFRESH) or ""
         try:
             changed = await refresh(client)
             if changed and on_change is not None:
                 await on_change(changed)
         except Exception as exc:
             logger.error(f"Watchlist: loop error: {exc}")
-        # Sleep the interval, or less if request_refresh() wakes us.
+        # Sleep the interval, or less if request_refresh() wakes us — in this
+        # worker through _wake, from another through the shared flag.
+        deadline = time.monotonic() + _cfg.WATCHLIST_REFRESH_MINUTES * 60
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                await asyncio.wait_for(_wake.wait(), timeout=min(left, _REFRESH_POLL_SECS))
+                break
+            except asyncio.TimeoutError:
+                pass
+            if (get_app_state(_STATE_KEY_REFRESH) or "") != seen_request:
+                _simkl_next_device_prompt = 0.0
+                break
+
+
+# How often the loop checks for a refresh asked of another worker.
+_REFRESH_POLL_SECS = 5.0
+
+
+async def follow_persisted_loop(interval: float = 60.0) -> None:
+    """For a worker that doesn't run the refresh loop (WORKERS>1): keep this
+    worker's snapshot, which every render reads, in step with the one the
+    loop's worker persists."""
+    if not is_enabled():
+        return
+    load_persisted()
+    while True:
+        await asyncio.sleep(interval)
         try:
-            await asyncio.wait_for(_wake.wait(), timeout=_cfg.WATCHLIST_REFRESH_MINUTES * 60)
-        except asyncio.TimeoutError:
-            pass
+            load_persisted(quiet=True)
+        except Exception as exc:
+            logger.warning(f"Watchlist: could not reload the shared snapshot: {exc}")

@@ -322,13 +322,15 @@ class TrendingCycleTests(_TempDb):
     def _run_cycle(self, ensure):
         seen = {}
 
-        async def _regen(matches, *, log_prefix):
+        async def _regen(matches, *, log_prefix, replay=None):
             seen["matches"] = matches
+            seen["replay"] = replay
             return 0
 
         with mock.patch.object(main, "ensure_trending_snapshot", side_effect=ensure), \
              mock.patch.object(main, "_regenerate_cached_posters", side_effect=_regen):
             asyncio.run(main._run_trending_fetch_cycle(None))
+        self.seen = seen
         return seen.get("matches")
 
     def test_current_snapshots_rerender_nothing(self):
@@ -360,6 +362,24 @@ class TrendingCycleTests(_TempDb):
         # TV was still current, and types must not cross.
         self.assertFalse(matches(split("tt3:3:series:h")))
         self.assertFalse(matches(split("tt1:1:tv:h")))
+
+    def test_a_title_whose_rank_changed_is_replayed_though_its_composite_is_gone(self):
+        # The turnover deletes it before the cycle's scan, so the scan alone
+        # used to re-render only the titles whose rank stayed put.
+        cache.pop_trending_turnover_replay()
+        self._store("movie", {"1": 1}, time.time() - 2 * 86400)
+        self._store("tv", {"3": 1}, time.time() - 60)
+        cache.set_cached_final_poster("tt1:1:movie:h", b"x", "tmdb_id=1&type=movie")
+
+        async def _ensure(client, key, endpoint):
+            if endpoint == "movie":
+                cache.set_cached_trending_snapshot("movie", {"1": 2}, "tmdb")
+            return cache.get_cached_trending_snapshot_entry(endpoint, "tmdb")
+
+        self._run_cycle(_ensure)
+        self.assertIsNone(cache.get_cached_final_poster_entry("tt1:1:movie:h"))
+        self.assertEqual(self.seen["replay"], {"tt1:1:movie:h": "tmdb_id=1&type=movie"})
+        self.assertEqual(cache.pop_trending_turnover_replay(), {})
 
     def test_loop_sleeps_until_the_earliest_snapshot_expires(self):
         now = time.time()

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -47,8 +48,31 @@ class _QualityPending:
 
 QUALITY_PENDING = _QualityPending()
 
+
+class _TitleFailed:
+    """Singleton sentinel: the source answered, but failed this one title."""
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    def __repr__(self):
+        return "TITLE_FAILED"
+
+# The source is up but refused or failed this title: a 4xx for an id it
+# doesn't index (an addon without anime support given "kitsu:…"), or
+# AIOStreams with no results because one of its scrapers errored.  Unlike
+# FETCH_FAILED it says nothing about the source, so the caller backs off
+# only the title, not every title, and doesn't retry it straight away.
+TITLE_FAILED = _TitleFailed()
+
+
+def _title_level(status: int) -> bool:
+    """A 4xx about the request rather than about us or the source's load."""
+    return 400 <= status < 500 and status not in (401, 403, 407, 408, 429)
+
 # Union of everything a fetch function may return.
-QualityResult = "list[str] | _FetchFailed | _QualityPending"
+QualityResult = "list[str] | _FetchFailed | _QualityPending | _TitleFailed"
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +187,7 @@ async def fetch_quality_from_aiostreams(
 
         if resp.status_code != 200:
             logger.warning(f"AIOStreams error {resp.status_code} for {imdb_id}")
-            return FETCH_FAILED
+            return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         payload = resp.json()
         if not payload.get("success"):
@@ -181,11 +205,11 @@ async def fetch_quality_from_aiostreams(
                     f"AIOStreams returned no results for {imdb_id} "
                     f"with scraper errors present: {errors}"
                 )
-                return FETCH_FAILED
+                return TITLE_FAILED
 
             logger.info(f"AIOStreams returned authoritative empty result for {imdb_id}")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         seen: set[str] = set()
@@ -195,7 +219,7 @@ async def fetch_quality_from_aiostreams(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"AIOStreams quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -345,16 +369,16 @@ async def fetch_quality_from_scraper(
                         f"Scraper series fallback also returned {resp.status_code} "
                         f"for {imdb_id}"
                     )
-                    return FETCH_FAILED
+                    return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
             else:
-                return FETCH_FAILED
+                return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         streams = resp.json().get("streams") or []
 
         if not streams:
             logger.info(f"Scraper returned no streams for {imdb_id} — caching empty result")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         # Aggregate tokens across the top 5 streams (same logic as AIOStreams).
@@ -369,7 +393,7 @@ async def fetch_quality_from_scraper(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"Scraper quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -428,7 +452,7 @@ async def fetch_quality_from_qualicache(
     season: int = 1,
     episode: int = 1,
     release_date: str | None = None,
-) -> "list[str] | _FetchFailed | _QualityPending":
+) -> "list[str] | _FetchFailed | _QualityPending | _TitleFailed":
     """
     Read cached quality tokens from a QualiCache instance.
 
@@ -480,7 +504,7 @@ async def fetch_quality_from_qualicache(
             return FETCH_FAILED
         if resp.status_code != 200:
             logger.warning(f"QualiCache error {resp.status_code} for {imdb_id}")
-            return FETCH_FAILED
+            return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         payload = resp.json()
         status = payload.get("status") or ""
@@ -500,7 +524,7 @@ async def fetch_quality_from_qualicache(
         if status == "empty":
             logger.info(f"QualiCache found no trusted release for {imdb_id}")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         if status != "ready":
@@ -526,7 +550,7 @@ async def fetch_quality_from_qualicache(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"QualiCache quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -568,7 +592,7 @@ async def fetch_quality(
     season: int = 1,
     episode: int = 1,
     release_date: str | None = None,
-) -> "list[str] | _FetchFailed | _QualityPending":
+) -> "list[str] | _FetchFailed | _QualityPending | _TitleFailed":
     """
     Fetch quality tokens from whichever backend QUALITY_SOURCE selects.
 

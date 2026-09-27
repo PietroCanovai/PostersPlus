@@ -407,10 +407,16 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.calls[0][0], "https://api.themoviedb.org/3/tv/286801/external_ids")
 
     async def test_reverse_lookup_failure_raises_and_is_not_cached(self):
+        self.addCleanup(tmdb._reverse_idmap_failed_at.clear)
         with _MemoryJsonCache(tmdb, cinemeta) as cache:
             with self.assertRaises(tmdb.IdResolveError):
                 await tmdb.resolve_tmdb_to_imdb(_FakeClient(_FakeResponse(503)), "278", "movie", "k")
             self.assertEqual(cache.store, {})
+            # Not asked again straight away, which in a blip only adds load.
+            client = _FakeClient(RuntimeError("must not be called"))
+            with self.assertRaises(tmdb.IdResolveError):
+                await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k")
+            self.assertEqual(client.calls, [])
 
     async def test_find_seeds_the_reverse_map(self):
         with _MemoryJsonCache(tmdb, cinemeta):
@@ -583,9 +589,15 @@ class ImdbUnderTmdbTests(unittest.IsolatedAsyncioTestCase):
         self._stub("tt9999999")
         self.assertEqual(await self._kept(), "")
 
-    async def test_failed_lookup_drops_the_imdb_id(self):
+    async def test_failed_lookup_keeps_the_imdb_id_unverified(self):
+        # A TMDB blip says nothing about the link: dropping the id cached the
+        # poster for days under another identity.
         self._stub(tmdb.IdResolveError("down"))
-        self.assertEqual(await self._kept(), "")
+        self.assertEqual(await self._kept(), "tt13207736")
+        self.assertEqual(
+            await main._imdb_id_under_tmdb_checked("286801", "tt13207736", "series", "k", False),
+            ("tt13207736", True),
+        )
 
     async def test_cinemeta_spine_and_keyless_requests_keep_it(self):
         self._stub(RuntimeError("must not be called"))

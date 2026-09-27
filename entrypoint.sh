@@ -24,4 +24,4 @@ fi
 # Drop from root to appuser and exec uvicorn.
 # gosu correctly transfers signals (SIGTERM etc.) to the child process,
 # unlike 'su -c' which leaves an extra shell in the process tree.
-exec gosu appuser uvicorn main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS:-1}"
+exec gosu appuser uvicorn main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS:-1}" --no-server-header

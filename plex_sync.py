@@ -484,6 +484,29 @@ def inspect_item(item) -> None:
 # PostersPlus fetch
 # ---------------------------------------------------------------------------
 
+# Keys travel as query params on PostersPlus and Jellyfin URLs; log lines
+# (and an httpx error's text, which quotes the full URL) must not carry them.
+_SECRET_PARAMS = ("access_key", "tmdb_key", "mdblist_key", "api_key", "apikey", "X-Emby-Token")
+
+
+def _redacted_url(url) -> str:
+    url = httpx.URL(str(url))
+    for name in _SECRET_PARAMS:
+        if name in url.params:
+            url = url.copy_set_param(name, "REDACTED")
+    return str(url)
+
+
+def _describe_http_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code} from {_redacted_url(exc.request.url)}"
+    try:
+        where = f" ({_redacted_url(exc.request.url)})"
+    except (AttributeError, RuntimeError):   # no request attached
+        where = ""
+    return f"{type(exc).__name__}{where}"
+
+
 def build_poster_request(*, imdb_id: str | None, tmdb_id: str, media_type: str, quality_tokens: list[str]) -> httpx.Request:
     # Start from whatever recipe defaults came from POSTERSPLUS_URL (gradients,
     # bar/badge styles, weighting profiles, ...), then layer the per-item
@@ -625,13 +648,13 @@ def sync_item(item, *, client: httpx.Client, state: dict, dry_run: bool) -> str:
         imdb_id=imdb_id, tmdb_id=tmdb_id, media_type=media_type, quality_tokens=quality_tokens,
     )
     if dry_run:
-        logger.info(f"[dry-run] {item.title!r}: quality={quality_tokens or '(none)'} -> {request.url}")
+        logger.info(f"[dry-run] {item.title!r}: quality={quality_tokens or '(none)'} -> {_redacted_url(request.url)}")
         return "would sync"
 
     try:
         image_bytes = fetch_poster_bytes(request, client)
     except httpx.HTTPError as exc:
-        logger.warning(f"Poster fetch failed for {item.title!r}: {exc}")
+        logger.warning(f"Poster fetch failed for {item.title!r}: {_describe_http_error(exc)}")
         return "error (fetch)"
 
     try:

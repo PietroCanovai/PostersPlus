@@ -77,12 +77,17 @@ class CompositeCacheControlTests(unittest.TestCase):
     def test_zero_still_means_send_nothing(self):
         self.assertIsNone(self._cache_control(86400))
 
-    def test_a_provisional_render_is_still_never_given_freshness(self):
+    def test_a_provisional_render_not_kept_is_still_never_given_freshness(self):
         main._cfg.CDN_CACHE_TTL_AUTO = True
         self.assertEqual(
-            self._cache_control(86400, provisional=True),
+            self._cache_control(None, provisional=True),
             "no-store, no-cache, must-revalidate",
         )
+
+    def test_a_kept_provisional_render_is_fresh_only_until_it_expires(self):
+        # Kept for PROVISIONAL_CACHE_TTL, so its deadline is that close.
+        main._cfg.CDN_CACHE_TTL = 86400
+        self.assertAlmostEqual(self._max_age(self._cache_control(300, provisional=True)), 300, delta=2)
 
     def test_composite_caching_off_still_wins(self):
         main._cfg.CDN_CACHE_TTL_AUTO = True

@@ -2,6 +2,7 @@
 text boxes, the US certificate, and the row's layout around the chip."""
 import asyncio
 import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -24,6 +25,9 @@ class _Resp:
         if self.status_code >= 400:
             raise RuntimeError(self.status_code)
 
+    def json(self):
+        return json.loads(self.content)
+
 
 class _Client:
     def __init__(self, bodies):
@@ -41,14 +45,43 @@ class AssetFetchTests(unittest.TestCase):
         p = mock.patch.object(gb, "ASSET_DIR", self.dir.name)
         p.start()
         self.addCleanup(p.stop)
+        for p in (mock.patch.dict(gb._failed_at, clear=True), mock.patch.object(gb, "_gone", set())):
+            p.start()
+            self.addCleanup(p.stop)
         gb._marks.cache_clear()
         self.addCleanup(gb._marks.cache_clear)
 
     def test_a_file_that_no_longer_matches_its_hash_is_not_used(self):
-        client = _Client({})   # every body is b"nope", matching no pinned SHA-1
+        # Every body is b"nope": no pinned SHA-1, and the history lookup fails
+        # too, so each file is backed off rather than asked for per render.
+        client = _Client({})
         self.assertFalse(asyncio.run(gb.ensure_assets(client)))
         self.assertEqual(os.listdir(self.dir.name), [])
-        self.assertEqual(len(client.urls), len(gb._FILES))
+        self.assertEqual(len(client.urls), 2 * len(gb._FILES))
+        self.assertFalse(asyncio.run(gb.ensure_assets(client)))
+        self.assertEqual(len(client.urls), 2 * len(gb._FILES))
+
+    def _history(self, sha1_for):
+        """Commons' API answer: each file's one revision, hashed by sha1_for."""
+        return {"api.php": json.dumps({"query": {"pages": [{"imageinfo": [
+            {"sha1": sha1_for, "url": "https://upload.wikimedia.org/archive/old.svg"}]}]}}).encode(),
+            "old.svg": b"old"}
+
+    def test_a_reuploaded_file_is_fetched_from_its_pinned_revision(self):
+        sha = hashlib.sha1(b"old").hexdigest()
+        with mock.patch.dict(gb._FILES, {k: gb._CommonsFile(f.title, sha) for k, f in gb._FILES.items()}):
+            client = _Client(self._history(sha))
+            self.assertTrue(asyncio.run(gb.ensure_assets(client)))
+            self.assertTrue(all(os.path.exists(gb._asset_path(k)) for k in gb._FILES))
+            self.assertIn("https://upload.wikimedia.org/archive/old.svg", client.urls)
+
+    def test_a_file_with_no_matching_revision_is_given_up_on(self):
+        client = _Client(self._history("0" * 40))
+        self.assertTrue(asyncio.run(gb.ensure_assets(client)))   # nothing left worth waiting for
+        self.assertEqual(os.listdir(self.dir.name), [])
+        n = len(client.urls)
+        self.assertTrue(asyncio.run(gb.ensure_assets(client)))
+        self.assertEqual(len(client.urls), n)
 
     def test_matching_files_are_kept_and_not_fetched_again(self):
         bodies = {}

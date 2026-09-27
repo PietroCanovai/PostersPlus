@@ -22,6 +22,7 @@ in main.py and is added in later phases.
 import asyncio
 import io
 import logging
+import time
 
 import httpx
 from PIL import Image
@@ -92,25 +93,46 @@ def _get_semaphore() -> "asyncio.Semaphore":
 # Auth
 # ---------------------------------------------------------------------------
 
+# A failed login is not tried again for a while: every render that wants TVDB
+# art would otherwise log in anew, one after another under the token lock,
+# each with up to a 15 s timeout.  A rejected key (401) waits for a restart,
+# which is when a corrected key would arrive.
+_LOGIN_RETRY_SECS = 300.0
+_login_failed_at: float | None = None
+_login_rejected = False
+
+
 async def _login(client: httpx.AsyncClient) -> str | None:
     """Exchange the API key for a bearer token. Returns None on failure."""
+    global _login_failed_at, _login_rejected
+    if _login_rejected:
+        return None
+    if _login_failed_at is not None and time.monotonic() - _login_failed_at < _LOGIN_RETRY_SECS:
+        return None
     payload: dict = {"apikey": SERVER_TVDB_KEY}
     if TVDB_SUBSCRIBER_PIN:
         payload["pin"] = TVDB_SUBSCRIBER_PIN
     try:
         logger.info("External API Call: TVDB login")
         resp = await client.post(f"{_API_BASE}/login", json=payload, timeout=15.0)
+        if resp.status_code == 401:
+            _login_rejected = True
+            logger.error("TVDB rejected the API key (401); TVDB art is off until restart")
+            return None
         resp.raise_for_status()
         token = ((resp.json() or {}).get("data") or {}).get("token")
         if not token:
+            _login_failed_at = time.monotonic()
             logger.warning("TVDB login returned no token")
             return None
         set_cached_tvdb_json(
             _TOKEN_CACHE_KEY, {"token": token}, _TOKEN_TTL_SECONDS
         )
+        _login_failed_at = None
         return token
     except Exception as exc:
-        logger.warning(f"TVDB login failed: {exc}")
+        _login_failed_at = time.monotonic()
+        logger.warning(f"TVDB login failed: {exc}; not retried for {_LOGIN_RETRY_SECS:.0f}s")
         return None
 
 

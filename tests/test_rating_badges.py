@@ -31,6 +31,10 @@ class _Resp:
         if self.status_code >= 400:
             raise RuntimeError(self.status_code)
 
+    def json(self):
+        import json
+        return json.loads(self.content)
+
 
 class _Client:
     """Serves each pinned file's stand-in, or *body* for every URL."""
@@ -51,7 +55,8 @@ class _AssetDir(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
-        patches = [mock.patch.object(rb, "ASSET_DIR", self.dir.name), mock.patch.dict(rb._failed_at, clear=True)]
+        patches = [mock.patch.object(rb, "ASSET_DIR", self.dir.name), mock.patch.dict(rb._failed_at, clear=True),
+                   mock.patch.object(rb, "_gone", set())]
         if self.pinned:
             patches.append(mock.patch.dict(rb._FILES, {
                 k: rb._Source(f.url, hashlib.sha1(_svg(k)).hexdigest(), ".svg") for k, f in rb._FILES.items()}))
@@ -158,7 +163,15 @@ class FetchMismatchTests(_AssetDir):
         self.assertFalse(asyncio.run(rb.ensure_assets(client, ["imdb"])))
         self.assertFalse(asyncio.run(rb.ensure_assets(client, ["imdb"])))
         self.assertEqual(os.listdir(self.dir.name), [])
-        self.assertEqual(len(client.urls), 1)
+        self.assertEqual(len(client.urls), 2)   # the file, then Commons' history (unreadable here)
+
+    def test_a_mark_no_revision_matches_stops_holding_the_poster_back(self):
+        history = b'{"query": {"pages": [{"imageinfo": [{"sha1": "00", "url": "https://x/old.svg"}]}]}}'
+        client = _Client(history)
+        # Not on disk and never will be: the render is complete without it.
+        self.assertTrue(asyncio.run(rb.ensure_assets(client, ["imdb"])))
+        self.assertIn("imdb", rb._gone)
+        self.assertEqual(os.listdir(self.dir.name), [])
 
 
 class RunTests(_AssetDir):
