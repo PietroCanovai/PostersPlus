@@ -148,5 +148,36 @@ class CascadeTests(unittest.TestCase):
         self.assertIn("-cs65-ca50-", text_detect.DETECT_RES_SIG)
 
 
+class StackedLinesTests(unittest.TestCase):
+    """Copy the recogniser can't read (Cyrillic, Greek) still stacks up as
+    wide, centred lines; three in a row count as text."""
+
+    def _verdict(self, tops, source="poster", score=0.65):
+        # 300x25 px lines on 500x750: aspect 12, 2% of the poster each, under
+        # the single-box fallback's 3% and its 0.70 score.
+        boxes = [_box(100, top, 400, top + 25) for top in tops]
+        detected, *_rest = text_detect._verdict(
+            Image.new("RGB", (500, 750)), boxes, [score] * len(boxes), 500, 750,
+            conf=0.70, lower_region=text_detect._SCAN_TOP, title=None,
+            source=source,
+        )
+        return detected
+
+    def test_three_stacked_lines_are_text(self):
+        self.assertTrue(self._verdict([500, 540, 580]))
+
+    def test_two_lines_are_not_enough(self):
+        self.assertFalse(self._verdict([500, 540]))
+
+    def test_scattered_lines_are_not_a_stack(self):
+        self.assertFalse(self._verdict([100, 400, 700]))
+
+    def test_weak_boxes_do_not_stack(self):
+        self.assertFalse(self._verdict([500, 540, 580], score=0.5))
+
+    def test_backdrops_are_left_alone(self):
+        self.assertFalse(self._verdict([500, 540, 580], source="backdrop"))
+
+
 if __name__ == "__main__":
     unittest.main()

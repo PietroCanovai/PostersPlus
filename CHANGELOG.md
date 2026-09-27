@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Second textless poster before the backdrop
+
+- When a poster TMDB tags as textless turns out to have its title burned in
+  and the title has at least 6 textless posters, the runner-up is scanned once
+  and used if it's clean; otherwise the backdrop fallback runs as before. Only
+  one alternate is ever tried, since the scan runs on the first render. Part of
+  `TEXTLESS_BACKDROP_FALLBACK`. Titles pick up the alternate within a week,
+  as their cached TMDB metadata refreshes.
+- Burned-in text detection also catches stacks of credit or tagline lines it
+  can't read, such as Cyrillic or Greek copy, which it previously passed as
+  clean. Existing scan results are kept; only new scans use it.
+
 ### Logo priority as a list
 
 - The Language Priority dropdown is now a Logo Priority list, reordered and

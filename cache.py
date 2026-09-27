@@ -372,6 +372,7 @@ def init_db() -> None:
         ("last_episode_json",   "TEXT"),
         ("seasons_json",        "TEXT"),
         ("metadata_version",    "INTEGER"),
+        ("alt_poster_path",     "TEXT"),
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
@@ -1572,7 +1573,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    text_backdrop_path, original_poster_path,
                    poster_langs_json, imdb_id,
                    tmdb_release_date, last_air_date, next_episode_json,
-                   last_episode_json, seasons_json, metadata_version
+                   last_episode_json, seasons_json, metadata_version,
+                   alt_poster_path
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -1592,6 +1594,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             poster_langs_json, imdb_id,
             tmdb_release_date, last_air_date, next_episode_json,
             last_episode_json, seasons_json, metadata_version,
+            alt_poster_path,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -1661,6 +1664,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "vote_count":           vote_count,
             "vote_average":         vote_average,
             "text_backdrop_path":   text_backdrop_path,
+            "alt_poster_path":      alt_poster_path,
             "original_poster_path": original_poster_path,
             "poster_langs":         json.loads(poster_langs_json or "{}"),
             "imdb_id":              imdb_id,
@@ -1697,6 +1701,7 @@ def set_cached_tmdb_metadata(
     vote_count: int | None = None,
     vote_average: float | None = None,
     text_backdrop_path: str | None = None,
+    alt_poster_path: str | None = None,
     original_poster_path: str | None = None,
     poster_langs: dict | None = None,
     imdb_id: str | None = None,
@@ -1721,8 +1726,9 @@ def set_cached_tmdb_metadata(
                      text_backdrop_path, original_poster_path,
                      poster_langs_json, imdb_id,
                      tmdb_release_date, last_air_date, next_episode_json,
-                     last_episode_json, seasons_json, metadata_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_episode_json, seasons_json, metadata_version,
+                     alt_poster_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -1754,6 +1760,7 @@ def set_cached_tmdb_metadata(
                     json.dumps(last_episode) if last_episode else None,
                     json.dumps(seasons or []),
                     metadata_version,
+                    alt_poster_path,
                 ),
             )
             get_db().commit()

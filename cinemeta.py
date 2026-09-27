@@ -159,6 +159,7 @@ def _blank_tmdb_data() -> dict:
         "tmdb_status":          None,
         "vote_count":           None,
         "text_backdrop_path":   None,
+        "alt_poster_path":      None,
         "original_poster_path": None,
         "poster_langs":         {},
         "imdb_id":              None,

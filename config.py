@@ -634,7 +634,7 @@ TEXTLESS_DETECTION_MAX_VOTES = max(0, int(_env('TEXTLESS_DETECTION_MAX_VOTES', "
 # (backdrop download, text-aware crop, one more scan); later renders reuse the
 # cached crop and scan result.  On by default; turning it off invalidates
 # cached composites.
-TEXTLESS_BACKDROP_FALLBACK = _parse_bool(_env("TEXTLESS_BACKDROP_FALLBACK", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Backdrop for fake textless posters', help='When a poster TMDB tags as textless turns out to have its title burned in, use a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites.'), True)
+TEXTLESS_BACKDROP_FALLBACK = _parse_bool(_env("TEXTLESS_BACKDROP_FALLBACK", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Backdrop for fake textless posters', help='When a poster TMDB tags as textless turns out to have its title burned in, use the runner-up textless poster (titles with 6+ of them) or a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites.'), True)
 # Keep a small, deduplicated list of TMDB posters rejected by OCR so operators
 # can review and correct upstream metadata manually.
 TEXTLESS_FAKE_REPORT       = _parse_bool(_env("TEXTLESS_FAKE_REPORT", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Report fake textless posters', help='Keep a deduplicated list of TMDB posters rejected by OCR, for correcting upstream metadata.', advanced=True), True)

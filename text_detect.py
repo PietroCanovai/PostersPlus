@@ -90,6 +90,17 @@ _SCAN_TOP           = _cfg.TEXTLESS_SCAN_TOP
 _CASCADE_SCALE = 0.65
 _CASCADE_RESCAN_AREA = 0.005
 
+# A stack of confident, wide, centred lines is copy (credits, cast, taglines)
+# even when recognition returns nothing: the recogniser only reads Latin and
+# CJK, so Cyrillic and Greek copy comes back blank or as lookalike letters and
+# the character-count rules never fire.  Over ~9,400 cached posters this added
+# 5 flags, all genuine text, and no false positives.
+_STACK_MIN_SCORE = 0.60
+_STACK_MIN_ASPECT = 8.0
+_STACK_MIN_AREA = 0.015
+_STACK_MIN_LINES = 3
+_STACK_MAX_GAP = 2.5  # line pitch, in multiples of the taller line's height
+
 # Sizing is driven by the cores this process may actually use, not the host's
 # core count — see config.effective_cpus().  Sessions divide the thread budget
 # between them, and ONNX throughput degrades sharply once the total exceeds the
@@ -532,6 +543,32 @@ def poster_has_burned_in_text(
         return None
 
 
+def _stacked_lines(boxes, scores, width: int, height: int, scan_top: float) -> int:
+    """Longest run of wide, centred, confident boxes stacked line over line."""
+    image_area = max(1, width * height)
+    lines = []
+    for box, score in zip(boxes, scores):
+        box = np.asarray(box, dtype=np.float32)
+        box_width = float(box[:, 0].max() - box[:, 0].min())
+        box_height = float(box[:, 1].max() - box[:, 1].min())
+        centre_x = float(box[:, 0].mean()) / max(1, width)
+        centre_y = float(box[:, 1].mean()) / max(1, height)
+        if (
+            float(score) >= _STACK_MIN_SCORE
+            and centre_y >= scan_top
+            and box_width / max(1.0, box_height) >= _STACK_MIN_ASPECT
+            and box_width * box_height / image_area >= _STACK_MIN_AREA
+            and 0.25 <= centre_x <= 0.75
+        ):
+            lines.append((centre_y, box_height / max(1, height)))
+    lines.sort()
+    best = run = min(1, len(lines))
+    for (y0, h0), (y1, h1) in zip(lines, lines[1:]):
+        run = run + 1 if y1 - y0 <= _STACK_MAX_GAP * max(h0, h1) else 1
+        best = max(best, run)
+    return best
+
+
 def _worth_full_scan(boxes, width: int, height: int) -> bool:
     """True when a clear small-scale pass still boxed something title-sized."""
     image_area = max(1, width * height)
@@ -581,6 +618,13 @@ def _verdict(
         and centred_lines >= 2
         and sum(alpha_lengths) >= 30
         and max(alpha_lengths, default=0) >= 16
+    ):
+        detected = True
+    if (
+        not detected
+        and source == "poster"
+        and _stacked_lines(boxes, scores, width, height, lower_region)
+        >= _STACK_MIN_LINES
     ):
         detected = True
     # Recognition is primary because PP-OCR can confidently box broad scene

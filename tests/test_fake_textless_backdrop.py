@@ -16,6 +16,7 @@ import tmdb
 
 POSTER = (200, 0, 0, 255)
 BACKDROP = (0, 0, 200, 255)
+ALT = (0, 200, 0, 255)
 
 
 def _art(colour):
@@ -39,6 +40,7 @@ class FakeTextlessBackdropTests(unittest.IsolatedAsyncioTestCase):
                 "_coalesced_fetch_poster_metadata", "fetch_backdrop_image",
                 "fetch_poster_image", "fetch_logo", "_fetch_metahub_logo",
                 "get_cached_text_detection", "build_poster",
+                "_queue_background_text_detection",
             )
         }
         self._retry_delay = tmdb._TRENDING_RETRY_DELAY_SECS
@@ -61,16 +63,20 @@ class FakeTextlessBackdropTests(unittest.IsolatedAsyncioTestCase):
 
         self.logo = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
         self.backdrop_has_text = False
+        self.alt_path = None
+        self.alt_has_text = False
+        self.queued: list[str] = []
         self.rendered: list[tuple] = []
 
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
             # Above the foreground vote gate, so every scan result here comes
             # from the (stubbed) detection cache and no OCR runs.
-            td = dict(cinemeta._blank_tmdb_data(), imdb_id="tt1129423", vote_count=5000)
+            td = dict(cinemeta._blank_tmdb_data(), imdb_id="tt1129423", vote_count=5000,
+                      alt_poster_path=self.alt_path)
             return [18], True, [], "2008", "Fireproof", "/p.jpg", "/b.jpg", td
 
         async def _poster(client, tmdb_id, media_type, path):
-            return _art(POSTER)
+            return _art(ALT if path == "/alt.jpg" else POSTER)
 
         async def _backdrop(client, tmdb_id, path, avoid_text=False):
             return _art(BACKDROP)
@@ -85,6 +91,8 @@ class FakeTextlessBackdropTests(unittest.IsolatedAsyncioTestCase):
             return "tt1129423"
 
         def _detection(key):
+            if key.startswith("ps:/alt.jpg|"):
+                return self.alt_has_text
             if key.startswith("ps:"):
                 return True
             if key.startswith("bd:"):
@@ -103,6 +111,7 @@ class FakeTextlessBackdropTests(unittest.IsolatedAsyncioTestCase):
         main.resolve_tmdb_to_imdb = _linked
         main.get_cached_text_detection = _detection
         main.build_poster = _build
+        main._queue_background_text_detection = lambda item: self.queued.append(item.cache_key)
 
     def tearDown(self):
         for name, value in self._saved.items():
@@ -149,6 +158,28 @@ class FakeTextlessBackdropTests(unittest.IsolatedAsyncioTestCase):
         pixel, logo = await self._render(textless="true")
         self.assertEqual(pixel, BACKDROP)
         self.assertIsNone(logo)
+
+    async def test_clean_alternate_poster_is_used_before_the_backdrop(self):
+        self.alt_path = "/alt.jpg"
+        pixel, logo = await self._render()
+        self.assertEqual(pixel, ALT)
+        self.assertIs(logo, self.logo)
+
+    async def test_alternate_with_text_falls_through_to_the_backdrop(self):
+        self.alt_path = "/alt.jpg"
+        self.alt_has_text = True
+        pixel, logo = await self._render()
+        self.assertEqual(pixel, BACKDROP)
+        self.assertIs(logo, self.logo)
+
+    async def test_unscanned_alternate_is_queued_and_the_backdrop_used(self):
+        # Above the vote gate: no OCR on the request path, so the alternate is
+        # queued for the background and this render takes the backdrop.
+        self.alt_path = "/alt.jpg"
+        self.alt_has_text = None
+        pixel, logo = await self._render()
+        self.assertEqual(pixel, BACKDROP)
+        self.assertTrue(any(key.startswith("ps:/alt.jpg|") for key in self.queued))
 
 
 if __name__ == "__main__":

@@ -360,6 +360,10 @@ def tmdb_metadata_cache_key(
     return f"{base}_s{secondary_language}" if secondary_language else base
 
 
+# Minimum null-language posters before a runner-up is kept as an alternate.
+TEXTLESS_ALT_MIN_POSTERS = 6
+
+
 def _select_textless_poster(posters: list[dict]) -> dict | None:
     """Prefer sufficiently voted art without accepting a large score downgrade."""
     if not posters:
@@ -425,6 +429,7 @@ async def fetch_poster_metadata(
             "vote_count":            meta.get("vote_count"),
             "vote_average":          meta.get("vote_average"),
             "text_backdrop_path":    meta.get("text_backdrop_path"),
+            "alt_poster_path":       meta.get("alt_poster_path"),
             "original_poster_path":  meta.get("original_poster_path"),
             "poster_langs":          meta.get("poster_langs", {}),
             "imdb_id":               meta.get("imdb_id"),
@@ -503,6 +508,16 @@ async def fetch_poster_metadata(
     else:
         poster_path = data.get("poster_path")
         is_textless = False
+
+    # Runner-up textless poster, tried once when the pick turns out to have
+    # burned-in text.  Only for large pools, where one uploader can't own most
+    # of the textless set.  The scan runs on the request path (the backdrop
+    # fallback still follows if it fails), so it's never more than one.
+    alt_poster_path: str | None = None
+    if len(textless) >= TEXTLESS_ALT_MIN_POSTERS:
+        alt_poster_path = _select_textless_poster(
+            [p for p in textless if p is not best]
+        )["file_path"]
 
     if not poster_path:
         logger.warning(f"No poster image on TMDB for tmdb_id={tmdb_id} — fallback canvas will be served")
@@ -632,6 +647,7 @@ async def fetch_poster_metadata(
         vote_count=vote_count,
         vote_average=vote_average,
         text_backdrop_path=text_backdrop_path,
+        alt_poster_path=alt_poster_path,
         original_poster_path=original_poster_path,
         poster_langs=poster_langs,
         imdb_id=imdb_id,
@@ -654,6 +670,7 @@ async def fetch_poster_metadata(
         "vote_count":           vote_count,
         "vote_average":         vote_average,
         "text_backdrop_path":   text_backdrop_path,
+        "alt_poster_path":      alt_poster_path,
         "original_poster_path": original_poster_path,
         "poster_langs":         poster_langs,
         "imdb_id":              imdb_id,

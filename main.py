@@ -8726,6 +8726,50 @@ async def get_poster(
                 )
                 _suppress_overlay = False
 
+        # Fake-textless alternate poster: large textless pools keep a runner-up
+        # (see fetch_poster_metadata), tried once before the backdrop — real
+        # poster art beats a backdrop crop, but a second scan on the request
+        # path is the most it's worth.  Vetted under the same vote gate as the
+        # backdrop: foreground scan, otherwise queued and the backdrop tried
+        # this time.
+        _alt_path = tmdb_data.get("alt_poster_path")
+        if (_suppress_overlay is True and _cfg.TEXTLESS_BACKDROP_FALLBACK
+                and not _use_backdrop and poster_path and _alt_path
+                and _alt_path != poster_path
+                and (logo is not None or rcfg.textless)):
+            from text_detect import DETECT_RES_SIG
+
+            _alt_src = f"ps:{_alt_path}"
+            _alt_key = f"{_alt_src}|conf={_cfg.PPOCR_BOX_THRESHOLD}:{DETECT_RES_SIG}"
+            try:
+                _alt_text = get_cached_text_detection(_alt_key)
+                if _alt_text is not True:
+                    _alt_image = await fetch_poster_image(client, tmdb_id, type, _alt_path)
+                    if _alt_text is None and _vote_detection_ok:
+                        _alt_text = await asyncio.shield(_start_text_detection(
+                            _alt_key, _alt_image, title=_text_titles, source="poster",
+                            tmdb_id=tmdb_id, vote_count=_vc, source_key=_alt_src,
+                            media_type=type, image_path=_alt_path))
+                    elif _alt_text is None:
+                        _detection_deferred = True
+                        _queue_background_text_detection(_DeferredTextDetection(
+                            cache_key=_alt_key,
+                            image_cache_key=poster_image_cache_key(tmdb_id, type, _alt_path),
+                            title=_text_titles,
+                            source="poster",
+                            tmdb_id=tmdb_id,
+                            media_type=type,
+                            image_path=_alt_path,
+                            vote_count=_vc,
+                            source_key=_alt_src,
+                        ))
+                    if _alt_text is False:
+                        image = _alt_image
+                        _suppress_overlay = False
+                        logger.info(f"Fake textless poster {tmdb_id} — using alternate textless poster {_alt_path}")
+            except Exception as exc:
+                logger.warning(f"Fake-textless alternate poster failed for {tmdb_id}: {exc}")
+
         # Fake-textless backdrop fallback (TEXTLESS_BACKDROP_FALLBACK): rather
         # than serve the texted poster without our logo, crop the title's
         # neutral backdrop — the art we'd have used had TMDB not tagged the
