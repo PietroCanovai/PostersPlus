@@ -6309,6 +6309,11 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
                              and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
+    ),    # 10: A little more room between each rating badge and its score.
+    _RenderRevision(
+        rev=10,
+        applies=lambda cfg: cfg.shape != "landscape" and bool(cfg.rating_badges),
+        stale=lambda cfg, facts: True,
     ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)

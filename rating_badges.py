@@ -418,7 +418,7 @@ def entries(ratings: dict | None, providers: str) -> list[tuple[str, float]]:
 # are sized or spaced.
 
 _BADGE_ROW   = 0.95   # badge row height, of the font size
-_SCORE_GAP   = 0.24   # badge → its score, of the font size
+_SCORE_GAP   = 0.32   # badge → its score, of the font size
 _ENTRY_GAP   = 0.55   # one score → the next badge, of the font size
 
 
