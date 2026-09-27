@@ -123,10 +123,10 @@ class FetchTests(_AssetDir):
     def test_only_the_needed_marks_are_fetched_and_kept(self):
         client = _Client()
         self.assertTrue(asyncio.run(rb.ensure_assets(client, ["imdb", "tomatoes", "rogerebert"])))
-        self.assertEqual(len(os.listdir(self.dir.name)), 3)
-        self.assertEqual(len(client.urls), 3)   # imdb, fresh, rotten; Ebert is a chip
+        self.assertEqual(len(os.listdir(self.dir.name)), 4)
+        self.assertEqual(len(client.urls), 4)   # imdb, fresh, rotten, Ebert's thumb
         self.assertTrue(asyncio.run(rb.ensure_assets(client, ["imdb"])))
-        self.assertEqual(len(client.urls), 3)
+        self.assertEqual(len(client.urls), 4)
 
 
 class FetchMismatchTests(_AssetDir):
@@ -141,12 +141,22 @@ class FetchMismatchTests(_AssetDir):
 
 
 class RunTests(_AssetDir):
-    def test_badges_are_area_sized_and_ebert_needs_no_file(self):
+    def test_every_badge_is_a_round_or_square_mark_filling_the_row(self):
         self.install_marks()
-        sq = rb.badge("imdb", False, 20)
-        self.assertEqual(sq.height, 20)          # a square mark fills the row
-        self.assertLessEqual(sq.width, 20 * rb._MAX_W)
-        self.assertIsNotNone(rb.badge("rogerebert", False, 20))
+        for provider in rb.PROVIDERS:
+            with self.subTest(provider=provider):
+                im = rb.badge(provider, True, 20)
+                self.assertEqual(im.height, 20)
+                self.assertEqual(im.width, 20)
+
+    def test_plated_marks_leave_their_corners_clear(self):
+        # A disc: nothing in the corners of its square.
+        self.install_marks()
+        for key in ("imdb", "tmdb", "myanimelist", "anilist", "kitsu", "thumb_up"):
+            with self.subTest(key=key):
+                a = np.asarray(rb._mark_rgba(key))[..., 3]
+                self.assertEqual(int(a[:8, :8].max()), 0)
+                self.assertEqual(int(a[a.shape[0] // 2, a.shape[1] // 2]), 255)
 
     def test_a_missing_mark_keeps_its_score(self):
         run = rb.rating_run([("imdb", 8.4)], 20, "native", False)

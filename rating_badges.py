@@ -13,10 +13,16 @@ volume beside the graphic badges' marks:
   IMDb, Rotten Tomatoes (Tomatometer fresh / rotten, Popcornmeter up / down),
   Metacritic, Letterboxd, Trakt, MyAnimeList, AniList
       Wikimedia Commons, all public domain (below the threshold of originality)
-  TMDB    TMDB's own short logo, from its logos & attribution page
-  Kitsu   Simple Icons (CC0), set white on a square of Kitsu's brand colour
+  TMDB    TMDB's own stacked square logo, from its logos & attribution page
+  Kitsu   Simple Icons (CC0)
+  Roger Ebert   Material Symbols' thumb_up (Apache-2.0): RogerEbert.com
+          publishes no mark, so its badge is Siskel & Ebert's thumbs-up
 
-Roger Ebert has no logo anywhere to fetch, so it is a small text chip.
+Most are set round, so the row reads as a line of discs rather than a mix of
+wordmarks: IMDb's lettering on its yellow, AniList's and MyAnimeList's
+lettering on their own plate colours, TMDB's logo on its navy, Kitsu's glyph
+on its orange and the thumb in gold on black.  Letterboxd's dots sit in a
+rounded square, which holds three dots across better than a circle does.
 """
 from __future__ import annotations
 
@@ -30,14 +36,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from config import SCORE_NORMALISERS
 from graphic_badges import ASSET_DIR, _USER_AGENT, _runs
 
 logger = logging.getLogger(__name__)
-
-_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 # Every source a badge can be drawn for, in the configurator's default order.
 PROVIDERS = (
@@ -73,10 +77,12 @@ _FILES = {
     "myanimelist": _commons("MyAnimeList favicon.svg",               "a4ef3a65aaed28a1e32f7c070230427f1e3ca8b6"),
     "anilist":     _commons("AniList logo.svg",                      "9ca4ba567100a290d007d43c6beae38728061909"),
     "tmdb":        _Source("https://www.themoviedb.org/assets/2/v4/logos/v2/"
-                           "blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg",
-                           "07c6b2c2481d9581f640c5f00448114bd3829930", ".svg"),
+                           "blue_square_1-5bdc75aaebeb75dc7ae79426ddd9be3b2be1e342510f8202baf6bffa71d7f5c4.svg",
+                           "bbdb45a8e78cf26bb19bc994a4553efcee54f38c", ".svg"),
     "kitsu":       _Source("https://cdn.jsdelivr.net/npm/simple-icons@16.32.0/icons/kitsu.svg",
                            "317e69e7dcc993124443042f080eff50b0179401", ".svg"),
+    "thumb_up":    _Source("https://cdn.jsdelivr.net/npm/@material-symbols/svg-700@0.47.5/rounded/thumb_up-fill.svg",
+                           "7f052d1f2827686651bc2f22bdc105dedb48ca07", ".svg"),
 }
 
 # Rotten Tomatoes' own thresholds: a Tomatometer of 60 or more is fresh, and
@@ -94,7 +100,7 @@ def _mark_key(provider: str, value) -> str | None:
     if provider in ("metacritic", "metacriticuser"):
         return "metacritic"
     if provider == "rogerebert":
-        return None
+        return "thumb_up"
     return provider
 
 
@@ -110,7 +116,7 @@ def _keys_for(providers) -> set[str]:
             keys |= {"rt_fresh", "rt_rotten"}
         elif p == "popcorn":
             keys |= {"rt_upright", "rt_spilled"}
-        elif p != "rogerebert":
+        else:
             keys.add(_mark_key(p, 0))
     return keys
 
@@ -187,36 +193,111 @@ def _svg_rgba(path: str, h: int = _WORK_H) -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
 
 
-_KITSU_RGB = (0xFD, 0x75, 0x5C)   # Simple Icons' brand colour for Kitsu
+def _svg_image(path: str, h: int = _WORK_H) -> Image.Image:
+    return Image.fromarray(np.ascontiguousarray(_crop(_svg_rgba(path, h))))
+
+
+def _plate_ink(im: Image.Image) -> tuple[tuple[int, int, int], Image.Image]:
+    """An app-icon mark split into its plate colour (read off the corner) and
+    the lettering on it, in its own colours.  A mark with nothing on its plate
+    comes back whole."""
+    a = np.asarray(im.convert("RGBA")).astype(np.float32)
+    plate = a[2, 2, :3]
+    dist = np.abs(a[..., :3] - plate).sum(axis=-1)
+    alpha = np.clip((dist - 40) * 3, 0, 255) * (a[..., 3] / 255)
+    if (alpha > 128).sum() < 20:
+        return tuple(int(c) for c in plate), im
+    ink = a.copy()
+    ink[..., 3] = alpha
+    return tuple(int(c) for c in plate), Image.fromarray(np.ascontiguousarray(_crop(ink.astype(np.uint8))))
+
+
+def _tint(mark: Image.Image, rgb) -> Image.Image:
+    out = Image.new("RGBA", mark.size, (*rgb, 0))
+    out.putalpha(mark.getchannel("A"))
+    return out
+
+
+_SS = 4   # supersampling for the plates' edges
+
+
+def _plate(fill, shape: str = "disc", ring=None, ring_w: float = 0.07) -> Image.Image:
+    """A _WORK_H plate: a disc, or a rounded square; *ring* draws an outer
+    ring of that colour *ring_w* of the diameter wide."""
+    n = _WORK_H * _SS
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+
+    def shape_at(inset, colour):
+        box = (inset, inset, n - 1 - inset, n - 1 - inset)
+        if shape == "disc":
+            d.ellipse(box, fill=colour)
+        else:
+            d.rounded_rectangle(box, radius=round((n - 2 * inset) * 0.24), fill=colour)
+    if ring is not None:
+        shape_at(0, (*ring, 255))
+        shape_at(round(n * ring_w), (*fill, 255))
+    else:
+        shape_at(0, (*fill, 255))
+    return im.resize((_WORK_H, _WORK_H), Image.Resampling.LANCZOS)
+
+
+def _on_plate(plate: Image.Image, mark: Image.Image, fit: float, dy: float = 0.0) -> Image.Image:
+    """*mark* centred on *plate*, scaled so its diagonal is *fit* of the
+    plate's width: a wide wordmark and a squat monogram then keep the same
+    clearance from a circle's edge, which a width rule would not."""
+    scale = fit * plate.width / float(np.hypot(*mark.size))
+    m = mark.resize((max(1, round(mark.width * scale)), max(1, round(mark.height * scale))),
+                    Image.Resampling.LANCZOS)
+    out = plate.copy()
+    out.alpha_composite(m, ((out.width - m.width) // 2, round((out.height - m.height) / 2 + dy * out.height)))
+    return out
+
+
+_IMDB_YELLOW = (245, 197, 24)
+_TMDB_NAVY   = (13, 37, 63)       # TMDB's primary dark blue
+_LB_SLATE    = (32, 40, 48)       # Letterboxd's brand background
+_KITSU_RGB   = (0xFD, 0x75, 0x5C)  # Simple Icons' brand colour for Kitsu
+_EBERT_BODY  = (30, 30, 34)
+_EBERT_GOLD  = (212, 175, 55)
 
 
 @lru_cache(maxsize=None)
 def _mark_rgba(key: str) -> Image.Image | None:
-    """A mark at _WORK_H, cropped to its ink, or None when its file isn't on disk."""
+    """A badge's mark at _WORK_H, or None when its file isn't on disk."""
     path = _asset_path(key)
     if not os.path.exists(path):
         return None
     try:
+        if key == "imdb":
+            # The lettering alone (the dark parts of the yellow box), on a
+            # yellow disc with room around it.
+            box = _svg_image(path)
+            a = np.asarray(box).astype(np.int32)
+            dark = (a[..., :3].sum(axis=-1) < 200) & (a[..., 3] > 128)
+            letters = Image.fromarray(np.where(dark, 255, 0).astype(np.uint8))
+            if dark.sum() < 20:
+                return _on_plate(_plate(_IMDB_YELLOW), box, 0.72)
+            mark = Image.new("RGBA", box.size, (0, 0, 0, 0))
+            mark.putalpha(letters)
+            return _on_plate(_plate(_IMDB_YELLOW), Image.fromarray(_crop(np.asarray(mark))), 0.66)
+        if key == "tmdb":
+            return _on_plate(_plate(_TMDB_NAVY), _svg_image(path), 0.72)
         if key == "letterboxd":
             # The three dots, without the wordmark set under them.
             a = _svg_rgba(path, _WORK_H * 3)
             top = _runs(a[..., 3].max(axis=1) > 8)[0]
-            a = a[top[0]:top[1]]
-        elif key == "kitsu":
-            # A white glyph on a rounded square, like the app-icon marks it
-            # sits beside (Trakt, MyAnimeList, AniList).
-            glyph = Image.fromarray(_crop(_svg_rgba(path, round(_WORK_H * 0.62))))
-            tile = Image.new("RGBA", (_WORK_H * 4, _WORK_H * 4), (0, 0, 0, 0))
-            ImageDraw.Draw(tile).rounded_rectangle(
-                (0, 0, tile.width - 1, tile.height - 1), radius=_WORK_H * 4 // 5, fill=(*_KITSU_RGB, 255))
-            tile = tile.resize((_WORK_H, _WORK_H), Image.Resampling.LANCZOS)
-            white = Image.new("RGBA", glyph.size, (255, 255, 255, 0))
-            white.putalpha(glyph.getchannel("A"))
-            tile.alpha_composite(white, ((_WORK_H - glyph.width) // 2, (_WORK_H - glyph.height) // 2))
-            return tile
-        else:
-            a = _svg_rgba(path)
-        return Image.fromarray(np.ascontiguousarray(_crop(a)))
+            dots = Image.fromarray(np.ascontiguousarray(_crop(a[top[0]:top[1]])))
+            return _on_plate(_plate(_LB_SLATE, "square"), dots, 0.80)
+        if key == "kitsu":
+            return _on_plate(_plate(_KITSU_RGB), _tint(_svg_image(path), (255, 255, 255)), 0.74)
+        if key == "thumb_up":
+            return _on_plate(_plate(_EBERT_BODY, ring=_EBERT_GOLD),
+                             _tint(_svg_image(path), _EBERT_GOLD), 0.66, dy=-0.01)
+        if key in ("myanimelist", "anilist"):
+            plate, ink = _plate_ink(_svg_image(path))
+            return _on_plate(_plate(plate), ink, 0.76)
+        return _svg_image(path)
     except Exception as exc:
         logger.error(f"Rating badges: {key} mark failed: {exc}")
         return None
@@ -237,38 +318,11 @@ def _size(w: int, h: int, row_h: int) -> tuple[int, int]:
     return max(1, round(bw)), max(1, round(bw / aspect))
 
 
-_EBERT_INK  = (255, 255, 255, 255)
-_EBERT_FILL = (34, 34, 38, 235)
-_EBERT_EDGE = (150, 150, 158, 255)   # so the chip holds its shape on dark art
-
-
-def _ebert_chip(row_h: int) -> Image.Image:
-    """RogerEbert.com publishes no mark, so its badge is its name in a chip."""
-    h = max(4, round(row_h * 0.78))
-    try:
-        font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), max(4, round(h * 0.62)))
-    except IOError:
-        font = ImageFont.load_default()
-    text = "Ebert"
-    l, t, r, b = font.getbbox(text)
-    w = (r - l) + round(h * 0.6)
-    ss = 4
-    chip = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    ImageDraw.Draw(chip).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=round(h * ss * 0.24),
-                                           fill=_EBERT_FILL, outline=_EBERT_EDGE, width=max(ss, round(h * ss * 0.06)))
-    chip = chip.resize((w, h), Image.Resampling.LANCZOS)
-    ImageDraw.Draw(chip).text(((w - (r - l)) / 2 - l, (h - (b - t)) / 2 - t), text, font=font, fill=_EBERT_INK)
-    return chip
-
-
 @lru_cache(maxsize=256)
 def badge(provider: str, fresh: bool, row_h: int) -> Image.Image | None:
     """The badge for *provider* in a row *row_h* tall; *fresh* picks the
     Tomatometer / Popcornmeter state.  None when its mark isn't on disk."""
-    if provider == "rogerebert":
-        return _ebert_chip(row_h)
-    key = _mark_key(provider, _RT_FRESH if fresh else 0)
-    src = _mark_rgba(key) if key else None
+    src = _mark_rgba(_mark_key(provider, _RT_FRESH if fresh else 0))
     if src is None:
         return None
     return src.resize(_size(src.width, src.height, row_h), Image.Resampling.LANCZOS)

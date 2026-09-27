@@ -6203,6 +6203,14 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
                              and cfg.sash_badge_pos != "center"),
         stale=lambda cfg, facts: True,
     ),
+    # 5: Rating badges redrawn round (IMDb, TMDB, MyAnimeList, AniList, Kitsu,
+    #    Roger Ebert's thumbs-up) or as rounded squares (Letterboxd).  Only
+    #    posters asking for badges drew any.
+    _RenderRevision(
+        rev=5,
+        applies=lambda cfg: bool(cfg.rating_badges) and cfg.shape != "landscape",
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 

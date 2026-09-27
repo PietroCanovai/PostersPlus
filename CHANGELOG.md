@@ -16,6 +16,9 @@
   and titles missing all of them keep the weighted score.
 - Scores print on each site's own scale (7.8, 92%, 3.9) or, with Badge Scores
   set to P+ scale (`rating_badge_scale=normalized`), on the weighted score's.
+- The badges are round (IMDb, TMDB, MyAnimeList, AniList, Kitsu, Roger
+  Ebert's gold thumbs-up) or rounded squares (Letterboxd, Trakt), in each
+  site's colours, so they read as one row.
 - Logos are downloaded once per instance, pinned by SHA-1, and none ship in
   the repo; a render missing one isn't cached. Existing URLs and cached
   posters are unaffected.
