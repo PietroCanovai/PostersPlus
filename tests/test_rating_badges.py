@@ -200,6 +200,13 @@ class RenderTests(_AssetDir):
         cols = np.flatnonzero(((with_label[..., 0] > 190) & (with_label[..., 1] < 80)).any(axis=0))
         self.assertGreater(cols[0], 150)
 
+    def test_alone_on_the_bar_they_spread_across_it(self):
+        im = self.render(rating_display_mode=4, rating_badges="imdb,tomatoes,popcorn",
+                         hide_year=True, hide_genre=True)
+        cols = np.flatnonzero(((im[..., 0] > 190) & (im[..., 1] < 80) & (im[..., 2] < 60)).any(axis=0))
+        self.assertLess(cols[0], 130)
+        self.assertGreater(cols[-1], 300)
+
     def test_no_chosen_score_keeps_the_weighted_one(self):
         for mode in (2, 3, 4):
             with self.subTest(mode=mode):

@@ -4430,18 +4430,30 @@ def _build_poster(
             _sep = "  ·  " if len(_parts) <= 2 else " · "
             # Rating badges take the "★ score" part's place, after the rest
             # of the label: the year and genre keep their room and the badges
-            # get what is left (Hide Year / Hide Genre make more).  Only where
-            # the label would have carried the score.
+            # get what is left (Hide Year / Hide Genre make more).  With
+            # nothing else on the bar they are spread evenly across it
+            # instead of bunched in the middle.  Only where the label would
+            # have carried the score.
             _bar_run = None
             if _rb_items and cfg.bar_append in ("rating_year", "rating"):
                 _lead_parts = [p for p in _parts if not p.startswith("★ ")]
                 _lead_sep = "  ·  " if len(_lead_parts) + 1 <= 2 else " · "
 
                 def _bar_run(font_size, measure, budget):
+                    if not _lead_parts:
+                        # One run per badge, as many as fit with at least the
+                        # usual gap between them; draw_frosted_bar spaces them.
+                        runs = [rating_badges.rating_run([item], font_size, cfg.rating_badge_scale,
+                                                         cfg.bar_score_out_of_10) for item in _rb_items]
+                        gap = font_size * rating_badges._ENTRY_GAP
+                        n = len(runs)
+                        while n > 1 and (sum(rating_badges.run_width(r, measure) for r in runs[:n])
+                                         + (n - 1) * gap > budget):
+                            n -= 1
+                        return runs[:n]
                     # No "·" before the first badge: the badge itself reads as
                     # the break, and a dot beside it looks like two separators.
-                    lead = ([("text", _lead_sep.join(_lead_parts)), ("gap", font_size * 0.62)]
-                            if _lead_parts else [])
+                    lead = [("text", _lead_sep.join(_lead_parts)), ("gap", font_size * 0.62)]
                     return [lead + _rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
                                            rating_badges.run_width(lead, measure))]
             image = draw_frosted_bar(
@@ -6313,6 +6325,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     _RenderRevision(
         rev=10,
         applies=lambda cfg: cfg.shape != "landscape" and bool(cfg.rating_badges),
+        stale=lambda cfg, facts: True,
+    ),    # 11: Badges alone on the Bar are spread evenly across it.
+    _RenderRevision(
+        rev=11,
+        applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
+                             and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
     ),
 )
