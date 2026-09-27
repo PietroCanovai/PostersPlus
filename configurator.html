@@ -3132,14 +3132,30 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
               <div class="field" id="sash-trending-ribbon-style-field">
-                <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour, opacity and saturation from the same settings as a frosted notch.">Ribbon Style</label>
-                <select id="cfg-trending-ribbon-style" onchange="build(); queuePreviewReload()">
+                <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour from the same sample as a frosted notch, with its own opacity and saturation.">Ribbon Style</label>
+                <select id="cfg-trending-ribbon-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
                   <option value="charcoal" selected>Charcoal</option>
                   <option value="frosted">Frosted</option>
                   <option value="black">Pure Black</option>
                   <option value="silver">Black, Silver Trim</option>
                   <option value="gold">Black, Gold Trim</option>
                 </select>
+              </div>
+              <div id="sash-trending-frost-fields" style="display:none;">
+                <div class="field">
+                  <label class="field-label">Ribbon Opacity</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-trending-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-trfo'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-trfo">0.75</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Ribbon Colour Saturation</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-trending-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-trfs'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-trfs">1.20</span>
+                  </div>
+                </div>
               </div>
               <div class="toggle-row" id="sash-trending-label-row">
                 <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
@@ -6190,6 +6206,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
     if (_trStyle === 'ribbon') {
       if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
+      if (vEl('cfg-trending-ribbon-style') === 'frosted') {
+        params.set('trending_frost_opacity',    n('cfg-trending-frost-opacity').toFixed(2));
+        params.set('trending_frost_saturation', n('cfg-trending-frost-sat').toFixed(2));
+      }
       if (c('tog-trending-label'))  params.set('trending_label', 'true');
       if (c('tog-trending-corner')) params.set('trending_corner', 'true');
     }
@@ -6932,6 +6952,8 @@ function updateTrendingStyleFields() {
   const style = vEl('cfg-trending-style');
   document.getElementById('sash-trending-mark-fields').style.display = style !== 'sash' ? '' : 'none';
   document.getElementById('sash-trending-ribbon-style-field').style.display = style === 'ribbon' ? '' : 'none';
+  document.getElementById('sash-trending-frost-fields').style.display =
+    style === 'ribbon' && vEl('cfg-trending-ribbon-style') === 'frosted' ? '' : 'none';
   document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
   document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
   if (style !== 'sash') initCustomMobileSliders();
@@ -8137,6 +8159,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
   _setEl('tog-trending-label', p.get('trending_label') === 'true');
   _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
+  _setEl('cfg-trending-frost-opacity', p.get('trending_frost_opacity') || '0.75');
+  _setEl('cfg-trending-frost-sat', p.get('trending_frost_saturation') || '1.20');
   _setEl('cfg-trending-ribbon-style', ['frosted', 'black', 'silver', 'gold'].includes(p.get('trending_ribbon_style')) ? p.get('trending_ribbon_style') : 'charcoal');
   updateTrendingStyleFields();
   updateSashBadgeFields();

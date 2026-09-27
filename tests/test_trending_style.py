@@ -211,13 +211,32 @@ class RibbonStyleTests(unittest.TestCase):
         cx = round(trending_rank._RIB_INSET * 500 + rib_w / 2)
         col = out[:, cx - 12:cx + 12, :3].max(axis=(1, 2))
         text_rows = np.flatnonzero(col > 150)
-        self.assertLess(text_rows[-1], apex - 0.08 * rib_w)
+        # The label's foot sits _RIB_LABEL_GAP of the width above the point.
+        self.assertAlmostEqual(apex - text_rows[-1], trending_rank._RIB_LABEL_GAP * rib_w, delta=2)
 
     def test_config_parses(self):
         self.assertEqual(main.build_request_config({}).trending_ribbon_style, "charcoal")
         self.assertEqual(main.build_request_config({"trending_ribbon_style": "gold"}).trending_ribbon_style, "gold")
         self.assertEqual(main.build_request_config({"trending_ribbon_style": "x"}).trending_ribbon_style, "charcoal")
         self.assertNotIn("trending_ribbon_style", main._render_config_signature(main.build_request_config({})))
+
+    def test_frosted_ribbon_has_its_own_opacity_and_saturation(self):
+        cfg = main.build_request_config({"trending_style": "ribbon", "trending_ribbon_style": "frosted",
+                                         "trending_frost_opacity": "0.3", "trending_frost_saturation": "5",
+                                         "sash_badge_frost_opacity": "0.9"})
+        self.assertEqual((cfg.trending_frost_opacity, cfg.trending_frost_saturation), (0.3, 2.0))
+        seen = {}
+        with mock.patch.object(trending_rank, "draw_rank_ribbon", side_effect=lambda *a, **kw: seen.update(kw) or a[0]):
+            main._draw_trending_rank(_poster(), cfg, 3, None, "movie", frost=((40, 90, 160), False))
+        self.assertEqual((seen["frost_opacity"], seen["frost_saturation"]), (0.3, 2.0))
+        self.assertEqual(seen["tint_rgb"], (40, 90, 160))
+
+    def test_opacity_changes_the_frosted_body(self):
+        art = self._art()
+        thin = trending_rank.draw_rank_ribbon(art, 3, style="frosted", tint_rgb=(40, 90, 160), frost_opacity=0.2)
+        thick = trending_rank.draw_rank_ribbon(art, 3, style="frosted", tint_rgb=(40, 90, 160), frost_opacity=0.9)
+        xy = (round(trending_rank._RIB_INSET * 500) + 3, 3)
+        self.assertGreater(self._pixel(thick, xy).mean(), self._pixel(thin, xy).mean() + 30)
 
 
 class RankSideTests(unittest.TestCase):

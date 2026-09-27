@@ -50,9 +50,9 @@ _RIB_DIGIT  = 0.46   # digit ink height, of the ribbon width
 # ink height, both of the ribbon width.
 _RIB_LABEL_BAND = 0.36
 _RIB_LABEL_CAP  = 0.13
-# How far up the label's band its baseline sits from the notch's point: the
-# share of the band's spare height left beneath the capitals.
-_RIB_LABEL_LIFT = 0.80
+# The label's baseline sits this far above the notch's point, of the ribbon
+# width: room to breathe above the point, the rank close above it.
+_RIB_LABEL_GAP  = 0.28
 
 
 @lru_cache(maxsize=16)
@@ -277,10 +277,8 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
             lfont = _font(max(6, round(lfont.size * fit / span)))
             track = lfont.size * 0.08
             span = _spaced_width(label, lfont, track)
-        lcap = -lfont.getbbox("H", anchor="ls")[1]
         band = _RIB_LABEL_BAND * rib_w * S
-        # Clear of the notch's point below, so the label has room to breathe.
-        base = yn - (band - lcap) * _RIB_LABEL_LIFT
+        base = yn - _RIB_LABEL_GAP * rib_w * S
         _spaced(draw, (cx_mid - span / 2, base), label, lfont, track, (*ink_rgb, label_a))
         num_bottom = yn - band
 
