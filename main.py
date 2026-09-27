@@ -1116,6 +1116,15 @@ def _merge_imdb_dataset_rating(
     return {**ratings_dict, "imdb": value}
 
 
+def _mdblist_row_ratings(ratings_dict):
+    """A rating row's scores as MDBList gives them.  MDBList never returns an
+    AniList or Kitsu score; a row carrying one had a request's anime provider
+    score written into it (see get_poster), so it is dropped here."""
+    if not isinstance(ratings_dict, dict):
+        return ratings_dict
+    return {k: v for k, v in ratings_dict.items() if k not in ("anilist", "kitsu")}
+
+
 def _ratings_base(ratings_dict):
     """Normalise "MDBList was never asked" to an empty dict.
 
@@ -8469,6 +8478,16 @@ async def get_poster(
             is_metacritic    = cached_is_metacritic
         else:
             ratings_dict, genre, rel, keywords, age_rating = rating_result
+            # The shared rating row holds MDBList's answer and nothing else: the
+            # anime provider's score and age rating, the IMDb dataset and TMDB's
+            # own average below are this request's, merged fresh every time.
+            # Written back with them, a title's scores depended on which request
+            # happened to fetch it first — a Kitsu-id request left its Kitsu
+            # score on the row for every TMDB-id request after it.  MDBList
+            # never returns AniList or Kitsu, so a row carrying one was left by
+            # that; dropping them on the way in cleans rows written before.
+            ratings_dict = _mdblist_row_ratings(ratings_dict)
+            _row_ratings, _row_age_rating = ratings_dict, age_rating
             # genre from MDBlist/cache may be None when the key is absent and
             # nothing is cached yet — fall back to the TMDB-derived genre.
             #
@@ -8557,14 +8576,14 @@ async def get_poster(
         ):
             set_cached_rating(
                 canonical_id,
-                ratings_dict if isinstance(ratings_dict, dict) else {},
+                _row_ratings if isinstance(_row_ratings, dict) else {},
                 genre,
                 rel,
                 award_wins,
                 award_noms,
                 awards_fetched=True,
                 festival_keyword=festival_keyword,
-                age_rating=age_rating,
+                age_rating=_row_age_rating,
                 is_cult=is_cult,
                 is_true_story=is_true_story,
                 is_metacritic=is_metacritic,
