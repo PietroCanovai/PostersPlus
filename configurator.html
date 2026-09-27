@@ -2311,7 +2311,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--gap-label);">
                 <label class="field-label" style="margin-bottom:0;" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
                 <div class="toggle-row" style="margin:0; gap:8px;">
-                  <span class="toggle-label" data-tip="On: posters in these catalogs show only their Trending rank, whatever your sash list says. Off: they use your sash list, like your other posters.">Trending Only</span>
+                  <span class="toggle-label" data-tip="On: these catalogs show only each poster's Trending rank (greyscale still applies). Off: your usual sash list. Only works where the app shows this addon's own posters, e.g. installed straight into Stremio: AIOMetadata's global poster pattern and Nuvio's custom poster override swap in your usual posters.">Trending Only</span>
                   <label class="toggle-switch">
                     <input type="checkbox" id="tog-trending-only" checked onchange="saveTrendingOnly(); updateTrendingCatalogsField()">
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -5591,6 +5591,14 @@ function trendingAddonConfigSegment() {
     p.set('sash_priority', 'trending,trending_broad');
     for (const k of ['sash_mode', 'landscape_sash_mode']) {
       if (p.get(k) === 'hidden') p.set(k, 'sash');
+    }
+    // Greyscale follows the release status sash, which the list above drops.
+    // Where the sash list has it, keep the greyscale, but not the sash: in
+    // a list with a status slot it goes to the front and hides the rank.
+    const statusSlots = ['cinema', 'streaming', 'physical', 'production', 'ended',
+                         'cancelled', 'airing', 'renewed'];
+    if (c('tog-cinema-greyscale') && sashOrder.some(id => statusSlots.includes(id))) {
+      p.set('cinema_greyscale_without_sash', 'true');
     }
   }
   const query = p.toString();

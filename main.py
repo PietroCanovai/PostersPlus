@@ -1614,6 +1614,10 @@ class RequestConfig:
     sash_poster_color:   bool = False   # diagonal sash colour derived from poster art
     cinema_greyscale:    bool = True    # greyscale art when release_status == "Cinema"
     cinema_greyscale_skip_if_available: bool = False  # keep colour if Web/Remux source found
+    # Greyscale even with no release-status sash listed.  The trending addon's
+    # Trending Only list sets it: its rows keep the greyscale their owner's
+    # posters have without the status sash taking the rank's place.
+    cinema_greyscale_without_sash: bool = False
     release_status_cinema_only: bool = False  # only show release status when "Cinema"
     release_status_dates: bool = True   # "Oct 16 Cinema" instead of Cinema / Production when TMDB has dated it
     badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
@@ -2174,7 +2178,8 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
 
 
 _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
-                              "rating_badge_style": "color"}
+                              "rating_badge_style": "color",
+                              "cinema_greyscale_without_sash": False}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2247,6 +2252,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_poster_color       = _b("sash_poster_color",      cfg.sash_poster_color)
     cfg.cinema_greyscale        = _b("cinema_greyscale",       cfg.cinema_greyscale)
     cfg.cinema_greyscale_skip_if_available = _b("cinema_greyscale_skip_if_available", cfg.cinema_greyscale_skip_if_available)
+    cfg.cinema_greyscale_without_sash = _b("cinema_greyscale_without_sash", cfg.cinema_greyscale_without_sash)
     cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.release_status_dates    = _b("release_status_dates",   cfg.release_status_dates)
     cfg.muted                   = _b("muted",                  cfg.muted)
@@ -3596,7 +3602,8 @@ def _build_poster(
     # Greyscale the base art to flag "not available".  Overlays drawn afterwards
     # (sashes, badges, ratings, logo) stay in colour.  Two independent triggers:
     #   - cinema_greyscale: title still in cinemas / production (release_status,
-    #     so implicitly gated on the release-status sash being enabled).
+    #     so implicitly gated on the release-status sash being enabled, unless
+    #     cinema_greyscale_without_sash).
     #   - greyscale_no_quality: no stream quality was found.  Only meaningful
     #     when wait_for_quality is on (otherwise tokens may just not be fetched
     #     yet), so it's gated on it.
@@ -9104,7 +9111,8 @@ async def get_poster(
             return (_scheduled_digital is None
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
-        if _status_sash or rcfg.hide_unreleased_rating:
+        _status_grey = rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash
+        if _status_sash or _status_grey or rcfg.hide_unreleased_rating:
             # Resolved for every title regardless of age.  There used to be an
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
@@ -9182,7 +9190,12 @@ async def get_poster(
         # hidden has to re-check on the status tier so the score appears once
         # the title is out.
         _status_for_ttl = _release_status
-        if not _status_sash:
+        if _status_grey and not _status_sash:
+            # Kept for the greyscale alone.  No status slot is listed, so it is
+            # never a sash, and build_poster's move of that slot to the front
+            # has nothing to move.
+            _release_status = _release_status if _release_status in ("Cinema", "Production") else None
+        elif not _status_sash:
             _release_status = None
 
         # An unreleased movie with a published date wears the date and the
