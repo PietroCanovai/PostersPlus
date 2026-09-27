@@ -6341,6 +6341,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
                              and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
+    ),    # 12: Mono badges lose the lettered tomato's stray "™".
+    _RenderRevision(
+        rev=12,
+        applies=lambda cfg: (cfg.shape != "landscape" and bool(cfg.rating_badges)
+                             and cfg.rating_badge_style == "mono"),
+        stale=lambda cfg, facts: True,
     ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)

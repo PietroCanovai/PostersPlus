@@ -305,9 +305,18 @@ def _silhouette(im: Image.Image, knock: str | None = None) -> Image.Image:
         alpha *= np.clip((230 - a[..., :3].min(axis=-1)) / 40, 0, 1)
     elif knock == "dark":
         alpha *= np.clip((a[..., :3].max(axis=-1) - 50) / 40, 0, 1)
+    # Specks standing apart from the mark — the lettered tomato's "™" —
+    # read as dirt at badge size.
+    import cv2
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((a[..., 3] > 128).astype(np.uint8))
+    if n > 2:
+        big = stats[1:, cv2.CC_STAT_AREA].max()
+        for i in range(1, n):
+            if stats[i, cv2.CC_STAT_AREA] < big * 0.02:
+                alpha[cv2.dilate((labels == i).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0] = 0
     out = Image.new("RGBA", im.size, (255, 255, 255, 0))
     out.putalpha(Image.fromarray(alpha.astype(np.uint8)))
-    return out
+    return Image.fromarray(np.ascontiguousarray(_crop(np.asarray(out))))
 
 
 _IMDB_YELLOW = (245, 197, 24)
