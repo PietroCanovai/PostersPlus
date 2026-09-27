@@ -21,8 +21,8 @@ volume beside the graphic badges' marks:
 Most are set round, so the row reads as a line of discs rather than a mix of
 wordmarks: IMDb's lettering on its yellow, AniList's and MyAnimeList's
 lettering on their own plate colours, TMDB's logo on its navy, Kitsu's glyph
-on its orange and the thumb in gold on black.  Letterboxd's dots sit in a
-rounded square, which holds three dots across better than a circle does.
+on its orange, Letterboxd's dots on its slate, Trakt's glyph on its own
+red-to-purple gradient and the thumb in gold on black.
 """
 from __future__ import annotations
 
@@ -242,6 +242,24 @@ def _plate(fill, shape: str = "disc", ring=None, ring_w: float = 0.07) -> Image.
     return im.resize((_WORK_H, _WORK_H), Image.Resampling.LANCZOS)
 
 
+def _gradient_disc(c0, c1) -> Image.Image:
+    """A disc shaded from *c0* at the bottom left to *c1* at the top right."""
+    t = np.add.outer(np.arange(_WORK_H)[::-1], np.arange(_WORK_H)) / (2 * (_WORK_H - 1))
+    rgb = (np.asarray(c0, np.float32) * (1 - t[..., None]) + np.asarray(c1, np.float32) * t[..., None])
+    out = Image.fromarray(np.dstack([rgb, np.full(t.shape, 255, np.float32)]).astype(np.uint8))
+    out.putalpha(_plate((0, 0, 0)).getchannel("A"))
+    return out
+
+
+def _white_ink(im: Image.Image) -> Image.Image:
+    """The white parts of a mark, as a white mark."""
+    a = np.asarray(im.convert("RGBA")).astype(np.float32)
+    alpha = np.clip((a[..., :3].min(axis=-1) - 150) * 2.5, 0, 255) * (a[..., 3] / 255)
+    out = Image.new("RGBA", im.size, (255, 255, 255, 0))
+    out.putalpha(Image.fromarray(alpha.astype(np.uint8)))
+    return Image.fromarray(np.ascontiguousarray(_crop(np.asarray(out))))
+
+
 def _on_plate(plate: Image.Image, mark: Image.Image, fit: float, dy: float = 0.0) -> Image.Image:
     """*mark* centred on *plate*, scaled so its diagonal is *fit* of the
     plate's width: a wide wordmark and a squat monogram then keep the same
@@ -288,7 +306,17 @@ def _mark_rgba(key: str) -> Image.Image | None:
             a = _svg_rgba(path, _WORK_H * 3)
             top = _runs(a[..., 3].max(axis=1) > 8)[0]
             dots = Image.fromarray(np.ascontiguousarray(_crop(a[top[0]:top[1]])))
-            return _on_plate(_plate(_LB_SLATE, "square"), dots, 0.80)
+            return _on_plate(_plate(_LB_SLATE), dots, 0.78)
+        if key == "trakt":
+            # Its white glyph on a disc shaded like the icon's own plate,
+            # whose colours are read off two of its corners.
+            icon = _svg_image(path)
+            a = np.asarray(icon)
+            inset = max(2, icon.width // 8)
+            c0 = tuple(int(c) for c in a[-inset, inset, :3])
+            c1 = tuple(int(c) for c in a[inset, -inset, :3])
+            glyph = _white_ink(icon)
+            return _on_plate(_gradient_disc(c0, c1), glyph if glyph.width >= 4 else icon, 0.72)
         if key == "kitsu":
             return _on_plate(_plate(_KITSU_RGB), _tint(_svg_image(path), (255, 255, 255)), 0.74)
         if key == "thumb_up":

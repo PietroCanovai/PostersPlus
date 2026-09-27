@@ -152,7 +152,7 @@ class RunTests(_AssetDir):
     def test_plated_marks_leave_their_corners_clear(self):
         # A disc: nothing in the corners of its square.
         self.install_marks()
-        for key in ("imdb", "tmdb", "myanimelist", "anilist", "kitsu", "thumb_up"):
+        for key in ("imdb", "tmdb", "letterboxd", "trakt", "myanimelist", "anilist", "kitsu", "thumb_up"):
             with self.subTest(key=key):
                 a = np.asarray(rb._mark_rgba(key))[..., 3]
                 self.assertEqual(int(a[:8, :8].max()), 0)

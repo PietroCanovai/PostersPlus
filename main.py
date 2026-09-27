@@ -6220,6 +6220,13 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         applies=lambda cfg: bool(cfg.rating_badges) and cfg.shape != "landscape",
         stale=lambda cfg, facts: True,
     ),
+    # 6: Letterboxd's and Trakt's badges are round too.
+    _RenderRevision(
+        rev=6,
+        applies=lambda cfg: cfg.shape != "landscape" and bool(
+            {"letterboxd", "trakt"} & set(cfg.rating_badges.split(","))),
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 
