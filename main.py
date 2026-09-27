@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import random
 import re
 import time
 import httpx
@@ -1569,6 +1570,13 @@ class RequestConfig:
     #   "primary"   = TMDB's designated default poster (most recognisable)
     #   "top_rated" = highest-voted poster, by logo_priority language order
     original_art_source: str = "primary"
+    # Poster art source: "tmdb" (default) or "fanart" (fanart.tv: textless,
+    # or in the logo language under original art; TMDB fallback; needs the
+    # operator's FANART_POSTERS + key).
+    poster_source: str = "tmdb"
+    # "top" (default) or "random": one of the source's top five candidates,
+    # re-rolled each time the poster renders.  Needs RANDOM_POSTERS.
+    poster_pick: str = "top"
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
     muted: bool = False
     textless: bool = False
@@ -2269,6 +2277,17 @@ def build_request_config(params: dict) -> RequestConfig:
     _oas = (params.get("original_art_source") or "").strip().lower()
     if _oas in ("primary", "top_rated"):
         cfg.original_art_source = _oas
+    _pss = (params.get("poster_source") or "").strip().lower()
+    # Parsed as "tmdb" while the operator hasn't enabled fanart, so those
+    # requests share the TMDB composite rather than minting an identical one.
+    if _pss == "fanart" and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
+        cfg.poster_source = "fanart"
+    # Likewise "top" while the operator hasn't allowed random picks.  Landscape
+    # draws from backdrops, which neither setting touches.
+    if (params.get("poster_pick") or "").strip().lower() == "random" and _cfg.RANDOM_POSTERS:
+        cfg.poster_pick = "random"
+    if cfg.shape == "landscape":
+        cfg.poster_source, cfg.poster_pick = "tmdb", "top"
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
     cfg.sash_text_color      = _parse_hex_color(params.get("sash_text_color"))
@@ -5997,6 +6016,8 @@ async def server_caps(access_key: str = ""):
         # at the default canvas width it hides the control altogether.
         "max_poster_resolution": max(_cfg.MAX_POSTER_RESOLUTION, _cfg.POSTER_WIDTH),
         "preview_at_resolution": bool(_cfg.PREVIEW_AT_RESOLUTION),
+        "fanart_posters":        bool(_cfg.FANART_POSTERS and _cfg.FANART_API_KEY),
+        "random_posters":        bool(_cfg.RANDOM_POSTERS),
     }
 
 
@@ -7617,6 +7638,16 @@ async def get_poster(
         # poster — OR, when no poster art exists at all, a genre-tinted canvas.
         #   poster missing entirely  → prefer backdrop over the canvas
         #   poster exists with text  → prefer backdrop over the text-burned poster
+        # Random pick among TMDB's top textless posters.  Also the fallback
+        # when fanart.tv (which picks its own, below) has nothing.  Rows cached
+        # before pools existed keep the default pick until their weekly refresh.
+        if (rcfg.poster_pick == "random" and is_textless
+                and not using_anime_art and not use_cinemeta):
+            _pool = (tmdb_data.get("poster_pools") or {}).get("textless") or []
+            if len(_pool) > 1:
+                poster_path = random.choice(_pool)
+                logger.info(f"Random textless poster for {tmdb_id}: {poster_path}")
+
         _use_backdrop = bool(backdrop_path) and (poster_path is None or not is_textless)
         if _use_backdrop:
             logger.info(f"No textless poster for {tmdb_id} — using backdrop crop as portrait fallback")
@@ -7651,6 +7682,12 @@ async def get_poster(
             _orig_art = _p_default or next(iter(_ranked_posters), None)
         else:
             _orig_art = next(iter(_ranked_posters), None) or _p_default
+        if rcfg.poster_pick == "random" and _ranked_langs:
+            _pool = ((tmdb_data.get("poster_pools") or {}).get("langs") or {}).get(
+                _ranked_langs[0]) or []
+            if _pool:
+                _orig_art = random.choice(_pool)
+                logger.info(f"Random original-art poster for {tmdb_id}: {_orig_art}")
         _use_original_art = rcfg.use_original_art and bool(_orig_art)
         if _use_original_art:
             poster_path   = _orig_art
@@ -7658,6 +7695,27 @@ async def get_poster(
             _use_backdrop = False
             logger.info(f"Original-art mode for {tmdb_id} — poster {poster_path} "
                         f"(priority={rcfg.logo_priority})")
+
+        # fanart.tv poster source.  Textless mode swaps in a textless fanart.tv
+        # poster and treats it like a TMDB textless one (our logo on top, text
+        # scan, backdrop rescue); it wins over the backdrop fallback too.
+        # Original-art mode swaps in a poster in the logo-priority language and
+        # serves it as-is.  TMDB's pick stands when fanart has none.
+        if (rcfg.poster_source != "tmdb" and not using_anime_art
+                and not use_cinemeta):
+            from fanart import fanart_poster_url
+            _fa_url = await fanart_poster_url(
+                client, media_type=type, tmdb_id=tmdb_id, imdb_id=effective_imdb_id,
+                random_top=rcfg.poster_pick == "random",
+                languages=_poster_language_order if rcfg.use_original_art else None,
+            )
+            if _fa_url:
+                poster_path       = _fa_url
+                _use_backdrop     = False
+                _use_original_art = rcfg.use_original_art
+                is_textless       = not _use_original_art
+                logger.info(f"fanart.tv poster for {tmdb_id}: {_fa_url}"
+                            f"{' (original art)' if _use_original_art else ''}")
 
         # Anime providers ship exactly one cover image per title and it
         # essentially always has the title logotype baked into the art, so it is

@@ -364,6 +364,29 @@ def tmdb_metadata_cache_key(
 TEXTLESS_ALT_MIN_POSTERS = 6
 
 
+# Candidates kept per pool for the random top-5 pick (poster_pick=random).
+POSTER_POOL_SIZE = 5
+
+
+def _rank_textless_posters(posters: list[dict]) -> list[dict]:
+    """Textless posters in pick order: _select_textless_poster's choice first,
+    then well-voted competitive art, then competitive, then the rest."""
+    if not posters:
+        return []
+    best = _select_textless_poster(posters)
+    top_rating = max(float(p.get("vote_average") or 0) for p in posters)
+
+    def _key(poster: dict):
+        rating = float(poster.get("vote_average") or 0)
+        votes = int(poster.get("vote_count") or 0)
+        competitive = rating >= top_rating - TMDB_POSTER_MAX_SCORE_DROP
+        voted = votes >= TMDB_POSTER_MIN_VOTES
+        return (poster is not best, not (competitive and voted), not competitive,
+                -rating, -votes)
+
+    return sorted(posters, key=_key)
+
+
 def _select_textless_poster(posters: list[dict]) -> dict | None:
     """Prefer sufficiently voted art without accepting a large score downgrade."""
     if not posters:
@@ -432,6 +455,7 @@ async def fetch_poster_metadata(
             "alt_poster_path":       meta.get("alt_poster_path"),
             "original_poster_path":  meta.get("original_poster_path"),
             "poster_langs":          meta.get("poster_langs", {}),
+            "poster_pools":          meta.get("poster_pools", {}),
             "imdb_id":               meta.get("imdb_id"),
             "tmdb_release_date":     meta.get("tmdb_release_date"),
             "last_air_date":         meta.get("last_air_date"),
@@ -627,6 +651,22 @@ async def fetch_poster_metadata(
                 poster_langs[_pl] = _p["file_path"]
                 _poster_best_vote[_pl] = _pv
 
+    # Top candidates for the random pick (poster_pick=random): textless in pick
+    # order, and per language key by rating.  poster_langs above stays the
+    # single best, so a random pool never changes the default pick.
+    _lang_pools: dict[str, list[str]] = {}
+    for _p in sorted(posters, key=lambda p: -(p.get("vote_average") or 0)):
+        for _pl in _image_language_keys(_p):
+            _pool = _lang_pools.setdefault(_pl, [])
+            if len(_pool) < POSTER_POOL_SIZE:
+                _pool.append(_p["file_path"])
+    poster_pools = {
+        "textless": [
+            p["file_path"] for p in _rank_textless_posters(textless)[:POSTER_POOL_SIZE]
+        ],
+        "langs": _lang_pools,
+    }
+
     set_cached_tmdb_metadata(
         metadata_cache_key,
         title,
@@ -650,6 +690,7 @@ async def fetch_poster_metadata(
         alt_poster_path=alt_poster_path,
         original_poster_path=original_poster_path,
         poster_langs=poster_langs,
+        poster_pools=poster_pools,
         imdb_id=imdb_id,
         tmdb_release_date=tmdb_release_date,
         last_air_date=last_air_date,
@@ -673,6 +714,7 @@ async def fetch_poster_metadata(
         "alt_poster_path":      alt_poster_path,
         "original_poster_path": original_poster_path,
         "poster_langs":         poster_langs,
+        "poster_pools":         poster_pools,
         "imdb_id":              imdb_id,
         "tmdb_release_date":    tmdb_release_date,
         "last_air_date":        last_air_date,

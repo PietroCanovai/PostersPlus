@@ -2992,6 +2992,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="top_rated">Top-rated</option>
               </select>
             </div>
+            <!-- Poster source and pick; each shown only when the operator allows it -->
+            <div class="field" id="poster-source-field" hidden>
+              <label class="field-label" data-tip="Where posters come from. fanart.tv art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without fanart.tv art keep their TMDB poster.">Poster Source</label>
+              <select id="cfg-poster-source" onchange="build(); queuePreviewReload()">
+                <option value="tmdb" selected>TMDB</option>
+                <option value="fanart">fanart.tv</option>
+              </select>
+            </div>
+            <div class="field" id="poster-pick-field" hidden>
+              <label class="field-label" data-tip="Top uses the best-rated poster. Random picks one of the top five, fixed until the poster is re-rendered (about weekly), so some picks will be duds.">Poster Pick</label>
+              <select id="cfg-poster-pick" onchange="build(); queuePreviewReload()">
+                <option value="top" selected>Top</option>
+                <option value="random">Random top 5</option>
+              </select>
+            </div>
             <!-- Logo overlay controls — N/A in Original Art mode (no logo drawn),
                  so the group heading and its rule hide along with them. -->
             <div class="cfg-sep" id="logo-controls">
@@ -4179,6 +4194,10 @@ async function fetchServerCaps() {
     updateKeyBadges();
     updateImdbSourceAvailability();
     updateResolutionAvailability();
+    document.getElementById('poster-source-field').hidden = !serverCaps.fanart_posters;
+    document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
+    // Restored before the caps answered, so the URL left them out.
+    if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
@@ -5893,6 +5912,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll) {
     params.set('use_original_art',    c('tog-original-art') ? 'true' : 'false');
     params.set('original_art_source', vEl('cfg-original-art-source') || 'primary');
+    if (serverCaps.fanart_posters && vEl('cfg-poster-source') !== 'tmdb') params.set('poster_source', vEl('cfg-poster-source'));
+    if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
   }
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
@@ -7932,6 +7953,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
+  _setEl('cfg-poster-source', p.get('poster_source') || 'tmdb');
+  _setEl('cfg-poster-pick', p.get('poster_pick') || 'top');
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));

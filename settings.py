@@ -85,6 +85,7 @@ GROUP_ORDER = (
     "Caching",
     "Cache warming",
     "TVDB fallback art",
+    "fanart.tv",
     "Cinemeta fallback",
     "Anime sources",
     "Rendering",

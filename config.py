@@ -143,6 +143,14 @@ def _flag(raw: str, default: bool) -> bool:
 TVDB_USE_LOGOS        = _flag(_env("TVDB_USE_LOGOS", "true", group='TVDB fallback art', kind='bool', label='Use TVDB logos', help='Use TVDB clearlogos when TMDB and Metahub have none.'), True)
 TVDB_USE_BACKDROPS    = _flag(_env("TVDB_USE_BACKDROPS", "true", group='TVDB fallback art', kind='bool', label='Use TVDB backdrops', help='Use TVDB backgrounds when no textless TMDB poster or backdrop exists.'), True)
 TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fallback art', kind='bool', label='Use TVDB posters', help='Use TVDB posters as a last resort. Off by default because they often carry burned-in title text; only used when text detection confirms a clean image.'), False)
+
+# Optional fanart.tv source.  With a project key AND FANART_POSTERS on, the
+# configurator offers poster_source=fanart (most-liked fanart.tv poster, TMDB
+# fallback).  Off by default: it adds poster downloads, disk cache and text
+# scans alongside the TMDB art.  Random picks are RANDOM_POSTERS.
+FANART_API_KEY        = _env('FANART_API_KEY', "", group='API keys', kind='secret', label='fanart.tv API key', help='Optional fanart.tv project key, needed for the fanart.tv poster source (see FANART_POSTERS).').strip()
+FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='fanart.tv', kind='bool', label='Offer fanart.tv posters', help='Let users pick fanart.tv as their poster source: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+
 # Where a TVDB clearlogo sits in the logo source chain:
 #   1 = TVDB first      — beats both TMDB and the Metahub CDN
 #   2 = TVDB mid        — after TMDB's own logos, but before Metahub
@@ -586,6 +594,10 @@ def _parse_bool(val: str, default: bool = False) -> bool:
 # background, recolour it (white / black / complementary accent) so it reads.
 # Experimental and off by default while it's being tested — it can mis-handle
 # some logos.  Set LOGO_CONTRAST_RESCUE=true to enable.
+# Lets users pick poster_pick=random: one of the top five posters from their
+# source (TMDB or fanart.tv), re-rolled whenever the poster re-renders.  Off by
+# default: each title can end up with five posters in the disk cache.
+RANDOM_POSTERS             = _parse_bool(_env("RANDOM_POSTERS", "false", group='Rendering', kind='bool', label='Allow random posters', help='Let users pick a random one of the top five posters (TMDB or fanart.tv) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders.'), False)
 LOGO_CONTRAST_RESCUE       = _parse_bool(_env("LOGO_CONTRAST_RESCUE", "false", group='Rendering', kind='bool', label='Logo contrast rescue', help='Recolour a flat logo (white, black or accent) when it blends into the poster background; multi-colour and outline logos are never touched. Experimental and off by default while tested.', advanced=True), False)
 # Emit per-logo sizing telemetry (source dims, aspect, final dims) at INFO level.
 # Off by default — handy when tuning the logo size caps.
