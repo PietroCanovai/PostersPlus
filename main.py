@@ -4191,7 +4191,7 @@ def _build_poster(
                 # Genre, then each provider's badge and score where "★ 87" was.
                 def _measure(text: str) -> float:
                     return draw.textlength(text, font=font_meta)
-                _lead = [("text", genre_label), ("gap", font_size * 0.62)] if genre_label else []
+                _lead = [("text", genre_label), ("gap", font_size * 0.48)] if genre_label else []
                 _run = _lead + _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
                                        rating_badges.run_width(_lead, _measure))
                 _, ty = _text_center(draw, "0", font_meta, width / 2, rating_cy)  # type: ignore
@@ -6346,6 +6346,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         rev=12,
         applies=lambda cfg: (cfg.shape != "landscape" and bool(cfg.rating_badges)
                              and cfg.rating_badge_style == "mono"),
+        stale=lambda cfg, facts: True,
+    ),    # 13: Clean sets its first badge a little closer to the genre.
+    _RenderRevision(
+        rev=13,
+        applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 2
+                             and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
     ),
 )
