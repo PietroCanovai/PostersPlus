@@ -6358,6 +6358,11 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         rev=14,
         applies=lambda cfg: cfg.shape != "landscape" and "pplus" in cfg.rating_badges.split(","),
         stale=lambda cfg, facts: True,
+    ),    # 15: The Posters+ badge is the P alone.
+    _RenderRevision(
+        rev=15,
+        applies=lambda cfg: cfg.shape != "landscape" and "pplus" in cfg.rating_badges.split(","),
+        stale=lambda cfg, facts: True,
     ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)

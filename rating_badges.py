@@ -18,7 +18,8 @@ volume beside the graphic badges' marks:
   Roger Ebert   Material Symbols' thumb_up (Apache-2.0): RogerEbert.com
           publishes no mark, so its badge is Siskel & Ebert's thumbs-up
   Posters+  the weighted score itself, as the service's own serif "P" (the
-          favicon, which ships in static/) with a "+", gold in a gold ring
+          favicon, which ships in static/), gold in a gold ring.  A "+" beside
+          it had to shrink the pair to fit the disc and the P lost its weight
 
 Most are set round, so the row reads as a line of discs rather than a mix of
 wordmarks: IMDb's lettering on its yellow, AniList's and MyAnimeList's
@@ -341,24 +342,6 @@ _EBERT_GOLD  = (212, 175, 55)
 
 _WHITE = (255, 255, 255)
 
-
-def _pplus_lockup(path: str) -> Image.Image:
-    """The favicon's "P" with a "+" beside it, centred on the letter's height
-    (set up by the bowl it looked like a superscript and lost weight), its
-    strokes a little lighter than the P's stem so it reads as the lesser half."""
-    p = Image.open(path).convert("RGBA")
-    h = p.height
-    stem = 0.138 * h          # the favicon's stem, of its height
-    arm, weight = 0.42 * h, 0.85 * stem
-    x0, cy = p.width + 0.05 * h, 0.50 * h
-    out = Image.new("RGBA", (round(x0 + arm) + 2, h), (0, 0, 0, 0))
-    out.alpha_composite(p, (0, 0))
-    ink = tuple(int(c) for c in np.median(np.asarray(p)[..., :3][np.asarray(p)[..., 3] > 128], axis=0)) + (255,)
-    d = ImageDraw.Draw(out)
-    d.rectangle((x0, cy - weight / 2, x0 + arm, cy + weight / 2), fill=ink)
-    d.rectangle((x0 + arm / 2 - weight / 2, cy - arm / 2, x0 + arm / 2 + weight / 2, cy + arm / 2), fill=ink)
-    return out
-
 # What a mono badge cuts out of the marks that aren't set on a plate.
 _MONO_KNOCK = {"rt_lettered": "white", "rt_upright": "white", "rt_spilled": "white",
                "metacritic": "dark"}
@@ -420,7 +403,7 @@ def _mark_rgba(key: str, mono: bool = False) -> Image.Image | None:
                              _tint(_svg_image(path), _EBERT_GOLD), 0.66, dy=-0.01, mono=mono)
         if key == "pplus":
             return _on_plate(_plate(_WHITE) if mono else _plate(_PPLUS_BODY, ring=_PPLUS_GOLD),
-                             _pplus_lockup(path), 0.62, mono=mono)
+                             Image.open(path).convert("RGBA"), 0.62, mono=mono)
         if key in ("myanimelist", "anilist"):
             plate, ink = _plate_ink(_svg_image(path))
             return _on_plate(_plate(plate), ink, 0.76, mono=mono)
