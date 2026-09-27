@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Rating badges
+
+- New Rating Badges list in the Rating tab (`rating_badges=imdb,tomatoes`):
+  each chosen site's own score behind its logo, in place of the ★ and the
+  weighted score. Clean puts them after the genre, Minimalist before each
+  score, and the Bar spreads them across its whole width in place of the
+  label, RPDB-style (with a label that shows the rating). The Rating Bar has
+  no printed score and doesn't draw them.
+- IMDb, Rotten Tomatoes (fresh or rotten), Popcornmeter (upright or spilled),
+  Metacritic, Metacritic User, Letterboxd, Trakt, TMDB, Roger Ebert,
+  MyAnimeList, AniList and Kitsu. Only as many as fit are drawn, in list order,
+  and titles missing all of them keep the weighted score.
+- Scores print on each site's own scale (7.8, 92%, 3.9) or, with Badge Scores
+  set to P+ scale (`rating_badge_scale=normalized`), on the weighted score's.
+- Logos are downloaded once per instance, pinned by SHA-1, and none ship in
+  the repo; a render missing one isn't cached. Existing URLs and cached
+  posters are unaffected.
+
 ### Second textless poster before the backdrop
 
 - When a poster TMDB tags as textless turns out to have its title burned in

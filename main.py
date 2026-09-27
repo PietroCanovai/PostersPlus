@@ -797,6 +797,7 @@ from awards import dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, reconcile_cached_awards
 from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_heights as notch_heights
 import graphic_badges
+import rating_badges
 import awards as _awards_mod
 if not _awards_mod._HAS_SKIA:
     # Still correct, just ~3x slower per sash — worth saying once, since the
@@ -1507,6 +1508,14 @@ class RequestConfig:
     bar_score_out_of_10:     bool  = False
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
 
+    # Rating provider badges (Clean, Minimalist and Bar): each listed
+    # provider's own score behind its logo, in place of the ★ and the weighted
+    # score — see rating_badges.  "" is off.  Scale "native" prints each score
+    # as the provider does (7.8, 92%, 3.9); "normalized" on the weighted
+    # score's scale, following the mode's out-of-10 switch.
+    rating_badges:           str   = ""
+    rating_badge_scale:      str   = "native"
+
     logo_max_w_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
     logo_bottom_ratio:  float = field(default_factory=lambda: _cfg.LOGO_BOTTOM_RATIO)
@@ -1972,7 +1981,7 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
     return json.dumps(fields, sort_keys=True, default=_stable)
 
 
-_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500}
+_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native"}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2201,6 +2210,11 @@ def build_request_config(params: dict) -> RequestConfig:
     _mrsep = (params.get("minimalist_rating_separator") or "").strip().lower()
     if _mrsep in ("pip", "bullet", "star"):
         cfg.minimalist_rating_separator = _mrsep
+
+    cfg.rating_badges = rating_badges.parse_providers(params.get("rating_badges"))
+    _rbs = (params.get("rating_badge_scale") or "").strip().lower()
+    if _rbs in rating_badges.SCALES:
+        cfg.rating_badge_scale = _rbs
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -3366,6 +3380,7 @@ def _build_poster(
     has_burned_in_text: bool = False,
     certification: str | None = None,
     badge_logos: tuple = (None, None),   # (network, studio) graphic_badges.Logo, or None each
+    ratings: dict | None = None,         # per-provider scores, for rating badges
 ) -> Image.Image:
 
     width, height = image.size
@@ -3989,6 +4004,22 @@ def _build_poster(
     _frost_sat = cfg.sash_badge_frost_saturation if _notch_frosted else cfg.bar_frost_saturation
 
     # --- Rating / genre label ---
+    # Rating badges stand in for the ★ and the weighted score wherever a mode
+    # prints one; a title with a score from none of the chosen providers keeps
+    # the weighted score, so it isn't left bare.
+    _rb_items = (rating_badges.entries(ratings, cfg.rating_badges)
+                 if cfg.rating_badges and not cfg.hide_rating else [])
+
+    def _rb_run(font_size: float, out_of_10: bool, measure, budget: float, lead: float = 0.0) -> list[tuple]:
+        """The badges as a run, dropping providers off the end until it fits
+        in *budget* beside *lead* px of other text."""
+        n = len(_rb_items)
+        while True:
+            run = rating_badges.rating_run(_rb_items[:n], font_size, cfg.rating_badge_scale, out_of_10)
+            if n <= 1 or lead + rating_badges.run_width(run, measure) <= budget:
+                return run
+            n -= 1
+
     if cfg.rating_display_mode != 0:
 
         if cfg.rating_display_mode == 1:
@@ -4082,13 +4113,25 @@ def _build_poster(
             except IOError:
                 font_meta = ImageFont.load_default()
 
-            if label:
+            _fill = (*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255)
+            if _rb_items:
+                # Genre, then each provider's badge and score where "★ 87" was.
+                def _measure(text: str) -> float:
+                    return draw.textlength(text, font=font_meta)
+                _lead = [("text", genre_label), ("gap", font_size * 0.62)] if genre_label else []
+                _run = _lead + _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
+                                       rating_badges.run_width(_lead, _measure))
+                _, ty = _text_center(draw, "0", font_meta, width / 2, rating_cy)  # type: ignore
+                rating_badges.draw_run(image, draw, _run,
+                                       (width - rating_badges.run_width(_run, _measure)) / 2,
+                                       ty - px(font_size * 0.10), font_meta, _fill, _measure)
+            elif label:
                 tx, ty = _text_center(draw, label, font_meta, width / 2, rating_cy)  # type: ignore
                 draw.text(
                     (tx, ty - px(font_size * 0.10)),
                     label,
                     font=font_meta,
-                    fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
+                    fill=_fill,
                 )
 
         elif cfg.rating_display_mode == 3:
@@ -4109,7 +4152,9 @@ def _build_poster(
             except IOError:
                 _font_ref, _k = font_meta, 1.0
 
-            def _tl(text: str) -> float:
+            def _tl(text) -> float:
+                if isinstance(text, list):   # a rating badge run
+                    return rating_badges.run_width(text, _tl)
                 return draw.textlength(text, font=_font_ref) * _k
 
             y = pxr(height * cfg.minimalist_mode_font_y_offset)
@@ -4147,6 +4192,15 @@ def _build_poster(
                 _score_str = str(score)
             parts = [(genre_label, None)] if genre_label else []
             left_parts: list[tuple[str, str | None]] = []
+            # With rating badges the printed score is a run of badge + score
+            # pairs, the first badge standing where the ★ (or other rating
+            # separator) was: the "badge" role is only the gap before it.
+            # Year mode prints no score, so it has nothing to put them on.
+            _score_seg, _score_sep = _score_str, "rating"
+            if _rb_items:
+                # Filled in below, once the rest of the line is known.
+                _has_score = True
+                _score_seg, _score_sep = [], "badge"
             if cfg.minimalist_append_mode == 0:
                 if release_year:
                     # Year mode carries the score in the separator's colour, so
@@ -4158,22 +4212,27 @@ def _build_poster(
                 elif cfg.hide_year and _has_score:
                     # No year to colour the separator before, so the score
                     # is printed as Rating mode would print it.
-                    parts.append((_score_str, "rating" if parts else None))
+                    parts.append((_score_seg, _score_sep if parts else None))
             elif cfg.minimalist_append_mode == 1:
                 if _has_score:
-                    parts.append((_score_str, "rating" if parts else None))
+                    parts.append((_score_seg, _score_sep if parts else None))
             elif cfg.minimalist_append_mode == 3:   # Split
                 if release_year:
                     parts.append((str(release_year), "field" if parts else None))
-                left_parts, parts = parts, ([(_score_str, None)] if _has_score else [])
+                left_parts, parts = parts, ([(_score_seg, None)] if _has_score else [])
             else:  # 2 — Both
                 if release_year:
                     parts.append((str(release_year), "field" if parts else None))
                 if _has_score:
-                    parts.append((_score_str, "rating" if parts else None))
+                    parts.append((_score_seg, _score_sep if parts else None))
 
             pip_gap = px(font_size * 0.55)
             pip_w   = max(fixed(4), px(font_size * 0.18))
+            if isinstance(_score_seg, list) and _has_score:
+                _lead = sum(_tl(seg) + (2 * pip_gap + pip_w if sep else 0)
+                            for seg, sep in parts + left_parts if seg is not _score_seg)
+                _score_seg[:] = _rb_run(font_size, cfg.minimalist_score_out_of_10, _tl,
+                                        width - 2 * (width - right_edge) - pip_gap, _lead)
             pip_h   = px(font_size * 1.4)
             pip_cy  = pxr(y + font_size * 0.60)
 
@@ -4213,7 +4272,9 @@ def _build_poster(
                 seg_x = px(cursor - _tl(seg))
                 ops.append(("text", seg_x, seg))
                 cursor = seg_x
-                if sep:
+                if sep == "badge":
+                    cursor -= pip_gap
+                elif sep:
                     cursor -= pip_gap
                     sep_w  = _sep_width(sep)
                     sep_x  = cursor - sep_w
@@ -4238,7 +4299,9 @@ def _build_poster(
             # off the opposite margin, so the two groups sit symmetrically.
             cursor = width - right_edge
             for seg, sep in left_parts:
-                if sep:
+                if sep == "badge":
+                    cursor += pip_gap
+                elif sep:
                     cursor += pip_gap
                     ops.append((sep, px(cursor)))
                     cursor += _sep_width(sep) + pip_gap
@@ -4248,7 +4311,10 @@ def _build_poster(
             for op in ops:
                 kind, ox = op[0], op[1]
                 if kind == "text":
-                    draw.text((ox, y), op[2], font=font_meta, fill=_ink)
+                    if isinstance(op[2], list):
+                        rating_badges.draw_run(image, draw, op[2], ox, y, font_meta, _ink, _tl)
+                    else:
+                        draw.text((ox, y), op[2], font=font_meta, fill=_ink)
                     continue
 
                 glyph = _sep_glyph(kind)
@@ -4297,6 +4363,19 @@ def _build_poster(
                 _parts = [genre_label or "", translate_sash(_bar_sash, cfg.logo_language) if _bar_sash else ""]
             _parts = [p for p in _parts if p]
             _sep = "  ·  " if len(_parts) <= 2 else " · "
+            # Rating badges take the whole bar, RPDB-style: one entry per
+            # provider, spread across it, in place of the label.  Only where
+            # the label would have carried the score.
+            _bar_run = None
+            if _rb_items and cfg.bar_append in ("rating_year", "rating"):
+                def _bar_run(font_size, measure, budget):
+                    runs = [rating_badges.rating_run([item], font_size, cfg.rating_badge_scale,
+                                                     cfg.bar_score_out_of_10) for item in _rb_items]
+                    gap = font_size * rating_badges._ENTRY_GAP
+                    n = len(runs)
+                    while n > 1 and sum(rating_badges.run_width(r, measure) for r in runs[:n]) + (n - 1) * gap > budget:
+                        n -= 1
+                    return runs[:n]
             image = draw_frosted_bar(
                 image,
                 left_text   = "",
@@ -4325,6 +4404,7 @@ def _build_poster(
                 ) if _bar_style in ("rating_black", "rating_frosted") else None,
                 tint_rgb         = _frost_tint,
                 text_color       = cfg.rating_text_color,
+                center_run       = _bar_run,
             )
 
     # --- Discovery sash / badge ---
@@ -8920,6 +9000,18 @@ async def get_poster(
                                      graphic_badges.ensure_logo(client, _studio))
                 _bp_args["badge_logos"] = (_network, _studio)
 
+        # Rating badges: the per-provider scores behind them, and the marks of
+        # the providers this title has a score from (each fetched once per
+        # instance).  A mark that can't be had yet leaves its badge out, so a
+        # render missing one isn't kept.
+        _rating_badges_missing = False
+        if (rcfg.rating_badges and not _is_landscape and rcfg.rating_display_mode in (2, 3, 4)
+                and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
+            _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, rcfg.rating_badges)]
+            if _rb_shown:
+                _rating_badges_missing = not await rating_badges.ensure_assets(client, _rb_shown)
+                _bp_args["ratings"] = ratings_dict
+
         def _composite_and_encode() -> bytes:
             _render = build_landscape if _is_landscape else build_poster
             result = _render(image, score, genre, _render_cfg, **_bp_args)
@@ -8943,12 +9035,14 @@ async def get_poster(
         #                            the whole composite TTL, so let it re-render.
         #   _cinemeta_missing      — same, for a Cinemeta-spined render that got
         #                            the genre canvas because Cinemeta had nothing.
+        #   _rating_badges_missing — a provider's mark couldn't be fetched yet.
         #
         # The same flag decides what the *client* is told: a render we won't
         # keep must not be handed an ETag either (see _apply_poster_cache_headers).
         _render_provisional = bool(
             quality_pending or _detection_deferred or rating_failed
             or _rating_backoff_active or _anime_art_missing or _cinemeta_missing
+            or _rating_badges_missing
         )
         _composite_expires_at: int | None = None
         if final_cache_key is not None and not _render_provisional:

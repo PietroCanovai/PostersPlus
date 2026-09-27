@@ -645,6 +645,7 @@ def draw_frosted_bar(
     fill_color: tuple[int, int, int] | None = None,
     tint_rgb: tuple[float, float, float] | None = None,
     text_color: tuple[int, int, int] | None = None,
+    center_run=None,
 ) -> Image.Image:
     """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
@@ -657,6 +658,9 @@ def draw_frosted_bar(
     tint_rgb overrides the sampled dominant colour for frosted styles so the bar
     and the info-sash notch can share one tint (sampling the glass texture still
     comes from the actual poster region — only the colour cast is forced).
+    center_run, when given, is called as center_run(font_size, measure, budget)
+    for a list of rating_badges runs, spread evenly across the bar in place of
+    center_text.
     """
     import os, colorsys as _cs
 
@@ -806,7 +810,20 @@ def draw_frosted_bar(
     td        = ImageDraw.Draw(txt_layer)
     h_pad     = max(fixed(20), px(width * 0.055))
 
-    if center_text:
+    if center_run is not None:
+        import rating_badges
+
+        def _measure(text: str) -> float:
+            return td.textlength(text, font=font)
+        runs = center_run(font_size, _measure, width - 2 * h_pad)
+        widths = [rating_badges.run_width(r, _measure) for r in runs]
+        # Equal space before, between and after the entries.
+        gap = (width - sum(widths)) / (len(runs) + 1)
+        x = gap
+        for r, w in zip(runs, widths):
+            rating_badges.draw_run(txt_layer, td, r, px(x), text_y, font, ink, _measure)
+            x += w + gap
+    elif center_text:
         cw = px(td.textlength(center_text, font=font))
         td.text((px((width - cw) / 2), text_y), center_text, font=font, fill=ink)
     if left_text:

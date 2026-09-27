@@ -2637,6 +2637,20 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="4">Bar</option>
               </select>
             </div>
+            <div id="rating-badges-fields" style="display:none;">
+              <div class="field">
+                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and spread across the whole Bar in place of its label (when its label shows the rating). Titles missing a site's score skip it, and ones with none of them keep the weighted score. Only as many as fit on the line are drawn, top first. Drag to reorder, + to add, ✕ to remove.">Rating Badges</label>
+                <input type="hidden" id="cfg-rating-badges" value="" data-default="">
+                <div class="sash-list lp-list" id="rating-badges-list"></div>
+              </div>
+              <div class="field" id="rating-badge-scale-field" style="display:none;">
+                <label class="field-label" data-tip="Each site's own scale is what the site itself shows — IMDb 7.8, Rotten Tomatoes 92%, Letterboxd 3.9. P+ scale puts every score on the weighted score's scale instead, following this mode's Out of 10 switch.">Badge Scores</label>
+                <select id="cfg-rating-badge-scale" onchange="build(); queuePreviewReload()">
+                  <option value="native" selected>Each site's own scale</option>
+                  <option value="normalized">P+ scale</option>
+                </select>
+              </div>
+            </div>
             <div id="rating-alt-colors-toggle">
               <div class="field">
                 <label class="field-label">Colour Palette</label>
@@ -5406,6 +5420,131 @@ function _lpTouchEnd(e) {
   _lpDragId = null;
 }
 
+// ── Rating badges ─────────────────────────────────────────────────────────
+// Sites whose own score is drawn behind its logo (rating_badges).  Same list
+// control as Logo Priority, but it starts empty: every site is disabled until
+// added.  Mirrors PROVIDERS and parse_providers in rating_badges.py.
+const RATING_BADGE_SOURCES = [
+  { id: 'imdb',           label: 'IMDb' },
+  { id: 'tomatoes',       label: 'Rotten Tomatoes', tip: 'Tomatometer — a fresh tomato at 60% or more, a splat below' },
+  { id: 'popcorn',        label: 'Popcornmeter',    tip: 'Rotten Tomatoes audience score — an upright bucket at 60% or more' },
+  { id: 'metacritic',     label: 'Metacritic' },
+  { id: 'metacriticuser', label: 'Metacritic User' },
+  { id: 'letterboxd',     label: 'Letterboxd' },
+  { id: 'trakt',          label: 'Trakt' },
+  { id: 'tmdb',           label: 'TMDB' },
+  { id: 'rogerebert',     label: 'Roger Ebert' },
+  { id: 'myanimelist',    label: 'MyAnimeList' },
+  { id: 'anilist',        label: 'AniList' },
+  { id: 'kitsu',          label: 'Kitsu' },
+];
+const RATING_BADGES_MAX = 6;
+
+function ratingBadgeSources(value) {
+  const known = new Set(RATING_BADGE_SOURCES.map(s => s.id));
+  const out = [];
+  for (const token of (value || '').toLowerCase().split(',').map(t => t.trim())) {
+    if (known.has(token) && !out.includes(token)) out.push(token);
+  }
+  return out.slice(0, RATING_BADGES_MAX);
+}
+
+function setRatingBadges(ids) {
+  document.getElementById('cfg-rating-badges').value = ratingBadgeSources(ids.join(',')).join(',');
+  buildRatingBadgeList(); updateRatingFields(); build(); queuePreviewReload();
+}
+
+function buildRatingBadgeList() {
+  const container = document.getElementById('rating-badges-list');
+  if (!container) return;
+  const order = ratingBadgeSources(vEl('cfg-rating-badges'));
+  const full = order.length >= RATING_BADGES_MAX;
+  const row = (src, idx) => {
+    const item = document.createElement('div');
+    const active = idx !== null;
+    item.className = 'sash-item rb-item' + (active ? '' : ' sash-item-disabled');
+    item.dataset.id = src.id;
+    if (src.tip) item.title = src.tip;
+    item.innerHTML = `
+      ${active ? `<span class="sash-drag-handle" title="Drag to reorder">⠿</span>
+      <span class="sash-rank">${idx + 1}</span>` : ''}
+      <span class="sash-label">${src.label}</span>
+      ${active ? `<button class="sash-disable-btn" title="Remove">✕</button>`
+               : (full ? '' : `<button class="sash-enable-btn" title="Add">+</button>`)}
+    `;
+    item.querySelector('button')?.addEventListener('click', () => {
+      setRatingBadges(active ? order.filter(id => id !== src.id) : [...order, src.id]);
+    });
+    if (active) {
+      item.draggable = true;
+      item.addEventListener('dragstart', e => { _rbDragId = src.id; item.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+      item.addEventListener('dragend',   () => { item.classList.remove('dragging'); _rbClearOver(); });
+      item.addEventListener('dragover',  e => { if (!_rbDragId) return; e.preventDefault(); _rbClearOver(); item.classList.add('drag-over'); });
+      item.addEventListener('drop',      e => { e.preventDefault(); _rbMove(_rbDragId, src.id); _rbDragId = null; });
+      item.querySelector('.sash-drag-handle').addEventListener('touchstart', _rbTouchStart, { passive: true });
+    }
+    return item;
+  };
+
+  container.innerHTML = '';
+  order.forEach((id, idx) => {
+    const src = RATING_BADGE_SOURCES.find(s => s.id === id);
+    if (src) container.appendChild(row(src, idx));
+  });
+  const disabled = RATING_BADGE_SOURCES.filter(s => !order.includes(s.id));
+  if (disabled.length) {
+    const section = document.createElement('div');
+    section.className = 'sash-disabled-section';
+    section.innerHTML = `<div class="sash-disabled-header">${order.length ? 'Not shown' : 'Off — add a site to show its badge'}</div>`;
+    disabled.forEach(src => section.appendChild(row(src, null)));
+    container.appendChild(section);
+  }
+}
+
+let _rbDragId = null, _rbGhost = null, _rbOffX = 0, _rbOffY = 0;
+function _rbClearOver() {
+  document.querySelectorAll('.rb-item').forEach(el => el.classList.remove('drag-over'));
+}
+function _rbMove(srcId, targetId) {
+  if (!srcId || srcId === targetId) return;
+  const order = ratingBadgeSources(vEl('cfg-rating-badges'));
+  const from = order.indexOf(srcId), to = order.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  order.splice(from, 1);
+  order.splice(to, 0, srcId);
+  setRatingBadges(order);
+}
+function _rbTouchStart(e) {
+  const item = e.currentTarget.closest('.rb-item');
+  const t = e.touches[0], r = item.getBoundingClientRect();
+  _rbDragId = item.dataset.id;
+  _rbOffX = t.clientX - r.left; _rbOffY = t.clientY - r.top;
+  _rbGhost = item.cloneNode(true);
+  _rbGhost.style.cssText = `position:fixed;pointer-events:none;z-index:9999;opacity:0.85;width:${item.offsetWidth}px;background:var(--black3);border-color:var(--gold-dim);left:${r.left}px;top:${r.top}px;`;
+  document.body.appendChild(_rbGhost);
+  item.classList.add('dragging');
+  document.addEventListener('touchmove', _rbTouchMove, { passive: false });
+  document.addEventListener('touchend',  _rbTouchEnd,  { passive: true });
+}
+function _rbTouchMove(e) {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (_rbGhost) { _rbGhost.style.left = (t.clientX - _rbOffX) + 'px'; _rbGhost.style.top = (t.clientY - _rbOffY) + 'px'; }
+  _rbClearOver();
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#rating-badges-list > .rb-item');
+  if (target && target.dataset.id !== _rbDragId) target.classList.add('drag-over');
+}
+function _rbTouchEnd(e) {
+  document.removeEventListener('touchmove', _rbTouchMove);
+  document.removeEventListener('touchend',  _rbTouchEnd);
+  if (_rbGhost) { _rbGhost.remove(); _rbGhost = null; }
+  document.querySelectorAll('.rb-item').forEach(el => el.classList.remove('dragging', 'drag-over'));
+  const t = e.changedTouches[0];
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#rating-badges-list > .rb-item');
+  if (target) _rbMove(_rbDragId, target.dataset.id);
+  _rbDragId = null;
+}
+
 // The custom-language picker only means something while Custom is in the list.
 function syncSecondaryLangVisibility() {
   const field = document.getElementById('secondary-lang-field');
@@ -5893,6 +6032,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
       params.set('bar_frost_saturation', n('cfg-bar-frost-sat').toFixed(2));
       params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
+    }
+    // Rating badges: the Rating Bar has no printed score to put them on.
+    if (ratingMode !== 1 && vEl('cfg-rating-badges')) {
+      params.set('rating_badges', vEl('cfg-rating-badges'));
+      if (vEl('cfg-rating-badge-scale') === 'normalized') params.set('rating_badge_scale', 'normalized');
     }
     const _usesCustomPalette =
       ((ratingMode === 1 || ratingMode === 3) && ni('cfg-score-color-mode') === 3) ||
@@ -6595,6 +6739,7 @@ function resetDefaults() {
   localStorage.removeItem('postersplus_sash_order');
   buildSashList();
   buildLogoPriorityList();
+  buildRatingBadgeList();
   // Refresh the mode-conditional field visibility so the blocks for the
   // *previously-selected* rating / badge mode don't linger after the parent
   // dropdown reverts to its default (e.g. resetting from Compact would
@@ -7310,6 +7455,8 @@ function updateRatingFields() {
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = (mode === 3 && !hideRating) ? '' : 'none';
   document.getElementById('bar-score10-row').style.display          = (mode === 4 && !hideRating) ? '' : 'none';
+  document.getElementById('rating-badges-fields').style.display     = (mode >= 2 && !hideRating) ? '' : 'none';
+  document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
   document.getElementById('landscape-star-row').style.display       = hideRating ? 'none' : '';
   _updateMinimalistRows();
@@ -7916,6 +8063,13 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('minimalist_center'))              _setEl('tog-minimalist-center', p.get('minimalist_center'));
   if (p.has('minimalist_separator'))           _setEl('cfg-min-separator', p.get('minimalist_separator'));
   if (p.has('minimalist_rating_separator'))    _setEl('cfg-min-rating-separator', p.get('minimalist_rating_separator'));
+  // A URL that names its rating mode says which badges it wants by leaving
+  // them out as much as by listing them.
+  if (p.has('rating_badges') || p.has('rating_display_mode')) {
+    _setEl('cfg-rating-badges', ratingBadgeSources(p.get('rating_badges') || '').join(','));
+    _setEl('cfg-rating-badge-scale', p.get('rating_badge_scale') === 'normalized' ? 'normalized' : 'native');
+    buildRatingBadgeList();
+  }
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
@@ -8140,6 +8294,7 @@ restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
 buildLogoPriorityList();
+buildRatingBadgeList();
 updateRatingFields();
 updateOriginalArt();
 updateBadgeModeHint();
