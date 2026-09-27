@@ -2637,20 +2637,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="4">Bar</option>
               </select>
             </div>
-            <div id="rating-badges-fields" style="display:none;">
-              <div class="field">
-                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and spread across the whole Bar in place of its label (when its label shows the rating). Titles missing a site's score skip it, and ones with none of them keep the weighted score. Only as many as fit on the line are drawn, top first. Drag to reorder, + to add, ✕ to remove.">Rating Badges</label>
-                <input type="hidden" id="cfg-rating-badges" value="" data-default="">
-                <div class="sash-list lp-list" id="rating-badges-list"></div>
-              </div>
-              <div class="field" id="rating-badge-scale-field" style="display:none;">
-                <label class="field-label" data-tip="Each site's own scale is what the site itself shows — IMDb 7.8, Rotten Tomatoes 92%, Letterboxd 3.9. P+ scale puts every score on the weighted score's scale instead, following this mode's Out of 10 switch.">Badge Scores</label>
-                <select id="cfg-rating-badge-scale" onchange="build(); queuePreviewReload()">
-                  <option value="native" selected>Each site's own scale</option>
-                  <option value="normalized">P+ scale</option>
-                </select>
-              </div>
-            </div>
             <div id="rating-alt-colors-toggle">
               <div class="field">
                 <label class="field-label">Colour Palette</label>
@@ -2983,6 +2969,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
+              </div>
+            </div>
+            <div class="cfg-sep" id="rating-badges-fields" style="display:none;">
+              <span class="group-title">Rating Badges</span>
+              <div class="field">
+                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating). The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove.">Sites</label>
+                <input type="hidden" id="cfg-rating-badges" value="" data-default="">
+                <div class="sash-list lp-list" id="rating-badges-list"></div>
+              </div>
+              <div class="field" id="rating-badge-scale-field" style="display:none;">
+                <label class="field-label" data-tip="Each site's own scale is what the site itself shows — IMDb 7.8, Rotten Tomatoes 92%, Letterboxd 3.9. P+ scale puts every score on the weighted score's scale instead, following this mode's Out of 10 switch.">Badge Scores</label>
+                <select id="cfg-rating-badge-scale" onchange="build(); queuePreviewReload()">
+                  <option value="native" selected>Each site's own scale</option>
+                  <option value="normalized">P+ scale</option>
+                </select>
               </div>
             </div>
           </div>        </div>

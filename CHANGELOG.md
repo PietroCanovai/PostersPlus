@@ -16,12 +16,12 @@
 
 ### Rating badges
 
-- New Rating Badges list in the Rating tab (`rating_badges=imdb,tomatoes`):
+- New Rating Badges list at the bottom of the Rating tab (`rating_badges=imdb,tomatoes`):
   each chosen site's own score behind its logo, in place of the ★ and the
   weighted score. Clean puts them after the genre, Minimalist before each
-  score, and the Bar spreads them across its whole width in place of the
-  label, RPDB-style (with a label that shows the rating). The Rating Bar has
-  no printed score and doesn't draw them.
+  score, and the Bar after its year and genre (with a label that shows the
+  rating). The rest of the label keeps its room and the badges fill what is
+  left. The Rating Bar has no printed score and doesn't draw them.
 - IMDb, Rotten Tomatoes (fresh or rotten), Popcornmeter (upright or spilled),
   Metacritic, Metacritic User, Letterboxd, Trakt, TMDB, Roger Ebert,
   MyAnimeList, AniList and Kitsu. Only as many as fit are drawn, in list order,

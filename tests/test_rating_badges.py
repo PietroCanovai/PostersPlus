@@ -189,11 +189,16 @@ class RenderTests(_AssetDir):
                 self.assertEqual(self.red(plain), 0)
                 self.assertGreater(self.red(badged), 0)
 
-    def test_the_bar_spreads_them_across_its_width(self):
-        im = self.render(rating_display_mode=4, rating_badges="imdb,tomatoes,popcorn")
-        cols = np.flatnonzero(((im[..., 0] > 190) & (im[..., 1] < 80) & (im[..., 2] < 60)).any(axis=0))
-        self.assertLess(cols[0], 150)
-        self.assertGreater(cols[-1], 350)
+    def test_the_bar_keeps_its_label_and_badges_take_the_rest(self):
+        badges = "imdb,tomatoes,popcorn,letterboxd,trakt,tmdb"
+        with_label = self.render(rating_display_mode=4, rating_badges=badges)
+        bare = self.render(rating_display_mode=4, rating_badges=badges, hide_year=True, hide_genre=True)
+        # Fewer fit beside "2024 · Drama · " than on a bar with nothing else.
+        self.assertGreater(self.red(with_label), 0)
+        self.assertGreater(self.red(bare), self.red(with_label))
+        # ...and they follow the label rather than starting at the left edge.
+        cols = np.flatnonzero(((with_label[..., 0] > 190) & (with_label[..., 1] < 80)).any(axis=0))
+        self.assertGreater(cols[0], 150)
 
     def test_no_chosen_score_keeps_the_weighted_one(self):
         for mode in (2, 3, 4):

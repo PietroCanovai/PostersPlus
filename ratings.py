@@ -660,7 +660,7 @@ def draw_frosted_bar(
     comes from the actual poster region — only the colour cast is forced).
     center_run, when given, is called as center_run(font_size, measure, budget)
     for a list of rating_badges runs, spread evenly across the bar in place of
-    center_text.
+    center_text (one run is centred).
     """
     import os, colorsys as _cs
 

@@ -4428,19 +4428,19 @@ def _build_poster(
                 _parts = [genre_label or "", translate_sash(_bar_sash, cfg.logo_language) if _bar_sash else ""]
             _parts = [p for p in _parts if p]
             _sep = "  ·  " if len(_parts) <= 2 else " · "
-            # Rating badges take the whole bar, RPDB-style: one entry per
-            # provider, spread across it, in place of the label.  Only where
+            # Rating badges take the "★ score" part's place, after the rest
+            # of the label: the year and genre keep their room and the badges
+            # get what is left (Hide Year / Hide Genre make more).  Only where
             # the label would have carried the score.
             _bar_run = None
             if _rb_items and cfg.bar_append in ("rating_year", "rating"):
+                _lead_parts = [p for p in _parts if not p.startswith("★ ")]
+                _lead_sep = "  ·  " if len(_lead_parts) + 1 <= 2 else " · "
+
                 def _bar_run(font_size, measure, budget):
-                    runs = [rating_badges.rating_run([item], font_size, cfg.rating_badge_scale,
-                                                     cfg.bar_score_out_of_10) for item in _rb_items]
-                    gap = font_size * rating_badges._ENTRY_GAP
-                    n = len(runs)
-                    while n > 1 and sum(rating_badges.run_width(r, measure) for r in runs[:n]) + (n - 1) * gap > budget:
-                        n -= 1
-                    return runs[:n]
+                    lead = [("text", p + _lead_sep) for p in _lead_parts]
+                    return [lead + _rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
+                                           rating_badges.run_width(lead, measure))]
             image = draw_frosted_bar(
                 image,
                 left_text   = "",
@@ -6292,6 +6292,13 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
             _anime_sources_wanted(cfg, (cfg.movie_weights, cfg.tv_weights,
                                         cfg.anime_movie_weights, cfg.anime_tv_weights))
             or "myanimelist" in cfg.rating_badges.split(",")),
+        stale=lambda cfg, facts: True,
+    ),    # 8: The Bar puts rating badges after its year and genre again, in the
+    #    room those leave, instead of spreading them across the whole bar.
+    _RenderRevision(
+        rev=8,
+        applies=lambda cfg: (cfg.shape != "landscape" and cfg.rating_display_mode == 4
+                             and bool(cfg.rating_badges)),
         stale=lambda cfg, facts: True,
     ),
 )

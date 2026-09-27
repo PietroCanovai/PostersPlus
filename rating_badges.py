@@ -3,7 +3,7 @@ in place of the ★ and the single weighted score (rating_badges=imdb,tomatoes).
 
 Drawn by three of the rating display modes — Clean (the badges replace the
 star), Minimalist (small icons before each score) and the frosted Bar
-(spread across it in place of its label, RPDB-style) — and not by the Rating
+(after its year and genre, in the room they leave) — and not by the Rating
 Bar, whose score is the bar itself.
 
 Nothing trademarked ships in the repo.  Each mark is fetched once, pinned by
