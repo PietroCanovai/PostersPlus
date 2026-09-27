@@ -1580,6 +1580,9 @@ class RequestConfig:
     # score's scale, following the mode's out-of-10 switch.
     rating_badges:           str   = ""
     rating_badge_scale:      str   = "native"
+    # "color": each site's own colours.  "mono": every badge in the text
+    # colour beside it, so a tinted vignette or light bar can't clash.
+    rating_badge_style:      str   = "color"
 
     logo_max_w_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
@@ -2046,7 +2049,8 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
     return json.dumps(fields, sort_keys=True, default=_stable)
 
 
-_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native"}
+_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
+                              "rating_badge_style": "color"}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2280,6 +2284,9 @@ def build_request_config(params: dict) -> RequestConfig:
     _rbs = (params.get("rating_badge_scale") or "").strip().lower()
     if _rbs in rating_badges.SCALES:
         cfg.rating_badge_scale = _rbs
+    _rbst = (params.get("rating_badge_style") or "").strip().lower()
+    if _rbst in rating_badges.STYLES:
+        cfg.rating_badge_style = _rbst
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -4080,7 +4087,8 @@ def _build_poster(
         in *budget* beside *lead* px of other text."""
         n = len(_rb_items)
         while True:
-            run = rating_badges.rating_run(_rb_items[:n], font_size, cfg.rating_badge_scale, out_of_10)
+            run = rating_badges.rating_run(_rb_items[:n], font_size, cfg.rating_badge_scale, out_of_10,
+                                           cfg.rating_badge_style)
             if n <= 1 or lead + rating_badges.run_width(run, measure) <= budget:
                 return run
             n -= 1
@@ -4444,7 +4452,8 @@ def _build_poster(
                         # One run per badge, as many as fit with at least the
                         # usual gap between them; draw_frosted_bar spaces them.
                         runs = [rating_badges.rating_run([item], font_size, cfg.rating_badge_scale,
-                                                         cfg.bar_score_out_of_10) for item in _rb_items]
+                                                         cfg.bar_score_out_of_10, cfg.rating_badge_style)
+                                for item in _rb_items]
                         gap = font_size * rating_badges._ENTRY_GAP
                         n = len(runs)
                         while n > 1 and (sum(rating_badges.run_width(r, measure) for r in runs[:n])
@@ -9166,7 +9175,7 @@ async def get_poster(
                 and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
             _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, rcfg.rating_badges)]
             if _rb_shown:
-                _rating_badges_missing = not await rating_badges.ensure_assets(client, _rb_shown)
+                _rating_badges_missing = not await rating_badges.ensure_assets(client, _rb_shown, rcfg.rating_badge_style)
                 _bp_args["ratings"] = ratings_dict
 
         def _composite_and_encode() -> bytes:

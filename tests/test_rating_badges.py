@@ -163,6 +163,37 @@ class RunTests(_AssetDir):
         self.assertEqual(run, [("text", "8.4")])
 
 
+class MonoTests(_AssetDir):
+    def test_style_parses(self):
+        self.assertEqual(main.build_request_config({"rating_badge_style": "MONO"}).rating_badge_style, "mono")
+        self.assertEqual(main.build_request_config({"rating_badge_style": "x"}).rating_badge_style, "color")
+
+    def test_mono_fetches_the_lettered_tomato_instead(self):
+        self.assertEqual(rb._keys_for(["tomatoes"], "mono"), {"rt_lettered", "rt_rotten"})
+        self.assertEqual(rb._keys_for(["tomatoes"]), {"rt_fresh", "rt_rotten"})
+
+    def test_a_plated_mark_is_cut_out_of_a_white_disc(self):
+        self.install_marks()
+        a = np.asarray(rb._mark_rgba("imdb", True))
+        self.assertTrue((a[..., :3][a[..., 3] > 0] == 255).all())
+        h = a.shape[0]
+        self.assertEqual(int(a[h // 2, h // 2, 3]), 0)          # the logo is a hole
+        self.assertEqual(int(a[h // 2, 6, 3]), 255)             # the rim is solid
+
+    def test_mono_badges_take_the_text_colour(self):
+        from PIL import ImageDraw, ImageFont
+        self.install_marks()
+        run = rb.rating_run([("imdb", 8.4)], 30, "native", False, "mono")
+        self.assertEqual(run[0][0], "mono")
+        im = Image.new("RGBA", (200, 60), (0, 0, 0, 255))
+        font = ImageFont.truetype("fonts/Inter-Bold.ttf", 30)
+        rb.draw_run(im, ImageDraw.Draw(im), run, 5, 10, font, (20, 200, 40, 255), font.getlength)
+        badge = np.asarray(im)[:, 5:5 + run[0][1].width]
+        solid = badge[..., 1] > 150
+        self.assertTrue(solid.any())
+        self.assertTrue((badge[solid][:, 0] < 60).all())       # green, not white
+
+
 class RenderTests(_AssetDir):
     def setUp(self):
         super().setUp()

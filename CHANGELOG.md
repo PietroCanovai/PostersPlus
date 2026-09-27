@@ -26,6 +26,9 @@
   Metacritic, Metacritic User, Letterboxd, Trakt, TMDB, Roger Ebert,
   MyAnimeList, AniList and Kitsu. Only as many as fit are drawn, in list order,
   and titles missing all of them keep the weighted score.
+- Badge Style Mono (`rating_badge_style=mono`) draws every badge in the
+  text's colour, as a solid shape with the logo cut out, for tinted
+  vignettes a coloured logo would clash with.
 - Scores print on each site's own scale (7.8, 92%, 3.9) or, with Badge Scores
   set to P+ scale (`rating_badge_scale=normalized`), on the weighted score's.
 - The badges are round (IMDb, TMDB, Letterboxd, Trakt, MyAnimeList, AniList,

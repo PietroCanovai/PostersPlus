@@ -2985,6 +2985,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="normalized">P+ scale</option>
                 </select>
               </div>
+              <div class="field" id="rating-badge-style-field" style="display:none;">
+                <label class="field-label" data-tip="Colour draws each site's logo in its own colours. Mono draws every badge in the colour of the text beside it — white on dark art, dark on a light frosted Bar — as a solid shape with the logo cut out, so a tinted vignette can't clash with a logo.">Badge Style</label>
+                <select id="cfg-rating-badge-style" onchange="build(); queuePreviewReload()">
+                  <option value="color" selected>Colour</option>
+                  <option value="mono">Mono</option>
+                </select>
+              </div>
             </div>
           </div>        </div>
 
@@ -6039,6 +6046,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (ratingMode !== 1 && vEl('cfg-rating-badges')) {
       params.set('rating_badges', vEl('cfg-rating-badges'));
       if (vEl('cfg-rating-badge-scale') === 'normalized') params.set('rating_badge_scale', 'normalized');
+      if (vEl('cfg-rating-badge-style') === 'mono') params.set('rating_badge_style', 'mono');
     }
     const _usesCustomPalette =
       ((ratingMode === 1 || ratingMode === 3) && ni('cfg-score-color-mode') === 3) ||
@@ -7459,6 +7467,7 @@ function updateRatingFields() {
   document.getElementById('bar-score10-row').style.display          = (mode === 4 && !hideRating) ? '' : 'none';
   document.getElementById('rating-badges-fields').style.display     = (mode >= 2 && !hideRating) ? '' : 'none';
   document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
+  document.getElementById('rating-badge-style-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
   document.getElementById('landscape-star-row').style.display       = hideRating ? 'none' : '';
   _updateMinimalistRows();
@@ -8070,6 +8079,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('rating_badges') || p.has('rating_display_mode')) {
     _setEl('cfg-rating-badges', ratingBadgeSources(p.get('rating_badges') || '').join(','));
     _setEl('cfg-rating-badge-scale', p.get('rating_badge_scale') === 'normalized' ? 'normalized' : 'native');
+    _setEl('cfg-rating-badge-style', p.get('rating_badge_style') === 'mono' ? 'mono' : 'color');
     buildRatingBadgeList();
   }
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }

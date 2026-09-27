@@ -51,6 +51,10 @@ PROVIDERS = (
 _MAX_BADGES = 6
 
 SCALES = ("native", "normalized")
+# "color" draws each site's own colours; "mono" draws every badge in the text
+# colour beside it (a solid shape with the logo cut out), so a tinted vignette
+# or a light frosted bar can't clash with a logo's colours.
+STYLES = ("color", "mono")
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,9 @@ def _commons(title: str, sha1: str) -> _Source:
 _FILES = {
     "imdb":        _commons("IMDB Logo 2016.svg",                    "0a1b5cd02f8aecdf4b9bbf1bda2950487e5c29c0"),
     "rt_fresh":    _commons("Rotten Tomatoes.svg",                   "5099a1d8f0dccfa0584f25387d08ecc1434cb375"),
+    # Mono only: the tomato with "RT" on it, so the letters can be cut out
+    # and a fresh tomato still reads as Rotten Tomatoes in one colour.
+    "rt_lettered": _commons("Rotten Tomatoes alternative logo.svg",  "bcadeaaf2bd2b4f1421cbf5b1e8fe318e17856d0"),
     "rt_rotten":   _commons("Rotten Tomatoes rotten.svg",            "4b2867d30f31941105f80f544acf1e283946e4e8"),
     "rt_upright":  _commons("Rotten Tomatoes positive audience.svg", "63bbcf6deb1bf8ec8268052e1cc41681794fed93"),
     "rt_spilled":  _commons("Rotten Tomatoes negative audience.svg", "83ecbf269edf953837f6c930af510043e42e3964"),
@@ -91,10 +98,12 @@ _FILES = {
 _RT_FRESH = 60
 
 
-def _mark_key(provider: str, value) -> str | None:
+def _mark_key(provider: str, value, mono: bool = False) -> str | None:
     """The file a provider's badge is drawn from, for this score."""
     if provider == "tomatoes":
-        return "rt_fresh" if value >= _RT_FRESH else "rt_rotten"
+        if value >= _RT_FRESH:
+            return "rt_lettered" if mono else "rt_fresh"
+        return "rt_rotten"
     if provider == "popcorn":
         return "rt_upright" if value >= _RT_FRESH else "rt_spilled"
     if provider in ("metacritic", "metacriticuser"):
@@ -109,11 +118,11 @@ def _asset_path(key: str) -> str:
     return os.path.join(ASSET_DIR, f"{f.sha1}{f.ext}")
 
 
-def _keys_for(providers) -> set[str]:
+def _keys_for(providers, style: str = "color") -> set[str]:
     keys: set[str] = set()
     for p in providers:
         if p == "tomatoes":
-            keys |= {"rt_fresh", "rt_rotten"}
+            keys |= {"rt_lettered" if style == "mono" else "rt_fresh", "rt_rotten"}
         elif p == "popcorn":
             keys |= {"rt_upright", "rt_spilled"}
         else:
@@ -121,8 +130,8 @@ def _keys_for(providers) -> set[str]:
     return keys
 
 
-def assets_ready(providers) -> bool:
-    return all(os.path.exists(_asset_path(k)) for k in _keys_for(providers))
+def assets_ready(providers, style: str = "color") -> bool:
+    return all(os.path.exists(_asset_path(k)) for k in _keys_for(providers, style))
 
 
 _fetch_lock = asyncio.Lock()
@@ -132,16 +141,16 @@ _RETRY_AFTER = 600.0
 _failed_at: dict[str, float] = {}
 
 
-async def ensure_assets(client, providers) -> bool:
+async def ensure_assets(client, providers, style: str = "color") -> bool:
     """Download any missing mark the request's providers draw.  Cheap once
     they are on disk; a failed download leaves that badge out rather than
     failing the render.  True when every mark they need is on disk."""
-    if assets_ready(providers):
+    if assets_ready(providers, style):
         return True
     async with _fetch_lock:
         os.makedirs(ASSET_DIR, exist_ok=True)
         fetched = False
-        for key in sorted(_keys_for(providers)):
+        for key in sorted(_keys_for(providers, style)):
             path = _asset_path(key)
             if os.path.exists(path) or time.monotonic() - _failed_at.get(key, -_RETRY_AFTER) < _RETRY_AFTER:
                 continue
@@ -169,7 +178,7 @@ async def ensure_assets(client, providers) -> bool:
         if fetched:
             _mark_rgba.cache_clear()
             badge.cache_clear()
-    return assets_ready(providers)
+    return assets_ready(providers, style)
 
 
 # ---------------------------------------------------------------------------
@@ -260,15 +269,44 @@ def _white_ink(im: Image.Image) -> Image.Image:
     return Image.fromarray(np.ascontiguousarray(_crop(np.asarray(out))))
 
 
-def _on_plate(plate: Image.Image, mark: Image.Image, fit: float, dy: float = 0.0) -> Image.Image:
+def _on_plate(plate: Image.Image, mark: Image.Image, fit: float, dy: float = 0.0,
+              mono: bool = False) -> Image.Image:
     """*mark* centred on *plate*, scaled so its diagonal is *fit* of the
     plate's width: a wide wordmark and a squat monogram then keep the same
-    clearance from a circle's edge, which a width rule would not."""
+    clearance from a circle's edge, which a width rule would not.
+
+    *mono* cuts the mark out of a white plate instead, so whatever is behind
+    the badge shows through the lettering."""
     scale = fit * plate.width / float(np.hypot(*mark.size))
     m = mark.resize((max(1, round(mark.width * scale)), max(1, round(mark.height * scale))),
                     Image.Resampling.LANCZOS)
+    at = ((plate.width - m.width) // 2, round((plate.height - m.height) / 2 + dy * plate.height))
+    if mono:
+        cut = Image.new("L", plate.size, 0)
+        cut.paste(m.getchannel("A"), at)
+        alpha = (np.asarray(plate.getchannel("A"), np.float32)
+                 * (1 - np.asarray(cut, np.float32) / 255))
+        out = Image.new("RGBA", plate.size, (255, 255, 255, 0))
+        out.putalpha(Image.fromarray(alpha.astype(np.uint8)))
+        return out
     out = plate.copy()
-    out.alpha_composite(m, ((out.width - m.width) // 2, round((out.height - m.height) / 2 + dy * out.height)))
+    out.alpha_composite(m, at)
+    return out
+
+
+def _silhouette(im: Image.Image, knock: str | None = None) -> Image.Image:
+    """A white mark in *im*'s shape.  *knock* cuts out its near-white
+    ("white") or near-black ("dark") parts, which carry a mark's detail:
+    the lettering on a tomato, the stripes of a bucket, the disc behind
+    Metacritic's "m"."""
+    a = np.asarray(im.convert("RGBA")).astype(np.float32)
+    alpha = a[..., 3].copy()
+    if knock == "white":
+        alpha *= np.clip((230 - a[..., :3].min(axis=-1)) / 40, 0, 1)
+    elif knock == "dark":
+        alpha *= np.clip((a[..., :3].max(axis=-1) - 50) / 40, 0, 1)
+    out = Image.new("RGBA", im.size, (255, 255, 255, 0))
+    out.putalpha(Image.fromarray(alpha.astype(np.uint8)))
     return out
 
 
@@ -280,9 +318,17 @@ _EBERT_BODY  = (30, 30, 34)
 _EBERT_GOLD  = (212, 175, 55)
 
 
+_WHITE = (255, 255, 255)
+
+# What a mono badge cuts out of the marks that aren't set on a plate.
+_MONO_KNOCK = {"rt_lettered": "white", "rt_upright": "white", "rt_spilled": "white",
+               "metacritic": "dark"}
+
+
 @lru_cache(maxsize=None)
-def _mark_rgba(key: str) -> Image.Image | None:
-    """A badge's mark at _WORK_H, or None when its file isn't on disk."""
+def _mark_rgba(key: str, mono: bool = False) -> Image.Image | None:
+    """A badge's mark at _WORK_H, or None when its file isn't on disk.  A
+    mono mark is white, for draw_run to tint."""
     path = _asset_path(key)
     if not os.path.exists(path):
         return None
@@ -295,18 +341,28 @@ def _mark_rgba(key: str) -> Image.Image | None:
             dark = (a[..., :3].sum(axis=-1) < 200) & (a[..., 3] > 128)
             letters = Image.fromarray(np.where(dark, 255, 0).astype(np.uint8))
             if dark.sum() < 20:
-                return _on_plate(_plate(_IMDB_YELLOW), box, 0.72)
+                return _on_plate(_plate(_IMDB_YELLOW), box, 0.72, mono=mono)
             mark = Image.new("RGBA", box.size, (0, 0, 0, 0))
             mark.putalpha(letters)
-            return _on_plate(_plate(_IMDB_YELLOW), Image.fromarray(_crop(np.asarray(mark))), 0.66)
+            return _on_plate(_plate(_IMDB_YELLOW), Image.fromarray(_crop(np.asarray(mark))), 0.66, mono=mono)
         if key == "tmdb":
-            return _on_plate(_plate(_TMDB_NAVY), _svg_image(path), 0.72)
+            return _on_plate(_plate(_TMDB_NAVY), _svg_image(path), 0.72, mono=mono)
         if key == "letterboxd":
             # The three dots, without the wordmark set under them.
             a = _svg_rgba(path, _WORK_H * 3)
             top = _runs(a[..., 3].max(axis=1) > 8)[0]
             dots = Image.fromarray(np.ascontiguousarray(_crop(a[top[0]:top[1]])))
-            return _on_plate(_plate(_LB_SLATE), dots, 0.78)
+            if mono:
+                # Its dots overlap, so cut out together they run into one
+                # shape; three apart, a little smaller, still read as them.
+                h = dots.height * _SS
+                row = Image.new("RGBA", (round(h * 3.3), h), (0, 0, 0, 0))
+                d = ImageDraw.Draw(row)
+                for i in range(3):
+                    cx, r = h / 2 + i * h * 1.15, h * 0.46
+                    d.ellipse((cx - r, h / 2 - r, cx + r, h / 2 + r), fill=(255, 255, 255, 255))
+                dots = row.resize((row.width // _SS, dots.height), Image.Resampling.LANCZOS)
+            return _on_plate(_plate(_LB_SLATE), dots, 0.78, mono=mono)
         if key == "trakt":
             # Its white glyph on a disc shaded like the icon's own plate,
             # whose colours are read off two of its corners.
@@ -316,15 +372,18 @@ def _mark_rgba(key: str) -> Image.Image | None:
             c0 = tuple(int(c) for c in a[-inset, inset, :3])
             c1 = tuple(int(c) for c in a[inset, -inset, :3])
             glyph = _white_ink(icon)
-            return _on_plate(_gradient_disc(c0, c1), glyph if glyph.width >= 4 else icon, 0.72)
+            return _on_plate(_gradient_disc(c0, c1), glyph if glyph.width >= 4 else icon, 0.72, mono=mono)
         if key == "kitsu":
-            return _on_plate(_plate(_KITSU_RGB), _tint(_svg_image(path), (255, 255, 255)), 0.74)
+            return _on_plate(_plate(_KITSU_RGB), _tint(_svg_image(path), _WHITE), 0.74, mono=mono)
         if key == "thumb_up":
-            return _on_plate(_plate(_EBERT_BODY, ring=_EBERT_GOLD),
-                             _tint(_svg_image(path), _EBERT_GOLD), 0.66, dy=-0.01)
+            # Mono drops the gold ring: one colour has no ring to draw.
+            return _on_plate(_plate(_WHITE) if mono else _plate(_EBERT_BODY, ring=_EBERT_GOLD),
+                             _tint(_svg_image(path), _EBERT_GOLD), 0.66, dy=-0.01, mono=mono)
         if key in ("myanimelist", "anilist"):
             plate, ink = _plate_ink(_svg_image(path))
-            return _on_plate(_plate(plate), ink, 0.76)
+            return _on_plate(_plate(plate), ink, 0.76, mono=mono)
+        if mono:
+            return _silhouette(_svg_image(path), _MONO_KNOCK.get(key))
         return _svg_image(path)
     except Exception as exc:
         logger.error(f"Rating badges: {key} mark failed: {exc}")
@@ -347,10 +406,10 @@ def _size(w: int, h: int, row_h: int) -> tuple[int, int]:
 
 
 @lru_cache(maxsize=256)
-def badge(provider: str, fresh: bool, row_h: int) -> Image.Image | None:
+def badge(provider: str, fresh: bool, row_h: int, mono: bool = False) -> Image.Image | None:
     """The badge for *provider* in a row *row_h* tall; *fresh* picks the
     Tomatometer / Popcornmeter state.  None when its mark isn't on disk."""
-    src = _mark_rgba(_mark_key(provider, _RT_FRESH if fresh else 0))
+    src = _mark_rgba(_mark_key(provider, _RT_FRESH if fresh else 0, mono), mono)
     if src is None:
         return None
     return src.resize(_size(src.width, src.height, row_h), Image.Resampling.LANCZOS)
@@ -423,17 +482,19 @@ _ENTRY_GAP   = 0.55   # one score → the next badge, of the font size
 
 
 def rating_run(items: list[tuple[str, float]], font_size: float, scale: str,
-               out_of_10: bool) -> list[tuple]:
+               out_of_10: bool, style: str = "color") -> list[tuple]:
     """The pieces for *items*.  A badge whose mark isn't on disk falls back
-    to the provider's score alone rather than dropping the score."""
+    to the provider's score alone rather than dropping the score.  A mono
+    badge is a ("mono", white mark) piece, drawn in the text's colour."""
+    mono = style == "mono"
     row_h = max(4, round(font_size * _BADGE_ROW))
     run: list[tuple] = []
     for i, (provider, value) in enumerate(items):
         if i:
             run.append(("gap", font_size * _ENTRY_GAP))
-        im = badge(provider, value >= _RT_FRESH, row_h)
+        im = badge(provider, value >= _RT_FRESH, row_h, mono)
         if im is not None:
-            run += [("badge", im), ("gap", font_size * _SCORE_GAP)]
+            run += [("mono" if mono else "badge", im), ("gap", font_size * _SCORE_GAP)]
         run.append(("text", score_text(provider, value, scale, out_of_10)))
     return run
 
@@ -442,21 +503,28 @@ def run_width(run: list[tuple], measure) -> float:
     """Width of *run*, with *measure(text)* the width of a text piece."""
     total = 0.0
     for kind, v in run:
-        total += measure(v) if kind == "text" else v.width if kind == "badge" else v
+        total += measure(v) if kind == "text" else v.width if kind in ("badge", "mono") else v
     return total
 
 
 def draw_run(image: Image.Image, draw: ImageDraw.ImageDraw, run: list[tuple], x: float,
              y: float, font, fill, measure) -> float:
     """Draw *run* with its text's top at *y* (as ImageDraw.text takes it) and
-    every badge centred on the digits.  Returns the x it ended at."""
+    every badge centred on the digits; a mono badge takes *fill*.  Returns
+    the x it ended at."""
     l, t, r, b = font.getbbox("0")
     digit_cy = y + (t + b) / 2
     for kind, v in run:
         if kind == "text":
             draw.text((round(x), y), v, font=font, fill=fill)
             x += measure(v)
-        elif kind == "badge":
+        elif kind in ("badge", "mono"):
+            if kind == "mono":
+                ink = tuple(fill) + (255,) * (4 - len(fill))
+                tinted = Image.new("RGBA", v.size, ink[:3] + (0,))
+                tinted.putalpha(Image.fromarray(
+                    (np.asarray(v.getchannel("A"), np.float32) * ink[3] / 255).astype(np.uint8)))
+                v = tinted
             image.alpha_composite(v, (round(x), round(digit_cy - v.height / 2)))
             x += v.width
         else:

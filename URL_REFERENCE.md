@@ -214,6 +214,7 @@ The source lists are what MDBList actually returns for anime. Anime films carry 
 - A site the title has no score from is skipped. A title with a score from none of them keeps the weighted score.
 - Only as many as fit on the line are drawn, first ones first. The rest of the label keeps its room and the badges get what is left: Clean's large type usually fits one or two beside the genre, and the Bar two or three after the year and genre (more with Hide Year or Hide Genre). With nothing else on the Bar, the badges are spread evenly across it.
 - Rotten Tomatoes shows a fresh tomato or a splat, and the Popcornmeter an upright or spilled bucket, split at 60% as on the site. Roger Ebert, which publishes no logo, is a thumbs-up.
+- `rating_badge_style=mono` draws every badge in the colour of the text beside it, as a solid shape with the logo cut out (Rotten Tomatoes as a tomato with "RT" cut out of it), so a tinted vignette can't clash with a logo's colours. The default `color` keeps each site's own.
 - `rating_badge_scale=native` (default) prints each score the way the site does (`7.8`, `92%`, `3.9`). `normalized` puts them on the weighted score's scale, following the mode's out-of-10 switch.
 - The Rating Bar (`1`), Minimalist's Year layout and the Bar's year-only or sash labels (`bar_append=year` / `sash`) print no score, so they draw no badges. Neither does landscape, nor a hidden rating.
 
