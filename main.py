@@ -4781,7 +4781,8 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                               frost_opacity=cfg.trending_frost_opacity,
                                               frost_saturation=cfg.trending_frost_saturation,
                                               frost_reference=frost[1],
-                                              text_color=cfg.sash_text_color)
+                                              text_color=cfg.sash_text_color,
+                                              top_inset=round(image.height * cfg.sash_badge_inset))
     max_w = None
     if before is not None:
         w = image.width

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Client insets, and controls beside their labels
+
+- The trending ribbon takes the Primary Client's top inset, like the notch:
+  on Stremio Desktop/Web it grows upwards by that much, so the client's crop
+  of the top edge no longer cuts into it.
+- The configurator's bar and notch inset sliders are gone; the Primary
+  Client sets both. `bar_bottom_inset` and `sash_badge_inset` still work in
+  a URL, and the configurator keeps them when it imports one.
+- Sliders and dropdowns sit on the same line as their label.
+
 ### Code review fixes (27 Sep 2026)
 
 - Badge logos: a re-uploaded file on Wikimedia Commons no longer loses its

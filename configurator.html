@@ -584,6 +584,31 @@
     text-transform: uppercase;
   }
 
+  /* A slider or dropdown shares its label's line, so a panel of them reads
+     as a list of names down the left rather than label/control pairs.  Not
+     inside a .field-row, whose two half-width columns are too narrow to
+     split again.  Anything else in the field (a hint, a preview) takes the
+     full width under both. */
+  .field:not(.field-row > .field):has(> .field-label + .range-row),
+  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    column-gap: 14px;
+    align-items: center;
+  }
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label,
+  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > .field-label {
+    margin-bottom: 0;
+  }
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > :not(.field-label, .range-row),
+  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > :not(.field-label, select) {
+    grid-column: 1 / -1;
+  }
+  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > select {
+    padding-block: 7px;
+    text-overflow: ellipsis;
+  }
+
   /* --text-muted sits near 2:1 on the panel fill — unreadable at this size.
      Still used by the other tabs and the callout until they are converted. */
   .field-hint {
@@ -1960,6 +1985,11 @@
       margin-top: -11px;
       margin-bottom: calc(var(--gap-label) - 11px);
     }
+    /* Beside its control there is no gap below to keep: cancel both sides. */
+    .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label[data-tip],
+    .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > .field-label[data-tip] {
+      margin-block: -11px;
+    }
     .group-title[data-tip] {
       padding-block: 8px;
       margin-top: -8px;
@@ -2323,7 +2353,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
             <div class="field">
-              <label class="field-label" data-tip="Sets recommended bar and notch insets for your client. Both stay adjustable.">Primary Client</label>
+              <label class="field-label" data-tip="Nudges anything drawn on the top or bottom edge (bar, notch, ribbon) clear of the edge your client's poster grid crops.">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Nuvio TV, Stremio TV, Plex, Jellyfin</option>
                 <option value="stremio_desktop_web">Nuvio Desktop, Nuvio HTPC, Stremio Desktop</option>
@@ -2870,13 +2900,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <span class="range-val" id="rng-bsat">1.20</span>
                   </div>
                 </div>
-                <div class="field">
-                  <label class="field-label">Inset from Bottom</label>
-                  <div class="range-row">
-                    <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-bi5">0.000</span>
-                  </div>
-                </div>
               </div>
             </div><!-- /rating-style-group -->
 
@@ -3274,13 +3297,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-pad" min="0.50" max="1.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-sbp'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbp">1.00</span>
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label" data-tip="Adjust as required for your client — this won't match the preview.">Inset</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbi">0.000</span>
                 </div>
               </div>
               <div class="field">
@@ -3936,19 +3952,15 @@ const ANIME_TV_SOURCES    = ['myanimelist','anilist','kitsu','trakt','tomatoes',
 const DEFAULT_ANIME_MOVIE_W = {myanimelist:0.6,anilist:0,kitsu:0,letterboxd:0.4,trakt:0,tomatoes:0,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,rogerebert:0};
 const DEFAULT_ANIME_TV_W    = {myanimelist:0.6,anilist:0,kitsu:0,trakt:0.4,tomatoes:0,popcorn:0,imdb:0,metacriticuser:0,tmdb:0,letterboxd:0};
 
-const CLIENT_INSETS = {
-  stremio_tv_nuvio:    { bar: 0.000, notch: 0.000 },
-  stremio_desktop_web: { bar: 0.007, notch: 0.004 },
-};
+// The edge insets themselves live on the server (_CLIENT_EDGE_INSETS), keyed
+// by primary_client.  An explicit bar_bottom_inset / sash_badge_inset in an
+// imported URL still wins there, so one is carried through unchanged until the
+// client is changed here.
+const PRIMARY_CLIENTS = new Set(['stremio_tv_nuvio', 'stremio_desktop_web']);
+let _legacyInsets = {};
 
 function onPrimaryClientChange({ rebuild = true } = {}) {
-  const profile = CLIENT_INSETS[vEl("cfg-primary-client")] || CLIENT_INSETS.stremio_desktop_web;
-  const bar = document.getElementById("cfg-bar-inset");
-  const notch = document.getElementById("cfg-sash-badge-inset");
-  bar.value = profile.bar.toFixed(3);
-  notch.value = profile.notch.toFixed(3);
-  updateRange(bar, "rng-bi5");
-  updateRange(notch, "rng-sbi");
+  _legacyInsets = {};
   saveApiKeys();
   if (rebuild) { build(); queuePreviewReload(); }
 }
@@ -5043,7 +5055,7 @@ function hydrateFromLocalStorage() {
   const lang = localStorage.getItem('postersplus_language');
   const client = localStorage.getItem('postersplus_primary_client');
   if (lang) document.getElementById('cfg-language').value = lang;
-  if (client && CLIENT_INSETS[client]) document.getElementById('cfg-primary-client').value = client;
+  if (client && PRIMARY_CLIENTS.has(client)) document.getElementById('cfg-primary-client').value = client;
   if (tmdb) document.getElementById('cfg-tmdb-key').value = tmdb;
   if (mdbl) document.getElementById('cfg-mdblist-key').value = mdbl;
   try {
@@ -5928,6 +5940,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (dualShape) params.set('shape', '{shape}');
   else if (landscape) params.set('shape', 'landscape');
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
+  for (const [k, v] of Object.entries(_legacyInsets)) params.set(k, v);
   if (accKey)         params.set('access_key',  accKey);
   // A client that has no "{tmdb_key}" / "{mdblist_key}" of its own would send
   // the placeholder verbatim, so it gets the key typed here instead.
@@ -6125,7 +6138,6 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
       params.set('bar_frost_saturation', n('cfg-bar-frost-sat').toFixed(2));
-      params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
     }
     // Rating badges: the Rating Bar has no printed score to put them on.
     if (ratingMode !== 1 && vEl('cfg-rating-badges')) {
@@ -6198,7 +6210,6 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
       params.set('sash_badge_size_h',        n('cfg-sash-badge-size-h').toFixed(2));
       params.set('sash_badge_pad',           n('cfg-sash-badge-pad').toFixed(2));
-      params.set('sash_badge_inset',         n('cfg-sash-badge-inset').toFixed(3));
       params.set('sash_badge_font_ratio',    n('cfg-sash-badge-font-ratio').toFixed(2));
       if (vEl('cfg-sash-badge-style') === 'frosted') {
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
@@ -7431,10 +7442,11 @@ function initSegmented() {
     const M   = 8;   // keep this far off every viewport edge
 
     // Left-aligned to the label rather than centred: .field-label is a
-    // full-width block, so centring on its box would ignore where the text is.
+    // block wider than its text, so centring on its box would ignore where
+    // the text is.
     let left = Math.max(M, Math.min(r.left, window.innerWidth - tr.width - M));
 
-    // ABOVE by default. The control this label names always sits directly
+    // ABOVE by default. The control this label names sits beside or directly
     // below it, so opening downwards would cover the thing being explained —
     // and, for a select, the dropdown it is about to show.
     let top = r.top - tr.height - 8;
@@ -7674,8 +7686,8 @@ const _INFO_TITLES = {
 // Preset system
 // ---------------------------------------------------------------------------
 // Each preset stores only the URL query params so it works with any server.
-// `loadPreset` preserves Core Config, the current title, and the two
-// client-specific inset sliders while applying the visual preset.
+// `loadPreset` preserves Core Config, the current title, and any client
+// inset an imported URL carried while applying the visual preset.
 
 const PRESETS = [
   {
@@ -8015,7 +8027,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // URL on the old one.
   if (!settingsOnly) {
     // ── Client ─────────────────────────────────────────────────────────────
-    if (p.has('primary_client') && CLIENT_INSETS[p.get('primary_client')]) {
+    if (p.has('primary_client') && PRIMARY_CLIENTS.has(p.get('primary_client'))) {
       _setEl('cfg-primary-client', p.get('primary_client'));
       onPrimaryClientChange({ rebuild: false });
     }
@@ -8167,7 +8179,6 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
-  if (!preserveClientInsets && p.has('sash_badge_inset')) _setEl('cfg-sash-badge-inset', p.get('sash_badge_inset'));
   if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
   if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
   if (p.has('sash_badge_frost_saturation')) _setEl('cfg-sash-badge-frost-sat', p.get('sash_badge_frost_saturation'));
@@ -8265,7 +8276,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   { const _ref = p.has('frost_reference') ? p.get('frost_reference') : 'false';
     _setEl('tog-bar-frost-reference', _ref); _setEl('tog-sash-frost-reference', _ref);
     updateBadgeStyleFields(); }  // refresh which saturation slider hides
-  if (!preserveClientInsets && p.has('bar_bottom_inset')) _setEl('cfg-bar-inset', p.get('bar_bottom_inset'));
+  if (!preserveClientInsets) {
+    _legacyInsets = {};
+    for (const k of ['bar_bottom_inset', 'sash_badge_inset'])
+      if (p.get(k)) _legacyInsets[k] = p.get(k);
+  }
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));

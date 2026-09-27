@@ -122,6 +122,23 @@ class RibbonOptionTests(unittest.TestCase):
         labelled = trending_rank.draw_rank_ribbon(_poster(), 3, label="SERIES")
         self.assertGreater(self._foot(labelled), self._foot(plain))
 
+    def test_top_inset_grows_the_ribbon_under_the_crop(self):
+        plain = trending_rank.draw_rank_ribbon(_poster(), 3)
+        grown = trending_rank.draw_rank_ribbon(_poster(), 3, top_inset=6)
+        self.assertEqual(self._foot(grown), self._foot(plain) + 6)
+        # Still hangs from the edge, and the rank moves down with the body.
+        self.assertGreater(np.asarray(grown)[0, :250, 3].max(), 200)
+        # The rank's first row of ink, across the middle of the ribbon (its
+        # sides carry a light hairline).
+        ink = lambda im: np.flatnonzero((np.asarray(im)[:, 50:75, :3].max(axis=2) > 150).any(axis=1))[0]
+        self.assertEqual(ink(grown), ink(plain) + 6)
+
+    def test_ribbon_takes_the_primary_clients_top_inset(self):
+        def foot(client):
+            cfg = main.build_request_config({"trending_style": "ribbon", "primary_client": client})
+            return self._foot(main._draw_trending_rank(_poster(), cfg, 3, None))
+        self.assertEqual(foot("stremio_desktop_web"), foot("stremio_tv_nuvio") + round(750 * 0.004))
+
     def test_long_label_stays_inside_the_ribbon(self):
         art = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
         out = np.asarray(trending_rank.draw_rank_ribbon(art, 3, label="MFULULIZO")).astype(int)

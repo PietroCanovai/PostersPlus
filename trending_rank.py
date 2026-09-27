@@ -186,7 +186,8 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
                      tint_rgb: tuple[float, float, float] | None = None,
                      frost_opacity: float = 0.75, frost_saturation: float = 1.2,
                      frost_reference: bool | str = False,
-                     text_color: tuple[int, int, int] | None = None) -> Image.Image:
+                     text_color: tuple[int, int, int] | None = None,
+                     top_inset: int = 0) -> Image.Image:
     """The rank on a ribbon hanging from the top edge, its foot cut into a
     notch: just in from the top-left (or top-right) corner, or with *corner*,
     nested right into it.
@@ -198,6 +199,10 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     colour sample (*tint_rgb*) and settings, silver and gold with their trim.
     *text_color* overrides the label colour except on frosted, which picks
     dark or light ink for its panel, as the notch does.
+    *top_inset* is the primary client's top-edge inset in pixels, the one
+    the notch takes: a client that crops the poster's top edge would cut into
+    the ribbon, so it grows upwards by that much, and still meets the edge
+    where nothing is cropped.  Negative raises it off the top instead.
     """
     if style not in RIBBON_STYLES:
         style = "charcoal"
@@ -208,22 +213,25 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     body_h = rib_w * (_RIB_BODY + (_RIB_LABEL_BAND if label else 0))
     notch = rib_w * _RIB_NOTCH
     pad = round(0.03 * w)                # room for the shadow's blur
+    grow, lift = max(0, top_inset), min(0, top_inset)
     inset = 0 if corner else _RIB_INSET * w
     rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
 
     S = _SS
-    lw, lh = round(rib_w + 2 * pad), round(body_h + pad)
+    lw, lh = round(rib_w + 2 * pad), round(grow + body_h + pad)
     layer = Image.new("RGBA", (lw * S, lh * S), (0, 0, 0, 0))
-    # Top edge flush with the poster's (layer row 0), so it hangs from it.
+    # Top edge flush with the poster's (layer row 0), so it hangs from it;
+    # the design proper starts *top* below it, under the client's crop.
     x0, x1 = pad * S, (pad + rib_w) * S
-    yb, yn = body_h * S, (body_h - notch) * S
+    top = grow * S
+    yb, yn = top + body_h * S, top + (body_h - notch) * S
     outline = [(x0, 0), (x1, 0), (x1, yb), ((x0 + x1) / 2, yn), (x0, yb)]
 
     tint = region = None
     if style == "frosted":
         from awards import _frosted_tint, dominant_frost_rgb
         src = image.convert("RGBA")
-        region = src.crop((rx, 0, rx + lw, lh)).filter(
+        region = src.crop((rx, lift, rx + lw, lift + lh)).filter(
             ImageFilter.GaussianBlur(max(2.0, 0.12 * rib_w)))
         tint = _frosted_tint(*(tint_rgb if tint_rgb is not None else dominant_frost_rgb(src)),
                              saturation=frost_saturation, reference=frost_reference)
@@ -289,15 +297,15 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
         font = _font(max(6, round(font.size * fit / (ink[2] - ink[0]))))
         ink = font.getbbox(text, anchor="ls")
     cx = cx_mid - (ink[0] + ink[2]) / 2
-    cy = num_bottom / 2 - (ink[1] + ink[3]) / 2 + (0.04 * rib_w * S if label else 0)
+    cy = (top + num_bottom) / 2 - (ink[1] + ink[3]) / 2 + (0.04 * rib_w * S if label else 0)
     draw.text((cx, cy), text, font=font, fill=(*ink_rgb, num_a), anchor="ls")
 
     ribbon = layer.reduce(S)
     shadow = _shadow(ribbon, 0.012 * w, 140)
 
     result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
-    _paste(result, shadow, rx + max(1, round(0.004 * w)), max(1, round(0.004 * w)))
-    _paste(result, ribbon, rx, 0)
+    _paste(result, shadow, rx + max(1, round(0.004 * w)), lift + max(1, round(0.004 * w)))
+    _paste(result, ribbon, rx, lift)
     return result.convert(image.mode) if image.mode != "RGBA" else result
 
 
