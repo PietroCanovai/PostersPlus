@@ -2663,7 +2663,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode1-fields">
                 <div class="field">
                   <label class="field-label" data-tip="What to append after the genre.">Label Suffix</label>
-                  <select id="cfg-bar-append" onchange="build(); queuePreviewReload()">
+                  <select id="cfg-bar-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Info sash</option>
                     <option value="2">Year + Info sash</option>
@@ -2741,7 +2741,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode3-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label" data-tip="If rating is not chosen, the separator colour gives an approximation of it.">Append</label>
-                  <select class="segmented-source" id="cfg-min-append" onchange="_updateMinimalistRows(); build(); queuePreviewReload()">
+                  <select class="segmented-source" id="cfg-min-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Rating</option>
                     <option value="2">Both</option>
@@ -2798,7 +2798,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode4-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label">Style</label>
-                  <select id="cfg-bar-style" onchange="_updateBarRatingRows(); build(); queuePreviewReload()">
+                  <select id="cfg-bar-style" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="frosted" selected>Frosted</option>
                     <option value="pure_black">Pure Black</option>
                     <option value="silver">Black, Silver Trim</option>
@@ -2821,7 +2821,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="field">
                   <label class="field-label">Append</label>
-                  <select id="cfg-bar4-append" onchange="build(); queuePreviewReload()">
+                  <select id="cfg-bar4-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="rating_year" selected>Rating and Year</option>
                     <option value="rating">Rating</option>
                     <option value="year">Year</option>
@@ -2905,7 +2905,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep">
+            <div class="cfg-sep" id="rating-labels-group">
               <span class="group-title">Labels</span>
               <div id="hide-genre-home"></div>
               <div class="toggle-row" id="hide-genre-row">
@@ -2919,7 +2919,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="toggle-row" id="hide-year-row">
                 <span class="toggle-label" data-tip="Removes the release year and its separator. Minimalist's Year mode shows the score as the colour of the separator before the year, so with the year hidden it prints the score instead.">Hide Year</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-hide-year" onchange="build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-hide-year" onchange="updateRatingFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -5434,6 +5434,7 @@ function _lpTouchEnd(e) {
 // control as Logo Priority, but it starts empty: every site is disabled until
 // added.  Mirrors PROVIDERS and parse_providers in rating_badges.py.
 const RATING_BADGE_SOURCES = [
+  { id: 'pplus',          label: 'Posters+', tip: 'The weighted score, from your Weights, under the Posters+ mark' },
   { id: 'imdb',           label: 'IMDb' },
   { id: 'tomatoes',       label: 'Rotten Tomatoes', tip: 'Tomatometer — a fresh tomato at 60% or more, a splat below' },
   { id: 'popcorn',        label: 'Popcornmeter',    tip: 'Rotten Tomatoes audience score — an upright bucket at 60% or more' },
@@ -7183,6 +7184,7 @@ function updateShapeFields() {
   // its change handler, so the rows it hides in the Rating tab are re-derived
   // on the way back in — otherwise they would still show landscape's answer.
   if (!landscape) updateRatingFields();
+  _updateLabelRows();
   document.getElementById('landscape-score10-row').style.display = c('tog-hide-rating') ? 'none' : '';
   document.getElementById('landscape-star-row').style.display    = c('tog-hide-rating') ? 'none' : '';
   // There is no diagonal sash or notch in landscape, only the badge: the mode
@@ -7448,6 +7450,47 @@ function _updateMinimalistRows() {
   if (rl) rl.textContent = named ? 'Year / Rating' : 'Separator';
 }
 
+// What each portrait mode's label actually carries, so the Labels switches
+// and the score-only controls show only where they change something.  Mirrors
+// the label building in main._build_poster.
+function _ratingLabelParts() {
+  const mode = parseInt(document.getElementById('cfg-rating-mode').value);
+  const minAppend = parseInt(vEl('cfg-min-append') || '0');
+  const barAppend = vEl('cfg-bar4-append') || 'rating_year';
+  const accentAppend = parseInt(vEl('cfg-bar-append') || '0');
+  const barStyle = vEl('cfg-bar-style') || '';
+  return {
+    genre: mode >= 1,
+    // Rating Bar: Year (0) / Year + Sash (2).  Minimalist: every layout but
+    // Rating (1).  Bar: the labels that name the year.  Clean never shows it.
+    year: (mode === 1 && accentAppend !== 1) || (mode === 3 && minAppend !== 1)
+          || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'year')),
+    // A printed score, or the Rating Bar / rating-fill Bar that draws one.
+    score: mode === 1 || mode === 2 || mode === 3
+           || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating'
+                              || barStyle === 'rating_frosted' || barStyle === 'rating_black')),
+    // Where rating badges can stand in for a printed score: Minimalist's Year
+    // layout prints none unless the year is hidden.
+    badges: mode === 2 || (mode === 3 && (minAppend !== 0 || c('tog-hide-year')))
+            || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating')),
+    barScore: mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating'),
+  };
+}
+
+// The Labels switches.  In landscape they are docked into the Landscape group,
+// whose renderer reads all of them, so they all show there.
+function _updateLabelRows() {
+  const landscape = c('tog-landscape');
+  const parts = _ratingLabelParts();
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = (landscape || on) ? '' : 'none'; };
+  show('hide-genre-row', parts.genre);
+  show('hide-year-row', parts.year);
+  show('hide-rating-row', parts.score);
+  show('hide-unreleased-rating-row', parts.score);
+  const group = document.getElementById('rating-labels-group');
+  if (group) group.style.display = parts.genre ? '' : 'none';
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   // Hide Rating takes the score out of whichever mode is drawing it, so every
@@ -7464,8 +7507,9 @@ function updateRatingFields() {
   document.getElementById('rating-alt-colors-toggle').style.display = ((mode === 1 || mode === 3) && !hideRating) ? '' : 'none';
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = (mode === 3 && !hideRating) ? '' : 'none';
-  document.getElementById('bar-score10-row').style.display          = (mode === 4 && !hideRating) ? '' : 'none';
-  document.getElementById('rating-badges-fields').style.display     = (mode >= 2 && !hideRating) ? '' : 'none';
+  const labelParts = _ratingLabelParts();
+  document.getElementById('bar-score10-row').style.display          = (labelParts.barScore && !hideRating) ? '' : 'none';
+  document.getElementById('rating-badges-fields').style.display     = (labelParts.badges && !hideRating) ? '' : 'none';
   document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('rating-badge-style-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
@@ -7476,6 +7520,7 @@ function updateRatingFields() {
   document.getElementById('rating-style-group').style.display       = mode === 0 ? 'none' : '';
   if (mode === 4) _updateBarRatingRows();
   updateCustomPaletteFields();
+  _updateLabelRows();
 }
 
 function _setAllRtc(val) {

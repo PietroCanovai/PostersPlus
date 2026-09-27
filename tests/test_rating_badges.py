@@ -119,6 +119,27 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(rb._mark_key("popcorn", 59), "rt_spilled")
 
 
+class PostersPlusTests(unittest.TestCase):
+    def test_the_weighted_score_is_offered_as_pplus(self):
+        self.assertEqual(rb.entries({"imdb": 8.4}, "pplus,imdb", 87), [("pplus", 87.0), ("imdb", 8.4)])
+        self.assertEqual(rb.entries({"imdb": 8.4}, "pplus,imdb", "N/A"), [("imdb", 8.4)])
+        self.assertEqual(rb.entries(None, "pplus", 87), [("pplus", 87.0)])
+
+    def test_it_prints_as_the_mode_prints_the_score(self):
+        for scale in rb.SCALES:
+            self.assertEqual(rb.score_text("pplus", 87, scale, False), "87")
+            self.assertEqual(rb.score_text("pplus", 87, scale, True), "8.7")
+            self.assertEqual(rb.score_text("pplus", 100, scale, True), "10")
+
+    def test_its_mark_is_local(self):
+        self.assertEqual(rb._keys_for(["pplus"]), set())
+        self.assertTrue(rb.assets_ready(["pplus"]))
+        im = rb.badge("pplus", True, 30)
+        self.assertEqual(im.size, (30, 30))
+        mono = np.asarray(rb.badge("pplus", True, 30, True))
+        self.assertTrue((mono[..., :3][mono[..., 3] > 0] == 255).all())
+
+
 class FetchTests(_AssetDir):
     def test_only_the_needed_marks_are_fetched_and_kept(self):
         client = _Client()

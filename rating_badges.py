@@ -17,6 +17,8 @@ volume beside the graphic badges' marks:
   Kitsu   Simple Icons (CC0)
   Roger Ebert   Material Symbols' thumb_up (Apache-2.0): RogerEbert.com
           publishes no mark, so its badge is Siskel & Ebert's thumbs-up
+  Posters+  the weighted score itself, as the service's own serif "P" (the
+          favicon, which ships in static/) with a "+", gold in a gold ring
 
 Most are set round, so the row reads as a line of discs rather than a mix of
 wordmarks: IMDb's lettering on its yellow, AniList's and MyAnimeList's
@@ -45,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Every source a badge can be drawn for, in the configurator's default order.
 PROVIDERS = (
-    "imdb", "tomatoes", "popcorn", "metacritic", "metacriticuser", "letterboxd",
+    "pplus", "imdb", "tomatoes", "popcorn", "metacritic", "metacriticuser", "letterboxd",
     "trakt", "tmdb", "rogerebert", "myanimelist", "anilist", "kitsu",
 )
 _MAX_BADGES = 6
@@ -113,7 +115,15 @@ def _mark_key(provider: str, value, mono: bool = False) -> str | None:
     return provider
 
 
+# The Posters+ mark is built from the repo's own favicon, so it has nothing
+# to fetch.
+_FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "favicon.png")
+_LOCAL_MARKS = {"pplus": _FAVICON}
+
+
 def _asset_path(key: str) -> str:
+    if key in _LOCAL_MARKS:
+        return _LOCAL_MARKS[key]
     f = _FILES[key]
     return os.path.join(ASSET_DIR, f"{f.sha1}{f.ext}")
 
@@ -125,7 +135,7 @@ def _keys_for(providers, style: str = "color") -> set[str]:
             keys |= {"rt_lettered" if style == "mono" else "rt_fresh", "rt_rotten"}
         elif p == "popcorn":
             keys |= {"rt_upright", "rt_spilled"}
-        else:
+        elif _mark_key(p, 0) not in _LOCAL_MARKS:
             keys.add(_mark_key(p, 0))
     return keys
 
@@ -324,10 +334,29 @@ _TMDB_NAVY   = (13, 37, 63)       # TMDB's primary dark blue
 _LB_SLATE    = (32, 40, 48)       # Letterboxd's brand background
 _KITSU_RGB   = (0xFD, 0x75, 0x5C)  # Simple Icons' brand colour for Kitsu
 _EBERT_BODY  = (30, 30, 34)
+_PPLUS_GOLD  = (252, 216, 4)       # the favicon's yellow
+_PPLUS_BODY  = (23, 23, 28)
 _EBERT_GOLD  = (212, 175, 55)
 
 
 _WHITE = (255, 255, 255)
+
+
+def _pplus_lockup(path: str) -> Image.Image:
+    """The favicon's "P" with a "+" set beside its bowl, the plus's strokes a
+    little lighter than the P's stem so it reads as the lesser half."""
+    p = Image.open(path).convert("RGBA")
+    h = p.height
+    stem = 0.138 * h          # the favicon's stem, of its height
+    arm, weight = 0.42 * h, 0.85 * stem
+    x0, cy = p.width + 0.05 * h, 0.30 * h
+    out = Image.new("RGBA", (round(x0 + arm) + 2, h), (0, 0, 0, 0))
+    out.alpha_composite(p, (0, 0))
+    ink = tuple(int(c) for c in np.median(np.asarray(p)[..., :3][np.asarray(p)[..., 3] > 128], axis=0)) + (255,)
+    d = ImageDraw.Draw(out)
+    d.rectangle((x0, cy - weight / 2, x0 + arm, cy + weight / 2), fill=ink)
+    d.rectangle((x0 + arm / 2 - weight / 2, cy - arm / 2, x0 + arm / 2 + weight / 2, cy + arm / 2), fill=ink)
+    return out
 
 # What a mono badge cuts out of the marks that aren't set on a plate.
 _MONO_KNOCK = {"rt_lettered": "white", "rt_upright": "white", "rt_spilled": "white",
@@ -388,6 +417,9 @@ def _mark_rgba(key: str, mono: bool = False) -> Image.Image | None:
             # Mono drops the gold ring: one colour has no ring to draw.
             return _on_plate(_plate(_WHITE) if mono else _plate(_EBERT_BODY, ring=_EBERT_GOLD),
                              _tint(_svg_image(path), _EBERT_GOLD), 0.66, dy=-0.01, mono=mono)
+        if key == "pplus":
+            return _on_plate(_plate(_WHITE) if mono else _plate(_PPLUS_BODY, ring=_PPLUS_GOLD),
+                             _pplus_lockup(path), 0.62, mono=mono)
         if key in ("myanimelist", "anilist"):
             plate, ink = _plate_ink(_svg_image(path))
             return _on_plate(_plate(plate), ink, 0.76, mono=mono)
@@ -445,10 +477,14 @@ def _native(provider: str, value: float) -> str:
 
 def score_text(provider: str, value: float, scale: str, out_of_10: bool) -> str:
     """*value* as the badge prints it: the provider's own form ("7.8", "92%",
-    "3.9") or, normalised, the scale the weighted score is shown on."""
-    if scale == "native":
+    "3.9") or, normalised, the scale the weighted score is shown on.  The
+    Posters+ score is already on that scale, so it prints as the mode would."""
+    if provider == "pplus":
+        score = round(value)
+    elif scale == "native":
         return _native(provider, value)
-    score = round(SCORE_NORMALISERS[provider](value))
+    else:
+        score = round(SCORE_NORMALISERS[provider](value))
     if out_of_10:
         return "10" if score >= 100 else f"{score / 10:.1f}"
     return str(score)
@@ -464,9 +500,11 @@ def parse_providers(raw: str | None) -> str:
     return ",".join(seen[:_MAX_BADGES])
 
 
-def entries(ratings: dict | None, providers: str) -> list[tuple[str, float]]:
+def entries(ratings: dict | None, providers: str, score=None) -> list[tuple[str, float]]:
     """(provider, value) for each chosen provider the title has a score from,
-    in the chosen order."""
+    in the chosen order; *score* is the weighted score, which "pplus" shows."""
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        ratings = {**(ratings or {}), "pplus": score}
     if not ratings or not providers:
         return []
     out = []

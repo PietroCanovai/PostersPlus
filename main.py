@@ -4079,7 +4079,7 @@ def _build_poster(
     # Rating badges stand in for the ★ and the weighted score wherever a mode
     # prints one; a title with a score from none of the chosen providers keeps
     # the weighted score, so it isn't left bare.
-    _rb_items = (rating_badges.entries(ratings, cfg.rating_badges)
+    _rb_items = (rating_badges.entries(ratings, cfg.rating_badges, score)
                  if cfg.rating_badges and not cfg.hide_rating else [])
 
     def _rb_run(font_size: float, out_of_10: bool, measure, budget: float, lead: float = 0.0) -> list[tuple]:
@@ -9185,7 +9185,7 @@ async def get_poster(
         _rating_badges_missing = False
         if (rcfg.rating_badges and not _is_landscape and rcfg.rating_display_mode in (2, 3, 4)
                 and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
-            _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, rcfg.rating_badges)]
+            _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, rcfg.rating_badges, score)]
             if _rb_shown:
                 _rating_badges_missing = not await rating_badges.ensure_assets(client, _rb_shown, rcfg.rating_badge_style)
                 _bp_args["ratings"] = ratings_dict

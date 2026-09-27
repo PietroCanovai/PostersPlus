@@ -22,7 +22,8 @@
   score, and the Bar after its year and genre (with a label that shows the
   rating). The rest of the label keeps its room and the badges fill what is
   left. The Rating Bar has no printed score and doesn't draw them.
-- IMDb, Rotten Tomatoes (fresh or rotten), Popcornmeter (upright or spilled),
+- Posters+ (the weighted score under the service's own mark), IMDb, Rotten
+  Tomatoes (fresh or rotten), Popcornmeter (upright or spilled),
   Metacritic, Metacritic User, Letterboxd, Trakt, TMDB, Roger Ebert,
   MyAnimeList, AniList and Kitsu. Only as many as fit are drawn, in list order,
   and titles missing all of them keep the weighted score.
