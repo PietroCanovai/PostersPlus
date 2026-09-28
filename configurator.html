@@ -130,6 +130,7 @@
 
   .header-github,
   .header-discord,
+  .header-admin,
   .header-theme {
     display: flex;
     align-items: center;
@@ -157,10 +158,14 @@
   }
   .header-github:hover,
   .header-discord:hover,
+  .header-admin:hover,
   .header-theme:hover { opacity: 1; color: var(--silver); }
   .header-github svg,
   .header-discord svg,
+  .header-admin svg,
   .header-theme svg { flex-shrink: 0; display: block; }
+  /* display:flex above would otherwise beat the hidden attribute. */
+  .header-admin[hidden] { display: none; }
 
   /* Right-side cluster: what's-new chip + github link */
   .header-right {
@@ -1879,12 +1884,14 @@
     .logo-sep, .logo-sub { display: none; }
     .header-github,
     .header-discord,
+    .header-admin,
     .header-theme { opacity: 0.6; margin-top: 0; }
 
     /* Mobile header right cluster: icons only — there isn't room for the
        text labels next to a half-width preview poster. */
     .github-label,
     .discord-label,
+    .admin-label,
     .theme-label { display: none; }
 
     .two-col, .inline-grid, .field-row { grid-template-columns: 1fr; }
@@ -2123,6 +2130,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         </svg>
         <span class="theme-label">Theme</span>
       </button>
+      <!-- Shown only when the operator turns on SHOW_ADMIN_LINK and the
+           dashboard is enabled (serverCaps.admin_link). -->
+      <a class="header-admin" id="header-admin" href="/admin" target="_blank" rel="noopener" hidden>
+        <svg width="14" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/>
+        </svg>
+        <span class="admin-label">Admin</span>
+      </a>
       <!-- Placeholder Discord URL — operators (e.g. ElfHosted) can point this at their own community link. -->
       <a class="header-discord" href="https://discord.gg/wEgTPNXUMU" target="_blank" rel="noopener">
         <svg width="18" height="14" viewBox="0 0 256 199" fill="currentColor" aria-hidden="true">
@@ -2247,6 +2262,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 Trending Refresh Schedule
               </label>
               <div class="field-hint" id="trending-schedule-hint"></div>
+            </div>
+
+            <!-- Shown when the operator has TRENDING_CATALOGS_ENABLED on. -->
+            <div class="field callout" id="trending-catalogs-field" style="display:none;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--gap-label);">
+                <label class="field-label" style="margin-bottom:0;" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
+                <div class="toggle-row" style="margin:0; gap:8px;">
+                  <span class="toggle-label" data-tip="On: posters in these catalogs show only their Trending rank, whatever your sash list says. Off: they use your sash list, like your other posters.">Trending Only</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-only" checked onchange="saveTrendingOnly(); updateTrendingCatalogsField()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
+              <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
             </div>
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
@@ -2401,7 +2431,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <!-- The Hide Genre, Hide Rating and Textless switches move in
+              <!-- The Hide Genre, Hide Year, Hide Rating and Textless switches move in
                    here while the tabs that own them are hidden (see
                    updateShapeFields): one control, one parameter, shared by
                    both shapes. -->
@@ -2830,6 +2860,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div id="hide-year-home"></div>
+              <div class="toggle-row" id="hide-year-row">
+                <span class="toggle-label" data-tip="Removes the release year and its separator. Minimalist's Year mode shows the score as the colour of the separator before the year, so with the year hidden it prints the score instead.">Hide Year</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-hide-year" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div id="hide-rating-home"></div>
               <div class="toggle-row" id="hide-rating-row">
                 <span class="toggle-label" data-tip="Removes the score from whichever display mode is drawing it — the number, the Rating Bar, the colour a Minimalist separator carries, and the Bar mode rating fill, which falls back to its plain body. Controls that only style the score hide with it.">Hide Rating</span>
@@ -3157,7 +3195,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <!-- data-tip is rewritten per mode by updateBadgeModeHint(). -->
               <label class="field-label" id="badge-mode-label">Display Mode</label>
-              <select id="cfg-badge-display-mode" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
+              <select id="cfg-badge-display-mode" onchange="applyBadgeModeDefaults(); updateBadgeModeHint(); build(); queuePreviewReload()">
                 <option value="0">Hidden</option>
                 <option value="4" selected>Quality Notch</option>
                 <option value="6">Quality Bookmark</option>
@@ -3535,9 +3573,12 @@ const _SHOW_URL_BOX   = _NO_CLIPBOARD || qs.get('urlbox') === '1';
     ? `http://postersplus:${port}`
     : window.location.origin;
   document.getElementById('cfg-domain').value = domain;
-  const ak = qs.get('access_key') || localStorage.getItem('postersplus_access_key') || '';
-  document.getElementById('cfg-access-key').value = ak;
-  if (ak) localStorage.setItem('postersplus_access_key', ak);
+  // The URL is the only source: when the server has an ACCESS_KEY this page
+  // can't load without the right one in it.  A copy remembered in localStorage
+  // outlived the server dropping or changing its key and leaked into every
+  // copied URL, so it's no longer kept (and an old one is cleared).
+  document.getElementById('cfg-access-key').value = qs.get('access_key') || '';
+  try { localStorage.removeItem('postersplus_access_key'); } catch (_) {}
 
   // Show the URL display box on LAN IPs so users can Ctrl+A / Ctrl+C.
   if (_SHOW_URL_BOX) {
@@ -3768,74 +3809,105 @@ function updateWeightRange(el, outId) {
 // Clicking the numeric label next to any slider opens it for direct text
 // input.  Enter / blur commits the value (clamped to slider min/max and
 // snapped to step); Escape restores the current slider value.
-// Weight sliders (id starts with "rv-") display percentages and store 0–1
-// internally, so their input is parsed and written back accordingly.
+// Percentage spans (id starts with "rv-": the weights and the gradient
+// opacity/height) display percentages and store 0–1 internally, so their
+// input is parsed and written back accordingly.
+//
+// Delegated from the document rather than bound per span: the weight rows are
+// rebuilt with innerHTML on every restore, import, preset and reset, and a
+// listener bound at startup went with the old rows — which is why the weights
+// were the one set of sliders that never opened for typing.
+function _rangeForVal(span) {
+  // On touch screens initCustomMobileSliders wraps the input in its own
+  // track, so the slider may sit one level down from the sibling.
+  const prev = span.previousElementSibling;
+  if (!prev) return null;
+  if (prev.type === 'range') return prev;
+  return prev.querySelector('input[type="range"]');
+}
+
+const _editingVal = span => span.getAttribute('contenteditable') === 'true';
+
+function _showRangeVal(span, slider) {
+  if (span.id.startsWith('rv-')) updateWeightRange(slider, span.id);
+  else                           updateRange(slider, span.id);
+}
+
 function _initRangeValEditing() {
-  document.querySelectorAll('.range-val').forEach(span => {
-    const slider = span.previousElementSibling;
-    if (!slider || slider.type !== 'range') return;
+  const spanFrom = e => {
+    const span = e.target.closest?.('.range-val');
+    return span && _rangeForVal(span) ? span : null;
+  };
 
-    const isWeight = span.id.startsWith('rv-');
+  document.addEventListener('mouseover', e => {
+    const span = spanFrom(e);
+    if (span && !span.title) span.title = 'Click to type a value';
+  });
 
-    span.title = 'Click to type a value';
+  document.addEventListener('click', e => {
+    const span = spanFrom(e);
+    if (!span || _editingVal(span)) return;
+    span.setAttribute('contenteditable', 'true');
+    span.focus();
+    const sel = window.getSelection();
+    const r = document.createRange();
+    r.selectNodeContents(span);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  });
 
-    span.addEventListener('click', () => {
-      span.setAttribute('contenteditable', 'true');
-      span.focus();
-      const sel = window.getSelection();
-      const r = document.createRange();
-      r.selectNodeContents(span);
-      sel.removeAllRanges();
-      sel.addRange(r);
-    });
-
-    // Prevent newlines on Enter (commit instead), and strip HTML on paste.
-    span.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
-      if (e.key === 'Escape') {
-        span.removeAttribute('contenteditable');
-        // Restore display from current slider value.
-        if (isWeight) updateWeightRange(slider, span.id);
-        else          updateRange(slider, span.id);
-      }
-    });
-    span.addEventListener('paste', e => {
-      e.preventDefault();
-      const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
-      document.execCommand('insertText', false, txt.replace(/\s/g, ''));
-    });
-
-    span.addEventListener('blur', () => {
+  // Prevent newlines on Enter (commit instead), and strip HTML on paste.
+  document.addEventListener('keydown', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
+    if (e.key === 'Escape') {
       span.removeAttribute('contenteditable');
+      _showRangeVal(span, _rangeForVal(span));
+    }
+  });
+  document.addEventListener('paste', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    e.preventDefault();
+    const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, txt.replace(/\s/g, ''));
+  });
 
-      const min  = parseFloat(slider.min);
-      const max  = parseFloat(slider.max);
-      const step = parseFloat(slider.step) || 1;
+  // focusout rather than blur: blur does not bubble to the document.
+  document.addEventListener('focusout', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    span.removeAttribute('contenteditable');
+    const slider = _rangeForVal(span);
 
-      // Strip '%' suffix for weight spans; parse whatever remains.
-      const raw = parseFloat(span.textContent.replace('%', '').trim());
-      if (isNaN(raw)) {
-        // Bad input — just restore.
-        if (isWeight) updateWeightRange(slider, span.id);
-        else          updateRange(slider, span.id);
-        return;
-      }
+    const min  = parseFloat(slider.min);
+    const max  = parseFloat(slider.max);
+    const step = parseFloat(slider.step) || 1;
 
-      // Weight spans: user types a percentage (e.g. 75 or 75%) → 0.75.
-      const sliderVal = isWeight ? raw / 100 : raw;
+    // Strip '%' suffix for percentage spans; parse whatever remains.
+    const raw = parseFloat(span.textContent.replace('%', '').trim());
+    if (isNaN(raw)) {
+      // Bad input — just restore.
+      _showRangeVal(span, slider);
+      return;
+    }
 
-      // Clamp to [min, max], then snap to nearest step.
-      const clamped = Math.min(max, Math.max(min, sliderVal));
-      const snapped = Math.round((clamped - min) / step) * step + min;
-      const final   = parseFloat(Math.min(max, Math.max(min, snapped)).toFixed(10));
+    // Percentage spans: user types a percentage (e.g. 75 or 75%) → 0.75.
+    const sliderVal = span.id.startsWith('rv-') ? raw / 100 : raw;
 
-      slider.value = final;
-      if (isWeight) updateWeightRange(slider, span.id);
-      else          updateRange(slider, span.id);
+    // Clamp to [min, max], then snap to nearest step.
+    const clamped = Math.min(max, Math.max(min, sliderVal));
+    const snapped = Math.round((clamped - min) / step) * step + min;
+    const final   = parseFloat(Math.min(max, Math.max(min, snapped)).toFixed(10));
 
-      build();
-      queuePreviewReload();
-    });
+    slider.value = final;
+    // Run the slider's own input handler, exactly as a drag would: it repaints
+    // the label, rebuilds the URL and reloads the preview, and does whatever
+    // else that slider needs (the weights total, the touch-screen track).
+    _showRangeVal(span, slider);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
 
@@ -3855,8 +3927,15 @@ async function fetchServerCaps() {
     if (!resp.ok) return;
     serverCaps = await resp.json();
     serverCapsLoaded = true;
+    // A key left in a bookmarked URL after the server dropped its ACCESS_KEY
+    // is ignored by the server; don't keep writing it into generated URLs.
+    if (serverCaps.access_key_required === false && vEl('cfg-access-key')) {
+      document.getElementById('cfg-access-key').value = '';
+      build();
+    }
     updateKeyBadges();
     updateImdbSourceAvailability();
+    document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
       const trSash = SASH_SLOTS.find(s => s.id === 'trending');
@@ -3865,6 +3944,7 @@ async function fetchServerCaps() {
     }
 
     applyWatchlistStatus(serverCaps.watchlist || {});
+    updateTrendingCatalogsField();
     
     const trField = document.getElementById('trending-schedule-field');
     const trHint = document.getElementById('trending-schedule-hint');
@@ -3889,7 +3969,7 @@ async function fetchServerCaps() {
 function applyWatchlistStatus(wl) {
   const wlSash = SASH_SLOTS.find(s => s.id === 'watchlist');
   if (!wlSash) return;
-  const NAMES = { mdblist: 'MDBList', simkl: 'SIMKL', trakt: 'Trakt', url: 'MDBList list' };
+  const NAMES = { mdblist: 'MDBList', simkl: 'SIMKL', trakt: 'Trakt', pmdb: 'PMDB', url: 'MDBList list' };
   wlSash.label = wl.source && NAMES[wl.source]
     ? `Watchlist (${NAMES[wl.source]}, ${wl.titles} titles)`
     : 'Watchlist (not configured on this server)';
@@ -4037,16 +4117,25 @@ function updateBadgeModeHint() {
   document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
   document.getElementById('badge-x-field').style.display           = mode === 6 ? 'none' : '';
   document.getElementById('badge-y-field').style.display           = mode === 6 ? 'none' : '';
-  if (!hidden) {
-    document.getElementById('cfg-badge-h').value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
-    if ([1,2,4,5,6].includes(mode)) {
-      // The mode's default only seeds an untouched field.  Unlike badge height,
-      // a minimum quality means the same thing in every mode, so once the user
-      // (or an imported URL) has picked one, switching modes must not throw it
-      // away.  Cleared by Reset to Defaults, which re-arms the seeding.
-      const _minScore = document.getElementById('cfg-badge-min-score');
-      if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
-    }
+}
+
+// Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
+// also runs to repaint after a restore or a preset: seeding there overwrote the
+// restored Badge Size on every page load. So this runs only where the mode
+// actually changes, and an import applies its own values after it.
+function applyBadgeModeDefaults() {
+  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
+  if (mode === 0) return;
+  const h = document.getElementById('cfg-badge-h');
+  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
+  updateRange(h, 'rng-bh');
+  if ([1,2,4,5,6].includes(mode)) {
+    // The mode's default only seeds an untouched field.  Unlike badge height,
+    // a minimum quality means the same thing in every mode, so once the user
+    // (or an imported URL) has picked one, switching modes must not throw it
+    // away.  Cleared by Reset to Defaults, which re-arms the seeding.
+    const _minScore = document.getElementById('cfg-badge-min-score');
+    if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
   }
 }
 
@@ -4728,7 +4817,68 @@ function syncSecondaryLangVisibility() {
   field.style.display = show ? '' : 'none';
 }
 
+// The trending catalogs addon's manifest, on the same address and access key
+// as the poster URL (so on a LAN it is the postersplus hostname AIOMetadata
+// reaches).  The key goes in the path, and so do the current poster settings,
+// as one "cfg-<base64url>" segment: a client that installs the addon directly
+// then gets its rows drawn by Posters+ with these settings.  A query string
+// would not survive, since clients build page URLs by editing the path's end.
+// See trending_addon in main.py.
+const _ADDON_CFG_IDENTITY = ['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id',
+                             'kitsu_id', 'access_key', 'shape'];
+function trendingAddonConfigSegment() {
+  // Each catalog item gets a portrait poster and a landscape one, and the
+  // client picks by the row's layout, so this needs both shapes' settings.
+  // Nuvio's "{shape}" URL is exactly that: it carries both from whichever view
+  // is showing (the saved-settings build keeps the hidden shape's values out of
+  // the URL), leaves out only what both layouts default the same way, and
+  // puts the typed-in keys in literally.  Its id placeholders are dropped.
+  const url = buildBaseParams({ usePlaceholders: true, templateId: 'nuvio' });
+  const qIdx = url.indexOf('?');
+  if (qIdx < 0) return '';
+  const p = new URLSearchParams(url.slice(qIdx + 1));
+  _ADDON_CFG_IDENTITY.forEach(k => p.delete(k));
+  for (const [k, v] of [...p]) if (v.includes('{')) p.delete(k);
+  if (c('tog-trending-only')) {
+    // Only the rank: the catalog lists ranks 1 to the broad count, so both
+    // Trending slots.  A hidden sash would leave nothing to show it on, so
+    // that shape gets the default diagonal sash; a notch stays a notch.
+    p.set('sash_priority', 'trending,trending_broad');
+    for (const k of ['sash_mode', 'landscape_sash_mode']) {
+      if (p.get(k) === 'hidden') p.set(k, 'sash');
+    }
+  }
+  const query = p.toString();
+  if (!query) return '';
+  return 'cfg-' + btoa(query).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Addon-only, so kept apart from the poster settings and never in their URL.
+const TRENDING_ONLY_KEY = 'postersplus_trending_only';
+function saveTrendingOnly() {
+  try { localStorage.setItem(TRENDING_ONLY_KEY, c('tog-trending-only') ? '1' : '0'); } catch (e) {}
+}
+function restoreTrendingOnly() {
+  let v = null;
+  try { v = localStorage.getItem(TRENDING_ONLY_KEY); } catch (e) {}
+  if (v !== null) document.getElementById('tog-trending-only').checked = v === '1';
+}
+
+function updateTrendingCatalogsField() {
+  const field = document.getElementById('trending-catalogs-field');
+  if (!field) return;
+  const on = !!serverCaps.trending_catalogs_enabled;
+  field.style.display = on ? '' : 'none';
+  if (!on) return;
+  const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
+  const ak = vEl('cfg-access-key');
+  const cfg = trendingAddonConfigSegment();
+  document.getElementById('trending-catalogs-url').value =
+    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${cfg ? cfg + '/' : ''}manifest.json`;
+}
+
 function build() {
+  updateTrendingCatalogsField();
   const url = buildPreviewUrl();
   if (_SHOW_URL_BOX) {
     document.getElementById('url-display-input').value = buildTemplateUrl();
@@ -4951,9 +5101,19 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (accKey)         params.set('access_key',  accKey);
   // A client that has no "{tmdb_key}" / "{mdblist_key}" of its own would send
   // the placeholder verbatim, so it gets the key typed here instead.
+  //
+  // The keys go in the optional form wherever the ids do, for the same reason:
+  // a REQUIRED placeholder the client has no value for abandons the whole URL.
+  // A key typed here says nothing about whether the client holds one — users
+  // routinely fill it in here and not in AIOMetadata, or remove it there later
+  // — and without one AIOMetadata drops every poster. An empty key only means
+  // the server's own key is used (or none, on a key-less instance), which is
+  // always better than no poster. Older builds that leave "{tmdb_key?}"
+  // verbatim are read as "no key" by the server (_resolve_tmdb_key).
   const keyHolders = usePlaceholders && !template.literalKeys;
-  if (userTmdbKey)    params.set('tmdb_key',     keyHolders ? '{tmdb_key}'    : userTmdbKey);
-  if (userMdblistKey) params.set('mdblist_key',  keyHolders ? '{mdblist_key}' : userMdblistKey);
+  const keyHolder  = name => template.tmdbOptional ? `{${name}?}` : `{${name}}`;
+  if (userTmdbKey)    params.set('tmdb_key',     keyHolders ? keyHolder('tmdb_key')    : userTmdbKey);
+  if (userMdblistKey) params.set('mdblist_key',  keyHolders ? keyHolder('mdblist_key') : userMdblistKey);
   if (emitAll) {
     params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
     if (vEl('cfg-top-gradient') === 'custom') {
@@ -5003,6 +5163,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     // URL an absent landscape_hide_genre falls back to hide_genre, so "off"
     // has to be said when the other shape says "on".  Defaults are dropped.
     set('hide_genre',  on('tog-hide-genre')  ? 'true' : 'false');
+    set('hide_year',   on('tog-hide-year')   ? 'true' : 'false');
     set('hide_rating', on('tog-hide-rating') ? 'true' : 'false');
     set('textless',    on('tog-textless')    ? 'true' : 'false');
     set('sash_mode',   v['cfg-sash-mode'] || 'sash');
@@ -5072,7 +5233,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('anime_tv_weights',    _weights(getWeights('anime-tv-weights',    ANIME_TV_SOURCES)));
     }
   }
-  if (!emitAll) emitWeights();
+  // A "{shape}" URL and the saved settings serve landscape as well, so they
+  // need the weights even when portrait hides its rating and the rating block
+  // below, which otherwise emits them, is skipped.
+  if (!emitAll || ((full || dualShape) && ratingMode === 0)) emitWeights();
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   if (emitAll) params.set('rating_display_mode', ratingMode);
@@ -5244,7 +5408,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
 
-  const finalUrl = `${domain}/poster?${omitServerDefaults(params).toString()}`;
+  // The saved settings (full) keep every parameter. The startup restore runs
+  // before /server-caps has answered, so it has no server defaults to fill an
+  // omitted parameter back in from, and the control keeps its own initial
+  // value. Where that differs from the server's default (the minimum quality
+  // is 5 here, 2 on the server), the user's choice is replaced on every
+  // reload. localStorage has no URL length limit, so omitting saves nothing.
+  const _emitted = full ? params : omitServerDefaults(params);
+  const finalUrl = `${domain}/poster?${_emitted.toString()}`;
   return usePlaceholders ? decodePlaceholders(finalUrl) : finalUrl;
 }
 
@@ -6016,6 +6187,7 @@ const _SHARED_PARAM = {
   'cfg-vignette-light':        'vignette_color_lightness',
   'cfg-vignette-blur':         'vignette_color_blur',
   'tog-hide-genre':            'hide_genre',
+  'tog-hide-year':             'hide_year',
   'tog-hide-rating':           'hide_rating',
   'tog-textless':              'textless',
   'cfg-sash-mode':             'sash_mode',
@@ -6025,7 +6197,7 @@ const _LANDSCAPE_SHARED_DEFAULTS = {
   'tog-vignette-color-bottom': true, 'tog-vignette-ramp': true, 'tog-vignette-local': false,
   'cfg-vignette-style': 'shade',
   'cfg-vignette-sat': '2.00', 'cfg-vignette-light': '1.30', 'cfg-vignette-blur': '1.00',
-  'tog-hide-genre': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
+  'tog-hide-genre': false, 'tog-hide-year': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
 };
 const SHAPE_STASH_KEY = 'postersplus_shape_stash';
 let _shapeStash = { portrait: null, landscape: null };   // null = that shape's defaults
@@ -6113,12 +6285,13 @@ function toggleShape() {
 
 // Tabs the landscape renderer reads nothing from.  Hidden outright rather than
 // greyed: a visible control that does nothing is a bug report waiting to be
-// filed.  The switches it does read from those tabs (Hide Genre, Hide Rating,
+// filed.  The switches it does read from those tabs (Hide Genre, Hide Year, Hide Rating,
 // Textless) are docked into the Landscape group meanwhile — moved, not copied,
 // so there is one control and one parameter whichever shape is showing.
 const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];
 const _DOCKED_ROWS = [
   { id: 'hide-genre-row',  home: 'hide-genre-home' },
+  { id: 'hide-year-row',   home: 'hide-year-home' },
   { id: 'hide-rating-row', home: 'hide-rating-home' },
   { id: 'hide-unreleased-rating-row', home: 'hide-unreleased-rating-home' },
   { id: 'textless-row',    home: 'textless-home' },
@@ -6916,6 +7089,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     if (['shade','muted','reference'].includes(_vs)) _setEl('cfg-vignette-style', _vs); }
   if (p.has('notch_vignette_color'))      _setEl('tog-notch-vignette-color', p.get('notch_vignette_color'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
+  if (p.has('hide_year')) _setEl('tog-hide-year', p.get('hide_year'));
   if (p.has('hide_rating')) _setEl('tog-hide-rating', p.get('hide_rating'));
   // shape is seeded from the server defaults above, so an ordinary URL without
   // it lands on portrait.  A preset carries no shape and is not a reason to
@@ -7074,9 +7248,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
-  // Refresh field visibility for the restored mode BEFORE applying the saved
-  // values — updateBadgeModeHint resets cfg-badge-h to a mode default, so the
-  // explicit badge_height below must be applied after it to take precedence.
+  // Seed the mode's defaults BEFORE applying the saved values, so a URL that
+  // omits badge_height (/server-caps not answered yet) still gets a size that
+  // suits its mode, and an explicit badge_height below takes precedence.
+  applyBadgeModeDefaults();
   updateBadgeModeHint();
   if (p.has('badge_height'))            _setEl('cfg-badge-h',         p.get('badge_height'));
   if (p.has('badge_gap'))               _setEl('cfg-badge-gap',        p.get('badge_gap'));
@@ -7247,6 +7422,7 @@ if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
 // (Core Config — keys / language / selection — is left untouched).
 _loadShapeStash();
 restoreSettings();
+restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
 syncSecondaryLangVisibility();
