@@ -1697,7 +1697,17 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # Rows created before newer metadata fields were added were migrated
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
-        if vote_count is None or original_title is None or metadata_version != 4:
+        #
+        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765).  A v4 row is
+        # otherwise identical, so only a TV row still carrying 10765 is
+        # refetched, and its composites with it: they drew the old label.
+        _v4_split = (
+            metadata_version == 4
+            and cache_key.startswith("tv_")
+            and 10765 in json.loads(genre_ids_raw or "[]")
+        )
+        if (vote_count is None or original_title is None
+                or metadata_version not in (4, 5) or _v4_split):
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1706,6 +1716,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                     "DELETE FROM tmdb_metadata_cache WHERE cache_key = ?", (cache_key,)
                 )
                 get_db().commit()
+            if _v4_split:
+                invalidate_final_posters(cache_key.split("_")[1], "tv")
             return None
 
         return {
@@ -1775,7 +1787,7 @@ def set_cached_tmdb_metadata(
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 4,
+    metadata_version: int = 5,
 ) -> None:
     try:
         with _db_lock:

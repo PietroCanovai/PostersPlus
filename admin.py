@@ -241,6 +241,7 @@ def describe_settings() -> dict:
             "help":        s.help,
             "kind":        s.kind,
             "choices":     list(s.choices),
+            "labels":      s.labels,
             "min":         s.min,
             "max":         s.max,
             "advanced":    s.advanced,

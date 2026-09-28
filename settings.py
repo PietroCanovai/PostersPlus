@@ -44,7 +44,9 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/app/cache/settings.json").stri
 # What a field looks like in the dashboard, and how a submitted value is
 # checked.  Every kind is stored as a string, the way the environment would
 # carry it; parsing stays in config.py.
-KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url")
+# "order" is a ranking of a fixed set: every choice once, most important
+# first, stored comma-separated.
+KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url", "order")
 
 
 @dataclass
@@ -56,6 +58,8 @@ class Setting:
     label: str = ""
     help: str = ""
     choices: tuple[str, ...] = ()
+    # Display names for choice / order values that are ids ("878" -> "Sci-Fi").
+    labels: dict[str, str] = field(default_factory=dict)
     min: float | None = None
     max: float | None = None
     # Shown behind the group's "advanced" fold — the ADVANCED.md tier.
@@ -83,6 +87,7 @@ GROUP_ORDER = (
     "Trending",
     "Watchlist",
     "Ratings",
+    "Genres",
     "Caching",
     "Cache warming",
     "TVDB fallback art",
@@ -155,6 +160,7 @@ def env(
     label: str = "",
     help: str = "",
     choices: tuple[str, ...] = (),
+    labels: dict[str, str] | None = None,
     min: float | None = None,
     max: float | None = None,
     advanced: bool = False,
@@ -176,7 +182,7 @@ def env(
             dep = (dep_key, tuple(v.lower() for v in dep_values))
         REGISTRY[key] = Setting(
             key=key, default=default, group=group, kind=kind, label=label or key,
-            help=help, choices=tuple(choices), min=min, max=max, advanced=advanced,
+            help=help, choices=tuple(choices), labels=dict(labels or {}), min=min, max=max, advanced=advanced,
             placeholder=placeholder, show_if=dep, order=len(REGISTRY),
         )
         if group not in GROUPS:
@@ -287,6 +293,18 @@ def normalise(setting: Setting, raw) -> str | None:
 
     if kind == "list":
         return ",".join(part.strip() for part in value.split(",") if part.strip())
+
+    if kind == "order":
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        unknown = [p for p in parts if p not in setting.choices]
+        if unknown:
+            raise ValueError("unknown entry " + ", ".join(unknown))
+        if len(set(parts)) != len(parts):
+            raise ValueError("lists an entry twice")
+        # An entry left out keeps its default place at the end rather than
+        # dropping out of the ranking.
+        parts += [c for c in setting.choices if c not in parts]
+        return ",".join(parts)
 
     return value
 

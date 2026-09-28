@@ -6816,7 +6816,15 @@ def _server_render_signature() -> str:
         # it busts composites once; membership changes are handled by targeted
         # regeneration, not the key.  Unset keeps every existing entry.
         *((f"wl={watchlist.source_mode()}",) if watchlist.is_enabled() else ()),
+        # The genre order picks labels, backgrounds and fonts, so a new
+        # order — the operator's, or a changed default — re-renders once.
+        f"gp={_genre_order_signature()}",
     ))
+
+
+def _genre_order_signature() -> str:
+    raw = ",".join(map(str, _cfg.GENRE_PRIORITY)) + "|" + ",".join(map(str, _cfg.ANIME_GENRE_PRIORITY))
+    return hashlib.sha256(raw.encode()).hexdigest()[:8]
 
 
 _admin_html_cache: str | None = None
@@ -9045,7 +9053,7 @@ async def get_poster(
                 _failed_retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
                 _rating_backoff[_failed_retry_key] = asyncio.get_running_loop().time() + backoff_secs
             ratings_dict     = {}
-            genre            = cached_genre or _tmdb_genre
+            genre            = _tmdb_genre if _tmdb_genre != "Unknown" else (cached_genre or _tmdb_genre)
             rel              = cached_release_date
             # MDBList failed (or was never reachable), but the IMDb dataset and
             # TMDB's own vote average are independent, MDBList-free sources - try
@@ -9082,16 +9090,17 @@ async def get_poster(
             # that; dropping them on the way in cleans rows written before.
             ratings_dict = _mdblist_row_ratings(ratings_dict)
             _row_ratings, _row_age_rating = ratings_dict, age_rating
-            # genre from MDBlist/cache may be None when the key is absent and
-            # nothing is cached yet — fall back to the TMDB-derived genre.
-            #
-            # On the anime path the genre is always derived here from the
-            # provider's own genre list rather than read back from the cached
-            # rating row. The row's genre column exists to carry MDBList's
-            # answer, which anime titles never have; trusting it would pin a
-            # title to whatever ANIME_GENRE_PRIORITY said when it was first
-            # cached, so a reordering wouldn't take effect until the TTL expired.
-            genre = _tmdb_genre if is_anime else (genre or _tmdb_genre)
+            # The label is derived here from this render's genre ids rather
+            # than read back from the rating row, which stored whatever the
+            # priority order said when it was cached — a reordering, or a
+            # re-split Sci-Fi & Fantasy show, would otherwise wait out the
+            # row's TTL.  The row's value only stands in when the ids give
+            # nothing, and never on the anime path, whose rows carry no
+            # MDBList answer to fall back on.
+            genre = (
+                _tmdb_genre if is_anime or _tmdb_genre != "Unknown"
+                else (genre or _tmdb_genre)
+            )
 
             # The provider's score rides along in the art response, so merge it
             # into whatever MDBList returned — or into an empty dict when there

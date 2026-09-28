@@ -306,6 +306,33 @@
   .btn-secondary:hover:not(:disabled) { border-color: var(--silver); }
   .btn-small { padding: 6px 10px; font-size: 7.5px; }
 
+  /* "order" settings: a ranked list, dragged or moved with the arrows. */
+  .order-list { list-style: none; margin: 0; padding: 0; counter-reset: order; max-width: 420px; }
+  .order-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 8px; margin-bottom: 3px;
+    background: var(--black2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 11.5px; color: var(--text-primary);
+    cursor: grab; user-select: none;
+  }
+  .order-item::before {
+    counter-increment: order; content: counter(order);
+    min-width: 18px; text-align: right;
+    font-family: var(--mono); font-size: 9px; color: var(--text-muted);
+  }
+  .order-item .grip { color: var(--text-muted); font-size: 11px; line-height: 1; }
+  .order-item .name { flex: 1; min-width: 0; }
+  .order-item.dragging { opacity: 0.4; }
+  .order-item.drop-before { box-shadow: 0 -2px 0 var(--gold-dim); }
+  .order-item.drop-after { box-shadow: 0 2px 0 var(--gold-dim); }
+  .order-item button {
+    background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+    color: var(--text-secondary); cursor: pointer; padding: 1px 6px; font-size: 10px;
+  }
+  .order-item button:hover:not(:disabled) { border-color: var(--border); color: var(--gold-bright); }
+  .order-item button:disabled { opacity: 0.25; cursor: default; }
+  .order-restore { margin-top: 6px; }
+
   .advanced-toggle {
     display: flex; align-items: center; gap: 8px;
     margin: 4px 0 var(--gap-field);
@@ -802,9 +829,88 @@ function control(s) {
       const ph = pendingEdit ? (changes[s.key] === '' ? 'Will be cleared' : 'New value entered') : (s.has_value ? `Set (${s.hint}) — type to replace` : 'Not set');
       return `<div class="control-row"><input type="password" id="${id}" value="${esc(pendingEdit ? changes[s.key] : '')}" placeholder="${esc(ph)}" autocomplete="new-password" oninput="edit('${s.key}', this.value)">${s.has_value || pendingEdit ? `<button type="button" class="btn btn-secondary btn-small" onclick="edit('${s.key}', '')" title="Save an empty value, overriding the environment">Clear</button>` : ''}</div>`;
     }
+    case 'order':
+      return orderList(s);
     default:
       return `<input type="text" id="${id}" value="${esc(v)}" placeholder="${esc(s.placeholder || s.default || '')}" oninput="edit('${s.key}', this.value)" onchange="controllerChanged('${s.key}')">`;
   }
+}
+
+// An "order" setting: its choices ranked, most important first.  Dragging
+// works with a mouse; the arrows cover touch screens and the keyboard.
+function orderValues(s) {
+  const v = String(currentValue(s) ?? '').split(',').map(x => x.trim()).filter(x => s.choices.includes(x));
+  return [...new Set(v), ...s.choices.filter(c => !v.includes(c))];
+}
+function orderList(s) {
+  const vals = orderValues(s);
+  const last = vals.length - 1;
+  const restore = vals.join(',') !== s.default
+    ? `<button type="button" class="btn btn-secondary btn-small order-restore" onclick="orderRestore('${s.key}')">Restore default order</button>` : '';
+  return `<div id="f-${s.key}"><ol class="order-list">${vals.map((v, i) => `<li class="order-item" draggable="true" data-i="${i}"
+      ondragstart="orderDragStart(event,'${s.key}',${i})" ondragover="orderDragOver(event)" ondragleave="orderDragLeave(event)"
+      ondrop="orderDrop(event,'${s.key}',${i})" ondragend="orderDragEnd()">
+      <span class="grip" aria-hidden="true">⋮⋮</span><span class="name">${esc((s.labels || {})[v] || v)}</span>
+      <button type="button" title="Move up" aria-label="Move ${esc((s.labels || {})[v] || v)} up" ${i === 0 ? 'disabled' : ''} onclick="orderMove('${s.key}',${i},${i - 1})">▲</button>
+      <button type="button" title="Move down" aria-label="Move ${esc((s.labels || {})[v] || v)} down" ${i === last ? 'disabled' : ''} onclick="orderMove('${s.key}',${i},${i + 1})">▼</button>
+    </li>`).join('')}</ol>${restore}</div>`;
+}
+// Back to the built-in order.  A saved order is simply dropped when nothing
+// in the environment would show through instead; otherwise the default is
+// saved over it, since "reset" would land on the environment's order.
+function orderRestore(key) {
+  const s = findSetting(key);
+  if (s.source === 'file' && s.env_value == null) { resetField(key); return; }
+  edit(key, s.default);
+  const list = document.getElementById(`f-${key}`);
+  if (list) list.outerHTML = orderList(s);
+}
+function orderMove(key, from, to) {
+  const s = findSetting(key);
+  const vals = orderValues(s);
+  if (to < 0 || to >= vals.length || from === to) return;
+  const [item] = vals.splice(from, 1);
+  vals.splice(to, 0, item);
+  edit(key, vals.join(','));
+  const list = document.getElementById(`f-${key}`);
+  if (list) list.outerHTML = orderList(s);
+  const moved = document.querySelectorAll(`#f-${key} .order-item`)[to];
+  const btn = moved && moved.querySelector(to < from ? 'button[title="Move up"]' : 'button[title="Move down"]');
+  if (btn && !btn.disabled) btn.focus();
+}
+let orderDrag = null;
+function orderDragStart(e, key, i) {
+  orderDrag = { key, i };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(i));
+  e.currentTarget.classList.add('dragging');
+}
+function orderDropAfter(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  return e.clientY > r.top + r.height / 2;
+}
+function orderDragOver(e) {
+  if (!orderDrag) return;
+  e.preventDefault();
+  const after = orderDropAfter(e);
+  e.currentTarget.classList.toggle('drop-after', after);
+  e.currentTarget.classList.toggle('drop-before', !after);
+}
+function orderDragLeave(e) {
+  e.currentTarget.classList.remove('drop-before', 'drop-after');
+}
+function orderDrop(e, key, i) {
+  e.preventDefault();
+  if (!orderDrag || orderDrag.key !== key) return;
+  let to = i + (orderDropAfter(e) ? 1 : 0);
+  if (orderDrag.i < to) to -= 1;
+  const from = orderDrag.i;
+  orderDrag = null;
+  orderMove(key, from, to);
+}
+function orderDragEnd() {
+  orderDrag = null;
+  document.querySelectorAll('.order-item').forEach(el => el.classList.remove('dragging', 'drop-before', 'drop-after'));
 }
 
 function fieldHtml(s) {
@@ -813,7 +919,7 @@ function fieldHtml(s) {
     <div class="field-head"><span class="field-label">${esc(s.label)}</span><span class="field-key">${esc(s.key)}</span>${sourceChip(s)}${s.pending ? '<span class="chip pending" title="Saved, applies after restart">restart</span>' : ''}</div>
     ${control(s)}
     ${err ? `<div class="field-error">${esc(err)}</div>` : ''}
-    <div class="field-hint">${esc(s.help)}${s.kind === 'list' ? ' Comma-separated.' : ''}${s.default && s.kind !== 'secret' && s.kind !== 'bool' ? ` <span style="color:var(--text-muted)">Default ${esc(s.default)}.</span>` : ''}${resetLink(s)}</div>
+    <div class="field-hint">${esc(s.help)}${s.kind === 'list' ? ' Comma-separated.' : ''}${s.default && s.kind !== 'secret' && s.kind !== 'bool' && s.kind !== 'order' ? ` <span style="color:var(--text-muted)">Default ${esc(s.default)}.</span>` : ''}${resetLink(s)}</div>
   </div>`;
 }
 

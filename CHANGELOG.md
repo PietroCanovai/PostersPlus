@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Sci-Fi or Fantasy for TV, and a genre order you can drag
+
+- TMDB puts every TV show that is either sci-fi or fantasy in one merged
+  "Sci-Fi & Fantasy" genre, which printed as Sci-Fi, so Game of Thrones and
+  The Witcher were labelled Sci-Fi. The show's TMDB keywords now decide
+  between Sci-Fi and Fantasy, with IMDb's genres (via Cinemeta) as the
+  tie-break. Shows that neither decides print Sci-Fi as before. Cached TV
+  metadata with the merged genre is fetched again once; nothing else is.
+- The genre order (which of a title's genres is printed, and picks its
+  fallback background and font) can be changed in the admin dashboard under
+  Genres → Advanced, by dragging a list. There is one list for anime and one
+  for everything else. `GENRE_PRIORITY` / `ANIME_GENRE_PRIORITY` take the
+  same thing as comma-separated TMDB genre ids.
+- New default order, checked against TMDB's most-voted films and shows:
+  - Sci-Fi and Fantasy now rank above Mystery, which TMDB puts on much of
+    its TV, so Stranger Things and Dark stop printing Mystery.
+  - Fantasy sits beside Sci-Fi, so Buffy and Good Omens print Fantasy
+    rather than Comedy.
+  - War ranks above Action and History, so Dunkirk and Saving Private Ryan
+    print War.
+  - Animation is now near the bottom, because the poster already shows a
+    title is animated. Coco and The Lion King print Family.
+- A new order takes effect on posters that are already cached. The genre label
+  is now worked out from the title's genres on every render rather than read
+  back from the cached rating row, and a changed order re-renders cached
+  posters once.
+
 ### Client insets, and controls beside their labels
 
 - The trending ribbon takes the Primary Client's top inset, like the notch:

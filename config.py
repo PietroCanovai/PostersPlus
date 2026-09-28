@@ -811,16 +811,35 @@ GENRE_MAP = {
     10765: "Sci-Fi", 10766: "Soap", 10767: "Talk", 10768: "War",
 }
 
-# Can re-order to change the priority that genres appear with (reference genre map above)
-# Default Horror, Thriller, Mystery, Sci-Fi, Crime, Comedy, Fantasy, Adventure, Family, Action, History
-# Music, War, Western, Documentary, Drama, Adventure, Reality, Kids, News, Soap, Talk
-# Duplicate entries are not an accident, for certain genres TMDB uses two numbers, one for movies, one for shows.
+# The order genres are tried in when a title has several: the first one the
+# title carries is its label, tint, fallback background and title font.  Set
+# from the admin dashboard (a drag list) or as comma-separated ids; an id left
+# out keeps its default place at the end.  TV ids are listed apart from the film
+# ids they print as, because TMDB numbers them separately.
+_GENRE_LABELS: dict[str, str] = {
+    **{str(gid): name for gid, name in GENRE_MAP.items()},
+    "10759": "Action & Adventure (TV)",
+    "10762": "Kids (TV)",
+    "10763": "News (TV)",
+    "10764": "Reality (TV)",
+    "10765": "Sci-Fi & Fantasy (TV, not split)",
+    "10766": "Soap (TV)",
+    "10767": "Talk (TV)",
+    "10768": "War & Politics (TV)",
+}
 
-GENRE_PRIORITY = [
-    27, 53, 9648, 878, 10765, 80, 35, 10749, 14, 16, 10751,
-    28, 10759, 36, 10402, 10752, 10768, 37, 99, 18, 12,
+# Checked against the genres of TMDB's ~750 most-voted films and ~800 shows.
+# Sci-Fi and Fantasy rank above Mystery, which TMDB puts on much of its TV
+# (Stranger Things, Dark and The Expanse all printed Mystery).  Fantasy sits
+# beside Sci-Fi so a show split out of TV's merged genre keeps a label that
+# strong (Buffy, Good Omens printed Comedy).  War beats Action and History
+# (Dunkirk, Saving Private Ryan).  Animation is near last: the art already
+# shows a title is animated, so Family / Action / Drama say more.
+_DEFAULT_GENRE_PRIORITY = (
+    27, 53, 878, 10765, 14, 9648, 80, 35, 10749, 10751,
+    10752, 10768, 28, 10759, 36, 10402, 37, 99, 18, 12, 16,
     10764, 10762, 10763, 10766, 10767,
-]
+)
 
 # Separate ordering for titles requested by anime id, because the list above is
 # tuned for a Western catalogue: there, Horror / Thriller / Mystery / Crime are
@@ -835,7 +854,7 @@ GENRE_PRIORITY = [
 # This order was checked against the real genre lists of a sample of well-known
 # titles from both providers. It is a presentation choice, not a correctness
 # one — reorder freely if a different label reads better to you.
-ANIME_GENRE_PRIORITY = [
+_DEFAULT_ANIME_GENRE_PRIORITY = (
     10749,            # Romance — if it's a romance, that's the hook
     27,               # Horror
     37,               # Western — vanishingly rare in anime, so highly telling
@@ -855,7 +874,39 @@ ANIME_GENRE_PRIORITY = [
     10762,            # Kids
     10751,            # Family
     16,               # Animation — guaranteed floor, always present
-]
+)
+
+
+def _genre_order(key: str, default: tuple[int, ...], label: str, help: str) -> list[int]:
+    choices = tuple(str(gid) for gid in default)
+    raw = _env(key, ",".join(choices), group='Genres', kind='order', label=label,
+               help=help, choices=choices, labels=_GENRE_LABELS, advanced=True)
+    # Same rules the dashboard applies on save, for a value set in the
+    # environment: unknown ids and repeats are dropped, missing ones appended.
+    seen: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part in choices and int(part) not in seen:
+            seen.append(int(part))
+    return seen + [gid for gid in default if gid not in seen]
+
+
+GENRE_PRIORITY = _genre_order(
+    'GENRE_PRIORITY', _DEFAULT_GENRE_PRIORITY, 'Genre priority',
+    "The order a title's genres are tried in; the first one it has names it on "
+    "the poster and picks the fallback background and title font. TMDB files TV "
+    "under merged genres (Action & Adventure, War & Politics), listed here "
+    "apart from the film genres they print as. Sci-Fi & Fantasy is split into "
+    "Sci-Fi or Fantasy from the show's keywords; the merged entry covers the "
+    "shows nothing decides, and prints Sci-Fi.",
+)
+ANIME_GENRE_PRIORITY = _genre_order(
+    'ANIME_GENRE_PRIORITY', _DEFAULT_ANIME_GENRE_PRIORITY, 'Anime genre priority',
+    "The same for titles requested by an AniList or Kitsu id. Action, Adventure "
+    "and Fantasy describe anime better than the Mystery or Supernatural tags "
+    "the providers add liberally, so they rank higher here than in the main "
+    "order. Animation stays last as the label when nothing else matches.",
+)
 
 # Text based fallback, not important if everything is working properly
 
