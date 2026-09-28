@@ -112,6 +112,8 @@ Open your instance's address in a browser to get the configurator. Pick a style,
 
 > **Exposing it safely.** Clients need to reach PostersPlus over **HTTPS**, e.g. behind [Caddy](https://caddyserver.com/) or [Traefik](https://traefik.io/), with `ACCESS_KEY` set. If you use AIOMetadata, you can instead turn on its image proxy and keep PostersPlus off the internet entirely: use `http://postersplus:8000` as the address so the two talk over Docker's internal network. That's a little slower but the most secure option.
 
+> **Configurator behind its own login.** If you put the configurator behind Authelia, Pangolin or a similar login, turn on **Configurator protected externally** (`CONFIGURATOR_EXTERNAL_AUTH`). The configurator then opens without `?access_key=` and adds the key to previews and copied URLs for you, while poster requests still need it, since clients can't sign in through a browser page. The trade-off: anyone who gets onto the configurator can read the access key, so this is only as secure as that login — and the login has to cover every path the configurator uses, not just `/`: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb` and `/debug/fallback-gallery`. `/server-caps` returns the access key itself, so leaving it outside the login gives the key away. `/poster`, `/logo`, `/trending/…` and `/static/…` stay outside it.
+
 Using Plex or Jellyfin? See [Plex and Jellyfin sync](CONFIGURATION.md#plex-and-jellyfin-sync).
 
 ## Quality badges
@@ -142,3 +144,7 @@ If you'd like to support development: [Ko-fi](https://ko-fi.com/umbraprojects).
 ## License
 
 [GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.
+
+The Graphic Badges mode downloads its marks from Wikimedia Commons at runtime; none ship with PostersPlus. Dolby Vision, Dolby Atmos and the combined Vision • Atmos mark are built from [Dolby Vision 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Vision_2021_logo.svg) and [Dolby Cinema 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Cinema_2021_logo.svg) (public domain). The DTS:X mark is [DTS X B&W.png](https://commons.wikimedia.org/wiki/File:DTS_X_B%26W.png) by CinemaLover24680, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), cut to its "dts" letters and recoloured white. Dolby, Dolby Vision, Dolby Atmos and DTS:X are trademarks of their owners.
+
+Rating badges are downloaded the same way, each pinned to the exact file reviewed. The IMDb, Rotten Tomatoes (tomato, lettered tomato, splat and both Popcornmeter buckets), Metacritic, Letterboxd, Trakt, MyAnimeList and AniList logos come from Wikimedia Commons, all public domain; the TMDB logo from [TMDB's logos page](https://www.themoviedb.org/about/logos-attribution); the Kitsu mark from [Simple Icons](https://simpleicons.org/) (CC0); and Roger Ebert's thumbs-up is [Material Symbols](https://github.com/google/material-design-icons)' `thumb_up` (Apache 2.0). Most are set on round plates in their brand colours. All are trademarks of their owners.

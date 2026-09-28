@@ -99,14 +99,27 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
             "const keyHolders = usePlaceholders && !template.literalKeys;", self.html
         )
 
+    def test_keys_go_optional_wherever_the_ids_do(self):
+        # A key typed into the configurator says nothing about whether the
+        # client holds one. AIOMetadata abandons the whole URL on a required
+        # placeholder it cannot fill, so a user with no key there lost every
+        # poster; in the optional form the server's own key is used instead.
+        # Clients that reject "{name?}" keep the required form.
+        self.assertIn(
+            "const keyHolder  = name => template.tmdbOptional ? `{${name}?}` : `{${name}}`;",
+            self.html,
+        )
+        self.assertIn("keyHolders ? keyHolder('tmdb_key')    : userTmdbKey", self.html)
+        self.assertIn("keyHolders ? keyHolder('mdblist_key') : userMdblistKey", self.html)
+
     def test_the_saved_configuration_carries_no_client_choice(self):
         # saveSettings round-trips through buildBaseParams with no templateId,
         # which must land on the neutral shape — otherwise a remembered client
         # would leak into stored settings and into every exported URL.
         self.assertIn("templateId = null } = {}", self.html)
         self.assertIn(
-            "const template       = COPY_TEMPLATES.find(t => t.id === templateId) "
-            "|| COPY_TEMPLATE_NEUTRAL;",
+            "const template       = [...COPY_TEMPLATES, COPY_TEMPLATE_SHARE].find(t => t.id === templateId)\n"
+            "                         || COPY_TEMPLATE_NEUTRAL;",
             self.html,
         )
         self.assertIn("const COPY_TEMPLATE_NEUTRAL = { id: '', name: '',", self.html)
@@ -189,6 +202,36 @@ class CopyButtonBehaviourTests(unittest.TestCase):
         self.assertIn(
             "'#external-menu, #external-link, #copy-menu, #copy-config-btn'", self.html
         )
+
+
+
+class ShareSettingsTests(unittest.TestCase):
+    """Share settings hands the look to someone else, so it must carry nothing
+    that identifies the sender's instance or unlocks their accounts."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = Path("configurator.html").read_text(encoding="utf-8")
+
+    def test_host_is_a_reserved_name_that_never_resolves(self):
+        self.assertIn("const SHARE_ORIGIN = 'https://share.postersplus.invalid';", self.html)
+        self.assertIn("domainOverride: SHARE_ORIGIN", self.html)
+
+    def test_keys_ids_and_personal_choices_are_dropped(self):
+        start = self.html.index("const _SHARE_DROP")
+        drop = self.html[start:self.html.index("];", start)]
+        for key in ("tmdb_key", "mdblist_key", "access_key", "tmdb_id", "imdb_id",
+                    "stremio_id", "type", "logo_language", "primary_client", "resolution"):
+            with self.subTest(key=key):
+                self.assertIn(f"'{key}'", drop)
+
+    def test_both_shapes_travel_with_every_parameter(self):
+        self.assertIn("COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', "
+                      "...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };", self.html)
+        self.assertIn("buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',", self.html)
+
+    def test_import_takes_settings_only(self):
+        self.assertIn("isShareUrl(raw) ? { settingsOnly: true, share: true } : {}", self.html)
 
 
 if __name__ == "__main__":

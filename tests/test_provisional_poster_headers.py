@@ -80,6 +80,26 @@ class PosterResponseTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.body, self.BODY)
 
+    # ---- provisional renders the composite cache kept briefly ----
+
+    def _kept(self, if_none_match=None):
+        return main._poster_response(
+            _FakeRequest(if_none_match), self.BODY, self.KEY, True, int(time.time()) + 300
+        )
+
+    def test_a_kept_provisional_render_still_ships_no_validator(self):
+        self.assertNotIn("etag", self._kept().headers)
+        self.assertEqual(self._kept(main._poster_etag(self.BODY)).status_code, 200)
+
+    def test_a_kept_provisional_render_may_be_held_only_until_it_expires(self):
+        # Even with no CDN TTL configured: left without Cache-Control, a
+        # client could keep the incomplete poster on its own terms.
+        cc = self._kept().headers["cache-control"]
+        self.assertTrue(cc.startswith("public, max-age="), cc)
+        self.assertLessEqual(int(cc.rsplit("=", 1)[1]), 300)
+        main._cfg.CDN_CACHE_TTL = 86400
+        self.assertLessEqual(int(self._kept().headers["cache-control"].rsplit("=", 1)[1]), 300)
+
     # ---- finished renders ----
 
     def test_a_finished_render_still_gets_a_validator(self):
@@ -222,6 +242,14 @@ class CoalescedRenderTests(unittest.TestCase):
         self.assertEqual(
             resp.headers["cache-control"], "no-store, no-cache, must-revalidate"
         )
+
+    def test_a_hit_on_a_kept_provisional_render_is_answered_as_one(self):
+        with TestClient(main.app) as client:
+            main.get_cached_final_poster_entry = lambda _key: (b"jpeg", int(time.time()) + 300, True)
+            resp = client.get("/poster", params=self.PARAMS)
+        self.assertEqual(resp.content, b"jpeg")
+        self.assertNotIn("etag", resp.headers)
+        self.assertLessEqual(int(resp.headers["cache-control"].rsplit("=", 1)[1]), 300)
 
     def test_coalescing_onto_a_finished_render_still_validates(self):
         resp, _key = self._coalesced_response(b"finished-jpeg", False)

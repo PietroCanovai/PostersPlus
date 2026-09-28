@@ -22,6 +22,7 @@ in main.py and is added in later phases.
 import asyncio
 import io
 import logging
+import time
 
 import httpx
 from PIL import Image
@@ -92,25 +93,46 @@ def _get_semaphore() -> "asyncio.Semaphore":
 # Auth
 # ---------------------------------------------------------------------------
 
+# A failed login is not tried again for a while: every render that wants TVDB
+# art would otherwise log in anew, one after another under the token lock,
+# each with up to a 15 s timeout.  A rejected key (401) waits for a restart,
+# which is when a corrected key would arrive.
+_LOGIN_RETRY_SECS = 300.0
+_login_failed_at: float | None = None
+_login_rejected = False
+
+
 async def _login(client: httpx.AsyncClient) -> str | None:
     """Exchange the API key for a bearer token. Returns None on failure."""
+    global _login_failed_at, _login_rejected
+    if _login_rejected:
+        return None
+    if _login_failed_at is not None and time.monotonic() - _login_failed_at < _LOGIN_RETRY_SECS:
+        return None
     payload: dict = {"apikey": SERVER_TVDB_KEY}
     if TVDB_SUBSCRIBER_PIN:
         payload["pin"] = TVDB_SUBSCRIBER_PIN
     try:
         logger.info("External API Call: TVDB login")
         resp = await client.post(f"{_API_BASE}/login", json=payload, timeout=15.0)
+        if resp.status_code == 401:
+            _login_rejected = True
+            logger.error("TVDB rejected the API key (401); TVDB art is off until restart")
+            return None
         resp.raise_for_status()
         token = ((resp.json() or {}).get("data") or {}).get("token")
         if not token:
+            _login_failed_at = time.monotonic()
             logger.warning("TVDB login returned no token")
             return None
         set_cached_tvdb_json(
             _TOKEN_CACHE_KEY, {"token": token}, _TOKEN_TTL_SECONDS
         )
+        _login_failed_at = None
         return token
     except Exception as exc:
-        logger.warning(f"TVDB login failed: {exc}")
+        _login_failed_at = time.monotonic()
+        logger.warning(f"TVDB login failed: {exc}; not retried for {_LOGIN_RETRY_SECS:.0f}s")
         return None
 
 
@@ -386,12 +408,14 @@ def _select_by_language(
     *,
     strict: bool = False,
 ) -> dict | None:
-    """Pick the best artwork by language preference. Tries each requested language
-    in turn, then language-neutral, then English. Items are pre-sorted by score.
+    """Pick the best artwork by language preference. Items are pre-sorted by
+    score.  "null" in *languages* stands for language-neutral artwork.
 
-    When ``strict`` is False (backgrounds/posters), an unrelated foreign-language
-    item is accepted as a last resort. When ``strict`` is True (logos), that
-    catch-all is dropped and ``None`` is returned instead — so the caller's
+    When ``strict`` is False (backgrounds/posters), the requested languages are
+    followed by language-neutral, then English, then an unrelated foreign-
+    language item as a last resort.  When ``strict`` is True (logos), the
+    requested list is the whole order — it already says where neutral and
+    English go — and ``None`` is returned when it runs out, so the caller's
     provider chain (TMDB/Metahub) is tried rather than serving, say, a French
     logo for an English title."""
     if not items:
@@ -400,15 +424,18 @@ def _select_by_language(
         if not language:
             continue
         for it in items:
-            if it.get("language") == language:
+            if (it.get("language") in (None, "")) if language == "null" \
+                    else it.get("language") == language:
                 return it
+    if strict:
+        return None
     for it in items:
         if it.get("language") in (None, ""):
             return it
     for it in items:
         if it.get("language") == "eng":
             return it
-    return None if strict else items[0]
+    return items[0]
 
 
 # ---------------------------------------------------------------------------
@@ -441,16 +468,22 @@ def _logo_language_order(
     secondary_language: str | None = None,
 ) -> list[str]:
     """Ordered list of TVDB (3-letter) language codes to prefer, derived from the
-    same priority rules TMDB uses so both sources agree on which languages count
-    as a match (and, crucially, which don't).
+    same priority TMDB walks so both sources agree on which languages count as
+    a match (and, crucially, which don't).  "null" is language-neutral; Metahub
+    is not a TVDB source and is left out.
 
     Deduplicated because region collapsing can fold two distinct TMDB entries
     onto one TVDB code — es-mx before es both become spa."""
-    from tmdb import image_language_order
-    order = image_language_order(
+    from tmdb import logo_language_steps
+    steps = logo_language_steps(
         logo_language or "en", original_language, logo_priority, secondary_language
     )
-    return list(dict.fromkeys(lang for lang in (_to_tvdb_lang(c) for c in order) if lang))
+    return list(dict.fromkeys(
+        lang
+        for lang in (step if step == "null" else _to_tvdb_lang(step)
+                     for step in steps if step != "metahub")
+        if lang
+    ))
 
 
 async def fetch_tvdb_logo(
@@ -552,15 +585,17 @@ async def fetch_tvdb_backdrop(
         return None
     url = chosen["url"]
     # Reuse TMDB's crop + cache-version scheme so behaviour and invalidation match.
-    from tmdb import _crop_and_normalise_backdrop, normalise_poster, _CROP_VERSION
+    from tmdb import _crop_and_normalise_backdrop, normalise_poster, _CROP_VERSION, poster_canvas, _canvas_suffix
+    size = poster_canvas()
     cache_key = (
         _cache_key_for(url, "backdrop") + f"_{_CROP_VERSION}" + ("_ta" if avoid_text else "")
+        + _canvas_suffix(size)
     )
     cached = get_cached_tmdb_poster(cache_key)
     if cached:
         logger.info(f"TVDB backdrop cache hit for {tvdb_id}")
         image = Image.open(io.BytesIO(cached)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != size:
             image = normalise_poster(image)
         return image
 
@@ -573,7 +608,7 @@ async def fetch_tvdb_backdrop(
         logger.warning(f"TVDB backdrop parse failed for {tvdb_id}: {exc}")
         return None
     image = await asyncio.get_running_loop().run_in_executor(
-        None, _crop_and_normalise_backdrop, image, f"tvdb:{tvdb_id}", avoid_text
+        None, _crop_and_normalise_backdrop, image, f"tvdb:{tvdb_id}", avoid_text, size
     )
     buf = io.BytesIO()
     image.convert("RGB").save(buf, format="JPEG", quality=92)
@@ -627,13 +662,13 @@ async def fetch_tvdb_poster(
     if not chosen:
         return None
     url = chosen["url"]
-    from tmdb import normalise_poster
-    cache_key = _cache_key_for(url, "poster")
+    from tmdb import normalise_poster, poster_canvas, _canvas_suffix
+    cache_key = _cache_key_for(url, "poster") + _canvas_suffix(poster_canvas())
     cached = get_cached_tmdb_poster(cache_key)
     if cached:
         logger.info(f"TVDB poster cache hit for {tvdb_id}")
         image = Image.open(io.BytesIO(cached)).convert("RGBA")
-        if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
+        if image.size != poster_canvas():
             image = normalise_poster(image)
         return image
 

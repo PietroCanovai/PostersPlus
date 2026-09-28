@@ -29,6 +29,11 @@ Sources (WATCHLIST_SOURCE):
   trakt     GET api.trakt.tv/users/{TRAKT_USERNAME}/watchlist/{type} with a
             client id header only (public profile), or /sync/watchlist/{type}
             as the owner when TRAKT_ACCESS_TOKEN is set (private profile).
+  pmdb      GET publicmetadb.com/api/external/lists/{id}/items with a PMDB
+            API key (Bearer pm-...).  The list is the account's watchlist,
+            found by type on /api/external/lists, unless PMDB_LIST_ID names
+            another.  PMDB returns only a TMDB id and media type per item, so
+            these titles match on (TMDB id, kind) alone.
   <URL>     any MDBList list page, via its /json export — no key needed.
 
 The snapshot is persisted so a restart neither blanks the marker nor treats
@@ -47,6 +52,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterable
+from urllib.parse import quote
 
 import httpx
 
@@ -59,6 +65,10 @@ logger = logging.getLogger(__name__)
 _STATE_KEY_SNAPSHOT   = "watchlist_snapshot"
 _STATE_KEY_SIMKL_TOK  = "simkl_tokens"
 _STATE_KEY_SIMKL_ACT  = "simkl_activities"
+# Shared with the other workers (WORKERS>1): only one runs the refresh loop,
+# but the dashboard may be answered by any of them.
+_STATE_KEY_PENDING    = "simkl_pending"
+_STATE_KEY_REFRESH    = "watchlist_refresh_requested"
 
 _SIMKL_API   = "https://api.simkl.com"
 _SIMKL_UA    = f"postersplus/{_cfg.APP_VERSION} (https://github.com/UmbraProjects/PostersPlus)"
@@ -74,6 +84,10 @@ _SIMKL_REFRESH_AHEAD_SECS = 86400
 _SIMKL_DEVICE_RETRY_SECS = 3600
 
 _TRAKT_API = "https://api.trakt.tv"
+
+_PMDB_API       = "https://publicmetadb.com/api/external"
+_PMDB_PAGE_SIZE = 500   # the documented maximum
+_PMDB_MAX_PAGES = 40
 
 _MDBLIST_API       = "https://api.mdblist.com"
 _MDBLIST_PAGE_SIZE = 500
@@ -155,12 +169,12 @@ def normalise_kind(media_type: str | None) -> Kind:
 
 
 def source_mode() -> str:
-    """"mdblist" | "simkl" | "trakt" | "url" | "" (disabled)."""
+    """"mdblist" | "simkl" | "trakt" | "pmdb" | "url" | "" (disabled)."""
     src = _cfg.WATCHLIST_SOURCE.strip()
     if not src:
         return ""
     low = src.lower()
-    if low in ("mdblist", "simkl", "trakt"):
+    if low in ("mdblist", "simkl", "trakt", "pmdb"):
         return low
     if low.startswith("http://") or low.startswith("https://"):
         return "url"
@@ -168,7 +182,7 @@ def source_mode() -> str:
 
 
 def is_enabled() -> bool:
-    return source_mode() in ("mdblist", "simkl", "trakt", "url")
+    return source_mode() in ("mdblist", "simkl", "trakt", "pmdb", "url")
 
 
 def is_listed(imdb_id: str | None, tmdb_id: str | None, media_type: str | None) -> bool:
@@ -203,6 +217,13 @@ def link_status() -> dict:
     out = status()
     if source_mode() == "simkl":
         pending = _simkl_pending
+        if pending is None:
+            # Issued by the worker running the loop, if not this one.
+            try:
+                raw = get_app_state(_STATE_KEY_PENDING)
+                pending = json.loads(raw) if raw else None
+            except Exception:
+                pending = None
         if pending and pending["expires_at"] <= time.time():
             pending = None
         out["simkl"] = {
@@ -217,50 +238,10 @@ def request_refresh() -> None:
     fresh link code immediately when the account is not linked yet."""
     global _simkl_next_device_prompt
     _simkl_next_device_prompt = 0.0
-
-
-async def simkl_unlink(client: httpx.AsyncClient) -> dict:
-    """Forget the SIMKL grant: revoke it upstream when we can, drop the
-    stored tokens, the activities fingerprint and the snapshot, and clear
-    every cached poster that carried the marker.  The next refresh issues a
-    fresh link code.
-
-    A V2 grant is revoked through /oauth2/revoke (either token ends the
-    grant).  V1 has no revoke endpoint, so that token stays valid at SIMKL
-    until the user removes PostersPlus at simkl.com/settings/connected-apps
-    — the result says which happened.
-    """
-    global _simkl_next_device_prompt
-    tokens = _simkl_load_tokens()
-    revoked = False
-    if tokens and tokens.get("refresh_token"):
-        try:
-            form = {"client_id": _cfg.SIMKL_CLIENT_ID, "token": tokens["refresh_token"]}
-            if _cfg.SIMKL_CLIENT_SECRET:
-                form["client_secret"] = _cfg.SIMKL_CLIENT_SECRET
-            resp = await client.post(
-                f"{_SIMKL_API}/oauth2/revoke", data=form,
-                headers={"User-Agent": _SIMKL_UA, "Content-Type": "application/x-www-form-urlencoded"},
-                timeout=20.0,
-            )
-            # RFC 7009: always 200, so success cannot be confirmed — only attempted.
-            revoked = resp.status_code == 200
-        except Exception as exc:
-            logger.warning(f"Watchlist: SIMKL revoke request failed: {exc}")
-    set_app_state(_STATE_KEY_SIMKL_TOK, "")
-    set_app_state(_STATE_KEY_SIMKL_ACT, "")
-    changed = _apply([])
-    _simkl_next_device_prompt = 0.0
-    logger.info("Watchlist: SIMKL account unlinked" + (" (grant revoked)" if revoked else ""))
-    return {
-        "unlinked":  True,
-        "revoked":   revoked,
-        "had_token": bool(tokens),
-        "flow":      "v2" if tokens and tokens.get("refresh_token") else ("v1" if tokens else None),
-        "changed":   changed,
-    }
     if _wake is not None:
         _wake.set()
+    # For the worker that runs the loop, when it isn't this one.
+    set_app_state(_STATE_KEY_REFRESH, repr(time.time()))
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +260,8 @@ def _source_signature() -> str:
         return "simkl:" + ",".join(sorted(_cfg.WATCHLIST_SIMKL_STATUSES))
     if mode == "trakt":
         return "trakt:" + (_cfg.TRAKT_USERNAME.lower() if not _cfg.TRAKT_ACCESS_TOKEN else "me")
+    if mode == "pmdb":
+        return "pmdb:" + (_cfg.PMDB_LIST_ID or "watchlist")
     return mode
 
 
@@ -292,7 +275,7 @@ def _persist(snapshot: Snapshot) -> None:
     }))
 
 
-def load_persisted() -> Snapshot:
+def load_persisted(quiet: bool = False) -> Snapshot:
     """Restore the last snapshot written for the *same* source, else empty."""
     global _snapshot, _loaded
     _loaded = True
@@ -302,7 +285,8 @@ def load_persisted() -> Snapshot:
     try:
         data = json.loads(raw)
         if data.get("source") != _source_signature():
-            logger.info("Watchlist: persisted snapshot is for a different source — starting empty")
+            if not quiet:
+                logger.info("Watchlist: persisted snapshot is for a different source — starting empty")
             return _snapshot
         _snapshot = Snapshot(
             imdb=frozenset(str(i) for i in data.get("imdb", [])),
@@ -310,7 +294,8 @@ def load_persisted() -> Snapshot:
             fetched_at=float(data.get("fetched_at") or 0.0),
             count=int(data.get("count") or 0),
         )
-        logger.info(f"Watchlist: restored snapshot of {_snapshot.count} titles from the last run")
+        if not quiet:
+            logger.info(f"Watchlist: restored snapshot of {_snapshot.count} titles from the last run")
     except Exception as exc:
         logger.warning(f"Watchlist: could not restore persisted snapshot: {exc}")
     return _snapshot
@@ -396,6 +381,24 @@ def parse_trakt_items(items, kind: Kind) -> list[WatchlistEntry]:
         tmdb = _clean_tmdb(ids.get("tmdb"))
         if imdb or tmdb:
             out.append(WatchlistEntry(imdb, tmdb, kind))
+    return out
+
+
+def parse_pmdb_items(items) -> list[WatchlistEntry]:
+    """PMDB list items: {"id": "li_...", "tmdb_id": 27205, "media_type": "movie"|"tv"}.
+    No IMDb id is offered, so the entry is keyed on TMDB alone."""
+    out: list[WatchlistEntry] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("media_type") or "").lower()
+        if media_type not in ("movie", "tv"):
+            continue
+        tmdb = _clean_tmdb(item.get("tmdb_id"))
+        if tmdb:
+            out.append(WatchlistEntry(None, tmdb, normalise_kind(media_type)))
     return out
 
 
@@ -524,6 +527,68 @@ async def _fetch_trakt(client: httpx.AsyncClient) -> list[WatchlistEntry]:
     return entries
 
 
+# --- PMDB ------------------------------------------------------------------
+
+async def _pmdb_get(client: httpx.AsyncClient, path: str, page: int) -> dict:
+    # The key rides in a header, never the URL, so _describe_error's sanitised
+    # URL is safe to publish on /server-caps.
+    resp = await client.get(
+        f"{_PMDB_API}{path}",
+        params={"page": page, "perPage": _PMDB_PAGE_SIZE},
+        headers={"Authorization": f"Bearer {_cfg.PMDB_API_KEY}", "Accept": "application/json"},
+        timeout=20.0,
+    )
+    if resp.status_code == 401:
+        raise RuntimeError("PMDB rejected PMDB_API_KEY (HTTP 401) — create a key under Settings → API on publicmetadb.com")
+    if resp.status_code == 404 and path.startswith("/lists/"):
+        list_id = path.split("/")[2]
+        raise RuntimeError(f"PMDB has no list {list_id!r} visible to this key (HTTP 404)")
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"PMDB {path} returned an unexpected response")
+    return payload
+
+
+async def _pmdb_pages(client: httpx.AsyncClient, path: str):
+    for page in range(1, _PMDB_MAX_PAGES + 1):
+        payload = await _pmdb_get(client, path, page)
+        items = payload.get("items")
+        yield items if isinstance(items, list) else []
+        try:
+            total_pages = int(payload.get("totalPages") or 1)
+        except (TypeError, ValueError):
+            total_pages = 1
+        if page >= total_pages or not items:
+            break
+
+
+async def _pmdb_watchlist_id(client: httpx.AsyncClient) -> str | None:
+    logger.info("External API Call: PMDB lists")
+    async for lists in _pmdb_pages(client, "/lists"):
+        for lst in lists:
+            if isinstance(lst, dict) and lst.get("type") == "watchlist" and lst.get("id"):
+                return str(lst["id"])
+    return None
+
+
+async def _fetch_pmdb(client: httpx.AsyncClient) -> list[WatchlistEntry]:
+    if not _cfg.PMDB_API_KEY:
+        raise RuntimeError("WATCHLIST_SOURCE=pmdb needs PMDB_API_KEY")
+    # Looked up every cycle rather than remembered: it is one call, and a
+    # watchlist deleted and recreated on PMDB gets a new id.
+    list_id = _cfg.PMDB_LIST_ID or await _pmdb_watchlist_id(client)
+    if not list_id:
+        # A new account has no watchlist until something is added to it.
+        logger.info("Watchlist: the PMDB account has no watchlist yet")
+        return []
+    entries: list[WatchlistEntry] = []
+    logger.info(f"External API Call: PMDB list items ({list_id})")
+    async for items in _pmdb_pages(client, f"/lists/{quote(list_id, safe='')}/items"):
+        entries.extend(parse_pmdb_items(items))
+    return entries
+
+
 # --- SIMKL -----------------------------------------------------------------
 
 def _simkl_params() -> dict:
@@ -643,11 +708,13 @@ def _set_pending(user_code: str | None, link: str | None, expires_in: float, flo
         "expires_at": int(time.time() + expires_in),
         "flow":       flow,
     }
+    set_app_state(_STATE_KEY_PENDING, json.dumps(_simkl_pending))
 
 
 def _clear_pending() -> None:
     global _simkl_pending
     _simkl_pending = None
+    set_app_state(_STATE_KEY_PENDING, "")
 
 
 async def _simkl_pin_flow_v1(client: httpx.AsyncClient) -> dict | None:
@@ -733,7 +800,6 @@ async def simkl_unlink(client: httpx.AsyncClient) -> dict:
     until the user removes PostersPlus at simkl.com/settings/connected-apps
     — the result says which happened.
     """
-    global _simkl_next_device_prompt
     tokens = _simkl_load_tokens()
     revoked = False
     if tokens and tokens.get("refresh_token"):
@@ -753,7 +819,7 @@ async def simkl_unlink(client: httpx.AsyncClient) -> dict:
     set_app_state(_STATE_KEY_SIMKL_TOK, "")
     set_app_state(_STATE_KEY_SIMKL_ACT, "")
     changed = _apply([])
-    _simkl_next_device_prompt = 0.0
+    request_refresh()   # a fresh link code now, not at the next cycle
     logger.info("Watchlist: SIMKL account unlinked" + (" (grant revoked)" if revoked else ""))
     return {
         "unlinked":  True,
@@ -843,6 +909,27 @@ async def _fetch_simkl(client: httpx.AsyncClient) -> list[WatchlistEntry] | None
 # Refresh cycle and loop
 # ---------------------------------------------------------------------------
 
+def _describe_error(exc: Exception) -> str:
+    """A refresh failure as status() reports it.
+
+    status() is public (/server-caps, /stats), and an httpx error's message
+    carries the full request URL, query included — for the mdblist source
+    that is ?apikey=<the server's key>.  So an httpx error is described by its
+    status and a sanitised URL only.  Anything else is one of this module's
+    own RuntimeErrors, whose message is written to be shown.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return (f"HTTP {exc.response.status_code} from "
+                f"{sanitise_source_url(str(exc.request.url))}")
+    if isinstance(exc, httpx.HTTPError):
+        try:
+            where = sanitise_source_url(str(exc.request.url))
+        except RuntimeError:   # .request is unset on an error raised outside a request
+            where = "upstream"
+        return f"{type(exc).__name__} contacting {where}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
     """Fetch the configured source once and update the snapshot.
 
@@ -860,6 +947,8 @@ async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
             entries = await _fetch_simkl(client)
         elif mode == "trakt":
             entries = await _fetch_trakt(client)
+        elif mode == "pmdb":
+            entries = await _fetch_pmdb(client)
         elif mode == "url":
             entries = await _fetch_mdblist_url(client)
         else:
@@ -867,7 +956,7 @@ async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
             logger.error(f"Watchlist: {_last_error}")
             return None
     except Exception as exc:
-        _last_error = f"{type(exc).__name__}: {exc}"
+        _last_error = _describe_error(exc)
         logger.error(f"Watchlist: refresh failed ({mode}): {_last_error} — keeping the previous snapshot")
         return None
 
@@ -892,26 +981,53 @@ async def watchlist_refresh_loop(
         if source_mode() == "invalid":
             logger.error(
                 f"Watchlist: WATCHLIST_SOURCE={_cfg.WATCHLIST_SOURCE!r} is not mdblist, simkl, "
-                "trakt or an MDBList list URL — feature disabled"
+                "trakt, pmdb or an MDBList list URL — feature disabled"
             )
         return
     load_persisted()
     logger.info(
         f"Watchlist: source {source_mode()}, refreshing every {_cfg.WATCHLIST_REFRESH_MINUTES} min"
     )
-    global _wake
+    global _wake, _simkl_next_device_prompt
     _wake = asyncio.Event()
     await asyncio.sleep(20)   # let startup settle before the first outbound call
     while True:
         _wake.clear()
+        seen_request = get_app_state(_STATE_KEY_REFRESH) or ""
         try:
             changed = await refresh(client)
             if changed and on_change is not None:
                 await on_change(changed)
         except Exception as exc:
             logger.error(f"Watchlist: loop error: {exc}")
-        # Sleep the interval, or less if request_refresh() wakes us.
+        # Sleep the interval, or less if request_refresh() wakes us — in this
+        # worker through _wake, from another through the shared flag.
+        deadline = time.monotonic() + _cfg.WATCHLIST_REFRESH_MINUTES * 60
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                await asyncio.wait_for(_wake.wait(), timeout=min(left, _REFRESH_POLL_SECS))
+                break
+            except asyncio.TimeoutError:
+                pass
+            if (get_app_state(_STATE_KEY_REFRESH) or "") != seen_request:
+                _simkl_next_device_prompt = 0.0
+                break
+
+
+# How often the loop checks for a refresh asked of another worker.
+_REFRESH_POLL_SECS = 5.0
+
+
+async def follow_persisted_loop(interval: float = 60.0) -> None:
+    """For a worker that doesn't run the refresh loop (WORKERS>1): keep this
+    worker's snapshot, which every render reads, in step with the one the
+    loop's worker persists."""
+    if not is_enabled():
+        return
+    load_persisted()
+    while True:
+        await asyncio.sleep(interval)
         try:
-            await asyncio.wait_for(_wake.wait(), timeout=_cfg.WATCHLIST_REFRESH_MINUTES * 60)
-        except asyncio.TimeoutError:
-            pass
+            load_persisted(quiet=True)
+        except Exception as exc:
+            logger.warning(f"Watchlist: could not reload the shared snapshot: {exc}")

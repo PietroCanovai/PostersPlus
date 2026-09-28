@@ -8,7 +8,8 @@ import tempfile
 import time
 import json
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from festivals import LEGACY_LABEL_KEYWORDS
 import config as _cfg
@@ -300,6 +301,18 @@ def init_db() -> None:
         )
     """)
 
+    # Face boxes the tinted vignette keeps out of its colour vote, keyed by a
+    # hash of the art they were found in.  YuNet costs a fifth of a vignette
+    # render, and the same art is rendered again for every settings variant,
+    # rank change and cache bust.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS face_box_cache (
+            cache_key  TEXT PRIMARY KEY,
+            boxes_json TEXT    NOT NULL,
+            cached_at  INTEGER NOT NULL
+        )
+    """)
+
     # Small generic key/value store for app-level bookkeeping (e.g. the last
     # cache-warm cycle's timestamp) that doesn't warrant its own table.
     conn.execute("""
@@ -319,6 +332,20 @@ def init_db() -> None:
             value_json  TEXT NOT NULL,
             cached_at   INTEGER NOT NULL,
             ttl_seconds INTEGER NOT NULL
+        )
+    """)
+
+    # What the graphic badges need about a title beyond the core metadata: the
+    # US certificate and the raw network / production-company lists (the
+    # curated selection is applied at render time, so changing it needs no
+    # refetch).  Kept apart from tmdb_metadata_cache so adding them didn't
+    # mean re-fetching every title's metadata.  cache_key = "{movie|tv}_{id}";
+    # "network_{id}" rows hold a network's logo path for streamer films.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS badge_facts_cache (
+            cache_key  TEXT PRIMARY KEY,
+            facts_json TEXT NOT NULL,
+            cached_at  INTEGER NOT NULL
         )
     """)
 
@@ -345,6 +372,8 @@ def init_db() -> None:
         ("last_episode_json",   "TEXT"),
         ("seasons_json",        "TEXT"),
         ("metadata_version",    "INTEGER"),
+        ("alt_poster_path",     "TEXT"),
+        ("poster_pools_json",   "TEXT"),
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
@@ -362,12 +391,32 @@ def init_db() -> None:
     # computed at write time from whichever input expires soonest.  NULL rows
     # predate the column and fall back to cached_at + TTL + jitter.
     _add_column_if_missing(conn, "final_poster_cache", "expires_at", "INTEGER")
+    # For prune_caches: without it the expiry predicate scans the table, and
+    # since expires_at is stored after the image blob, reading it follows every
+    # blob's overflow chain — the whole file, on every prune.  The build is a
+    # one-time pass on an existing cache.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_final_poster_expires_at "
+        "ON final_poster_cache(expires_at)"
+    )
+
+    # Render revision and facts, for invalidating only the composites a drawing
+    # change affects (see _RENDER_REVISIONS in main.py).  NULL rows predate the
+    # columns: revision 0, no facts recorded.
+    _add_column_if_missing(conn, "final_poster_cache", "render_rev", "INTEGER")
+    _add_column_if_missing(conn, "final_poster_cache", "render_facts", "TEXT")
+    # A provisional render kept for PROVISIONAL_CACHE_TTL: a hit on it must
+    # be answered as one (no validator).
+    _add_column_if_missing(conn, "final_poster_cache", "provisional", "INTEGER")
 
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
     # own — up to a day of an operator setting the variable, restarting, seeing
     # the old rankings and concluding the feature was broken.
     _add_column_if_missing(conn, "trending_cache", "source_sig", "TEXT")
+    # Name, year and art for each ranked title, for the trending catalogs
+    # addon, which serves the snapshot as a Stremio catalog.
+    _add_column_if_missing(conn, "trending_cache", "details_json", "TEXT")
 
     conn.commit()
 
@@ -403,17 +452,17 @@ def _quality_ttl(release_date: str | None) -> int:
 
 # L1: bounded in-memory LRU — most-recently-used composites served without
 # any SQLite read, keeping the hot set off the OS page cache.  Each value is
-# (expires_at, jpeg_bytes): L1 carries the same deadline as its L2 row, because
-# an entry that never ages out in RAM would happily serve a Cinema sash for as
-# long as the LRU kept it resident.
-_composite_l1: OrderedDict[str, tuple[int, bytes]] = OrderedDict()
+# (expires_at, jpeg_bytes, render_rev, render_facts, provisional): L1 carries the same
+# deadline as its L2 row, because an entry that never ages out in RAM would
+# happily serve a Cinema sash for as long as the LRU kept it resident.
+_composite_l1: OrderedDict[str, tuple[int, bytes, int, "dict | None", bool]] = OrderedDict()
 _composite_l1_lock = threading.Lock()
 
 
 def composite_l1_stats() -> dict:
     with _composite_l1_lock:
         count = len(_composite_l1)
-        total_bytes = sum(len(data) for _expires_at, data in _composite_l1.values())
+        total_bytes = sum(len(entry[1]) for entry in _composite_l1.values())
     return {"entries": count, "bytes": total_bytes}
 
 
@@ -428,36 +477,50 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
     return None if entry is None else entry[0]
 
 
-def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
-    """Return (jpeg_bytes, expires_at) for a composited poster, or None on miss.
+def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int, bool] | None":
+    """(jpeg_bytes, expires_at, provisional) from the in-memory LRU alone — no
+    disk I/O, so cheap enough to call on the event loop before handing an L2
+    read to a thread."""
+    if COMPOSITE_MEM_ENTRIES <= 0:
+        return None
+    now = time.time()
+    with _composite_l1_lock:
+        entry = _composite_l1.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, data = entry[0], entry[1]
+        if now <= expires_at:
+            _composite_l1.move_to_end(cache_key)
+            return data, int(expires_at), bool(entry[4])
+        # Nothing sweeps L1 on a timer, so an aged-out entry is dropped on the
+        # read that finds it and the L2 check takes over.
+        del _composite_l1[cache_key]
+    return None
+
+
+def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int, bool] | None":
+    """Return (jpeg_bytes, expires_at, provisional) for a composited poster, or
+    None on miss.
 
     Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
     and promotes the result to L1 so the next hit is served entirely from RAM.
     """
     now = time.time()
 
-    # L1: in-memory LRU — no disk I/O, no OS page-cache pressure
-    if COMPOSITE_MEM_ENTRIES > 0:
-        with _composite_l1_lock:
-            entry = _composite_l1.get(cache_key)
-            if entry is not None:
-                expires_at, data = entry
-                if now <= expires_at:
-                    _composite_l1.move_to_end(cache_key)
-                    return data, int(expires_at)
-                # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
-                # on the read that finds it and the L2 check below takes over.
-                del _composite_l1[cache_key]
+    hit = get_cached_final_poster_l1(cache_key)
+    if hit is not None:
+        return hit
 
     # L2: SQLite with TTL check
     try:
         row = get_db().execute(
-            "SELECT jpeg_bytes, cached_at, expires_at FROM final_poster_cache WHERE cache_key = ?",
+            "SELECT jpeg_bytes, cached_at, expires_at, render_rev, render_facts, provisional "
+            "FROM final_poster_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        jpeg_bytes, cached_at, expires_at = row
+        jpeg_bytes, cached_at, expires_at, render_rev, render_facts, provisional = row
         if expires_at is None:
             expires_at = _composite_expiry(cache_key, cached_at)
         if now > expires_at:
@@ -475,17 +538,67 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
         # Promote to L1
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
-                _composite_l1[cache_key] = (int(expires_at), data)
+                _composite_l1[cache_key] = (
+                    int(expires_at), data, render_rev or 0, _load_render_facts(render_facts),
+                    bool(provisional),
+                )
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
-        return data, int(expires_at)
+        return data, int(expires_at), bool(provisional)
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None
 
 
-def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> int:
+def _load_render_facts(raw: "str | None") -> "dict | None":
+    if not raw:
+        return None
+    try:
+        facts = json.loads(raw)
+    except ValueError:
+        return None
+    return facts if isinstance(facts, dict) else None
+
+
+def get_cached_final_poster_render_meta_l1(cache_key: str) -> "tuple[int, dict | None] | None":
+    """get_cached_final_poster_render_meta from the in-memory LRU alone."""
+    with _composite_l1_lock:
+        entry = _composite_l1.get(cache_key)
+    return None if entry is None else (entry[2], entry[3])
+
+
+def get_cached_final_poster_render_meta(cache_key: str) -> "tuple[int, dict | None] | None":
+    """(render_rev, render_facts) of a cached composite, or None when there is
+    no row.  Rows written before the columns existed read as (0, None).
+
+    Separate from the entry lookup so the extra read is only paid by requests
+    a pending render revision could apply to."""
+    hit = get_cached_final_poster_render_meta_l1(cache_key)
+    if hit is not None:
+        return hit
+    try:
+        row = get_db().execute(
+            "SELECT render_rev, render_facts FROM final_poster_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    except Exception as exc:
+        logger.error(f"Final poster cache meta read error: {exc}")
+        return None
+    if not row:
+        return None
+    return row[0] or 0, _load_render_facts(row[1])
+
+
+def set_cached_final_poster(
+    cache_key: str,
+    jpeg_bytes: bytes,
+    request_params: str = None,
+    ttl_override: int = None,
+    render_rev: int = 0,
+    render_facts: "dict | None" = None,
+    provisional: bool = False,
+) -> int:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
 
     *ttl_override* caps the lifetime, in seconds, for a render that depends on
@@ -493,6 +606,11 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     release status.  It is a cap on the jittered TTL rather than a value added
     to it, so a one-day override really means one day and not one day plus up
     to COMPOSITE_CACHE_TTL_JITTER.
+
+    *render_rev* and *render_facts* record which drawing-code revision made
+    the poster and what was on it, so a later revision can invalidate just the
+    posters it changes.  *provisional* marks a render missing a piece, kept
+    only briefly (the caller caps its TTL) and served without a validator.
 
     Returns the unix time this composite expires.
     """
@@ -505,7 +623,7 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
-            _composite_l1[cache_key] = (expires_at, jpeg_bytes)
+            _composite_l1[cache_key] = (expires_at, jpeg_bytes, render_rev, render_facts, provisional)
             _composite_l1.move_to_end(cache_key)
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
@@ -516,29 +634,58 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO final_poster_cache
-                    (cache_key, jpeg_bytes, cached_at, request_params, expires_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (cache_key, jpeg_bytes, cached_at, request_params, expires_at,
+                     render_rev, render_facts, provisional)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (cache_key, jpeg_bytes, now, request_params, expires_at),
+                (cache_key, jpeg_bytes, now, request_params, expires_at, render_rev,
+                 json.dumps(render_facts) if render_facts is not None else None,
+                 1 if provisional else None),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
-                (count,) = get_db().execute(
-                    "SELECT COUNT(*) FROM final_poster_cache"
-                ).fetchone()
-                overflow = count - COMPOSITE_MAX_ENTRIES
-                if overflow > 0:
-                    get_db().execute(
-                        "DELETE FROM final_poster_cache WHERE cache_key IN "
-                        "(SELECT cache_key FROM final_poster_cache "
-                        " ORDER BY cached_at ASC LIMIT ?)",
-                        (overflow,),
-                    )
-                    logger.info(f"Composite cache cap: evicted {overflow} oldest entries")
+                _enforce_composite_cap()
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
 
     return expires_at
+
+
+# COMPOSITE_MAX_ENTRIES bookkeeping.  A COUNT(*) on every write is a full scan
+# of the table's index each time, so the count is estimated between real ones:
+# every write adds one (a replace doesn't really, and deletes elsewhere only
+# lower the true count, so the estimate never runs below it from this worker's
+# writes).  Other workers' writes are invisible to it, hence the real count at
+# least every _COMPOSITE_RECOUNT_EVERY writes, which bounds how far past the cap
+# the table can drift.
+_COMPOSITE_RECOUNT_EVERY = 64
+_composite_count_estimate: int | None = None
+_composite_writes_since_count = 0
+
+
+def _enforce_composite_cap() -> None:
+    """Evict the oldest composites past COMPOSITE_MAX_ENTRIES.  Called with
+    _db_lock held, inside set_cached_final_poster's transaction."""
+    global _composite_count_estimate, _composite_writes_since_count
+    _composite_writes_since_count += 1
+    if _composite_count_estimate is not None:
+        _composite_count_estimate += 1
+        if (_composite_count_estimate <= COMPOSITE_MAX_ENTRIES
+                and _composite_writes_since_count < _COMPOSITE_RECOUNT_EVERY):
+            return
+    (count,) = get_db().execute("SELECT COUNT(*) FROM final_poster_cache").fetchone()
+    _composite_writes_since_count = 0
+    overflow = count - COMPOSITE_MAX_ENTRIES
+    if overflow > 0:
+        get_db().execute(
+            "DELETE FROM final_poster_cache WHERE cache_key IN "
+            "(SELECT cache_key FROM final_poster_cache "
+            " ORDER BY cached_at ASC LIMIT ?)",
+            (overflow,),
+        )
+        logger.info(f"Composite cache cap: evicted {overflow} oldest entries")
+        count -= overflow
+    _composite_count_estimate = count
 
 
 def delete_cached_final_poster(cache_key: str) -> None:
@@ -552,6 +699,26 @@ def delete_cached_final_poster(cache_key: str) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache delete error: {exc}")
+
+def invalidate_anime_posters(anime_key: str) -> None:
+    """Invalidate every composite rendered for an anime id ("anilist:123"),
+    whose cache key leads with it."""
+    prefix = f"{anime_key}:"
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            for k in [k for k in _composite_l1 if k.startswith(prefix)]:
+                _composite_l1.pop(k, None)
+    try:
+        with _db_lock:
+            get_db().execute(
+                "DELETE FROM final_poster_cache WHERE cache_key LIKE ?",
+                (f"{prefix}%",),
+            )
+            get_db().commit()
+        logger.info(f"Invalidated final poster cache for {anime_key}")
+    except Exception as exc:
+        logger.error(f"Anime poster invalidation error: {exc}")
+
 
 def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> None:
     """Invalidate all composited posters for a specific TMDB ID.
@@ -572,9 +739,12 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
         with _composite_l1_lock:
             keys_to_delete = []
             for k in _composite_l1:
+                # Read from the tail: an anime key has more segments in front
+                # ("kitsu:<id>:<imdb>:<tmdb>:<type>:<hash>"), so parts[1] is
+                # the anime id there and the entry was never cleared.
                 parts = k.split(":")
-                if len(parts) >= 3 and parts[1] == tmdb_id:
-                    if type_variants is None or parts[2] in type_variants:
+                if len(parts) >= 4 and parts[-3] == tmdb_id:
+                    if type_variants is None or parts[-2] in type_variants:
                         keys_to_delete.append(k)
             for k in keys_to_delete:
                 _composite_l1.pop(k, None)
@@ -598,6 +768,84 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
         logger.error(f"Final poster cache invalidate error: {exc}")
 
 
+# {cache_key: request_params} of composites a trending turnover deleted, for
+# the trending loop to re-render (see pop_trending_turnover_replay).  Capped,
+# so a turnover no loop drains (trending off) can't grow it without bound.
+_turnover_replay: dict[str, str] = {}
+_turnover_replay_lock = threading.Lock()
+_TURNOVER_REPLAY_MAX = 2000
+
+
+def pop_trending_turnover_replay() -> dict[str, str]:
+    with _turnover_replay_lock:
+        out = dict(_turnover_replay)
+        _turnover_replay.clear()
+    return out
+
+
+def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> int:
+    """Invalidate the composites of every title whose trending rank changed,
+    in one pass over the composite keys.
+
+    invalidate_final_posters() is a LIKE '%:id:%' scan of the whole table, and
+    running one per changed title (two for TV) made a turnover of a hundred
+    titles over a large cache take seconds.  This reads the keys once — the
+    primary-key index covers it, the image blobs are never touched — matches
+    them in Python the way the per-title calls did, and deletes the matches in
+    one transaction.  Returns the number of rows deleted.
+
+    *media_type* is the snapshot's: "anime" ids are "anilist:<id>", the anime
+    namespace a composite key leads with; anything else is a TMDB id matched
+    against the key's tail, with "tv" and "series" treated as one.
+    """
+    if not changed_ids:
+        return 0
+    if media_type == "anime":
+        prefixes = tuple(f"{anime_key}:" for anime_key in changed_ids)
+
+        def _match(key: str) -> bool:
+            return key.startswith(prefixes)
+    else:
+        types = ("tv", "series") if media_type in ("tv", "series") else (media_type,)
+
+        def _match(key: str) -> bool:
+            parts = key.split(":")
+            return len(parts) >= 4 and parts[-3] in changed_ids and parts[-2] in types
+
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            for k in [k for k in _composite_l1 if _match(k)]:
+                del _composite_l1[k]
+    try:
+        keys = [
+            (k,) for (k,) in get_db().execute("SELECT cache_key FROM final_poster_cache")
+            if _match(k)
+        ]
+        # Kept for the trending loop to render again warm: once deleted, these
+        # are no longer there for its scan to find.
+        with _turnover_replay_lock:
+            for (k,) in keys:
+                if len(_turnover_replay) >= _TURNOVER_REPLAY_MAX:
+                    break
+                row = get_db().execute(
+                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                ).fetchone()
+                if row and row[0]:
+                    _turnover_replay[k] = row[0]
+        if keys:
+            with _db_lock:
+                get_db().executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", keys)
+                get_db().commit()
+        logger.info(
+            f"Invalidated {len(keys)} cached posters for {len(changed_ids)} "
+            f"{media_type} trending changes"
+        )
+        return len(keys)
+    except Exception as exc:
+        logger.error(f"Trending turnover invalidation error: {exc}")
+        return 0
+
+
 def get_cache_stats() -> dict:
     """
     Return row counts for every cache table plus the composite cache's total
@@ -611,7 +859,7 @@ def get_cache_stats() -> dict:
             "rating_cache", "quality_cache", "trending_cache",
             "tmdb_metadata_cache", "final_poster_cache",
             "digital_release_cache", "release_status_cache",
-            "movie_release_info_cache", "text_detection_cache",
+            "movie_release_info_cache", "text_detection_cache", "face_box_cache",
         ):
             try:
                 (n,) = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -640,6 +888,9 @@ def get_cache_stats() -> dict:
     return stats
 
 
+_PRUNE_BATCH = 1000
+
+
 def prune_caches() -> None:
     """
     Delete expired rows from every SQLite cache table.
@@ -655,22 +906,34 @@ def prune_caches() -> None:
     """
     now = int(time.time())
     try:
+        # Composites — per-row deadline (a render can be pinned to a trending
+        # rank or a release status that expires well before
+        # COMPOSITE_CACHE_TTL).  Rows predating the expires_at column fall back
+        # to the flat TTL plus the largest jitter any key can draw, so this
+        # never deletes one the read path would still call fresh.  Deleted in
+        # batches, each its own transaction, so a big eviction (freeing every
+        # blob's pages) doesn't hold _db_lock, and with it every write in this
+        # process, for the whole pass.
+        pruned = 0
+        while True:
+            with _db_lock:
+                db = get_db()
+                r = db.execute(
+                    "DELETE FROM final_poster_cache WHERE cache_key IN ("
+                    "SELECT cache_key FROM final_poster_cache WHERE "
+                    "(expires_at IS NOT NULL AND expires_at < ?) OR "
+                    "(expires_at IS NULL AND cached_at < ?) LIMIT ?)",
+                    (now, now - COMPOSITE_CACHE_TTL - COMPOSITE_CACHE_TTL_JITTER // 2, _PRUNE_BATCH),
+                )
+                db.commit()
+            pruned += max(r.rowcount, 0)
+            if r.rowcount < _PRUNE_BATCH:
+                break
+        if pruned:
+            logger.info(f"Pruned {pruned} expired composite cache entries")
+
         with _db_lock:
             db = get_db()
-
-            # Composites — per-row deadline (a render can be pinned to a
-            # trending rank or a release status that expires well before
-            # COMPOSITE_CACHE_TTL).  Rows predating the expires_at column fall
-            # back to the flat TTL plus the largest jitter any key can draw, so
-            # this never deletes one the read path would still call fresh.
-            r = db.execute(
-                "DELETE FROM final_poster_cache WHERE "
-                "(expires_at IS NOT NULL AND expires_at < ?) OR "
-                "(expires_at IS NULL AND cached_at < ?)",
-                (now, now - COMPOSITE_CACHE_TTL - COMPOSITE_CACHE_TTL_JITTER // 2),
-            )
-            if r.rowcount:
-                logger.info(f"Pruned {r.rowcount} expired composite cache entries")
 
             # Ratings / quality / metadata — use the most generous TTL so we
             # never evict something that could still be considered fresh.
@@ -729,6 +992,11 @@ def prune_caches() -> None:
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} old text-detection cache entries")
+            r = db.execute(
+                "DELETE FROM face_box_cache WHERE cached_at < ?", (detection_cutoff,)
+            )
+            if r.rowcount:
+                logger.info(f"Pruned {r.rowcount} old face-box cache entries")
 
             # Each tvdb_cache row stores its own TTL, so expiry is per-row rather
             # than a single cutoff.
@@ -750,9 +1018,14 @@ def prune_caches() -> None:
         with _db_lock:
             db = get_db()
             auto_vac = db.execute("PRAGMA auto_vacuum").fetchone()[0]
-            if auto_vac == 2:   # INCREMENTAL — cheap, moves a few pages, no long lock
-                db.execute("PRAGMA incremental_vacuum(100)")
-                db.commit()
+            if auto_vac == 2:   # INCREMENTAL — moves pages, no long lock
+                # Up to ~100 MB (at 4 KB pages) a pass: a fixed 100 pages freed
+                # 400 KB per six hours, so the file never shrank after a big
+                # eviction.  Free pages are reused either way.
+                free = db.execute("PRAGMA freelist_count").fetchone()[0]
+                if free:
+                    db.execute(f"PRAGMA incremental_vacuum({min(int(free), 25000)})")
+                    db.commit()
             else:
                 # Legacy DB created before incremental auto-vacuum (auto_vacuum=0):
                 # the incremental pragma is a no-op there, so freed pages (e.g. from
@@ -1031,16 +1304,56 @@ def set_cached_quality(
 # All callers use get_cached_trending_snapshot / set_cached_trending_snapshot.
 # ---------------------------------------------------------------------------
 
-def get_cached_trending_snapshot(
-    media_type: str, source_sig: str | None = None
-) -> dict[str, int] | None:
-    """Cached rankings for *media_type*, or None if absent, stale, or from a
-    different source.
+def next_trending_fetch_at(after: float) -> float | None:
+    """The first TRENDING_FETCH_TIME strictly after *after*, or None when no
+    fetch time is set (the snapshot then simply lasts TRENDING_CACHE_DURATION).
+    """
+    fetch_time = _cfg.TRENDING_FETCH_TIME
+    if not fetch_time:
+        return None
+    try:
+        tz = ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    try:
+        h, m = map(int, fetch_time.split(":"))
+    except ValueError:
+        h, m = 0, 0
+    start = datetime.fromtimestamp(after, tz)
+    target = start.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target <= start:
+        target += timedelta(days=1)
+    return target.timestamp()
+
+
+def trending_snapshot_expires_at(cached_at: float) -> float:
+    """When a snapshot written at *cached_at* stops being served.
+
+    Every poster that prints a rank from the snapshot is cached until exactly
+    this moment, and clients are told the same. The ranks then all turn over
+    together. Each poster used to get its own day from when it was rendered,
+    so a copy drawn an hour before the refresh sat in clients' caches for most
+    of the next day beside posters drawn from the new snapshot, and two titles
+    showed the same rank.
+    """
+    ttl_end = cached_at + TRENDING_CACHE_DURATION * 86400
+    scheduled = next_trending_fetch_at(cached_at)
+    return ttl_end if scheduled is None else min(ttl_end, scheduled)
+
+
+def get_cached_trending_snapshot_entry(
+    media_type: str, source_sig: str | None = None, *, include_stale: bool = False,
+) -> "tuple[dict[str, int], float] | None":
+    """(rankings, expires_at) for *media_type*, or None if absent, stale, or
+    from a different source.
 
     *source_sig* identifies where the snapshot came from (see
     tmdb.trending_source_signature).  A mismatch is treated as expired so that
     changing TRENDING_SOURCE_* takes effect on the next request rather than
     whenever the day-long TTL happens to lapse.
+
+    *include_stale* returns the stored snapshot whatever its age or source, for
+    diffing against and for scheduling the next refresh.
     """
     try:
         row = get_db().execute(
@@ -1056,46 +1369,77 @@ def get_cached_trending_snapshot(
             return None
 
         rankings_json, cached_at, stored_sig = row
-        age_days = (time.time() - cached_at) / 86400
+        expires_at = trending_snapshot_expires_at(cached_at)
 
-        if age_days > TRENDING_CACHE_DURATION:
-            return None
+        if not include_stale:
+            if time.time() >= expires_at:
+                return None
 
-        if source_sig is not None and (stored_sig or "") != source_sig:
-            logger.info(
-                f"Trending snapshot for {media_type} discarded: source changed "
-                f"({stored_sig or 'unset'!r} -> {source_sig!r})"
-            )
-            return None
+            if source_sig is not None and (stored_sig or "") != source_sig:
+                logger.info(
+                    f"Trending snapshot for {media_type} discarded: source changed "
+                    f"({stored_sig or 'unset'!r} -> {source_sig!r})"
+                )
+                return None
 
-        return json.loads(rankings_json)
+        return json.loads(rankings_json), expires_at
     except Exception as exc:
         logger.error(f"Trending snapshot cache read error: {exc}")
         return None
+
+
+def get_cached_trending_snapshot(
+    media_type: str, source_sig: str | None = None
+) -> dict[str, int] | None:
+    """Cached rankings for *media_type*, or None if absent, stale, or from a
+    different source.  See get_cached_trending_snapshot_entry."""
+    entry = get_cached_trending_snapshot_entry(media_type, source_sig)
+    return None if entry is None else entry[0]
+
+
+def get_cached_trending_details(media_type: str) -> dict[str, dict]:
+    """Per-title name, year and art stored with the snapshot, by ranked id."""
+    try:
+        row = get_db().execute(
+            "SELECT details_json FROM trending_cache WHERE media_type = ?",
+            (media_type,),
+        ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+    except Exception as exc:
+        logger.error(f"Trending details read error: {exc}")
+        return {}
 
 
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
     source_sig: str | None = None,
+    details: dict[str, dict] | None = None,
 ) -> None:
-    # Deliberately read without the signature: the point of this is to diff
-    # against whatever was there before so changed titles get invalidated, and a
-    # source switch changes the most ranks of all.
-    old_rankings = get_cached_trending_snapshot(media_type) or {}
+    # Deliberately read without the signature or the expiry: the point of this
+    # is to diff against whatever was there before so changed titles get
+    # invalidated, and a source switch changes the most ranks of all. A snapshot
+    # is normally replaced once it has expired, and diffing that against
+    # nothing left the titles that dropped out of the list uninvalidated.
+    _old_entry = get_cached_trending_snapshot_entry(media_type, include_stale=True)
+    old_rankings = _old_entry[0] if _old_entry else {}
     try:
         with _db_lock:
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO trending_cache
-                (media_type, rankings_json, cached_at, source_sig)
-                VALUES (?, ?, ?, ?)
+                (media_type, rankings_json, cached_at, source_sig, details_json)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     media_type,
                     json.dumps(rankings),
                     int(time.time()),
                     source_sig or "",
+                    # Only the ranked titles: a custom source can be capped
+                    # from thousands of rows.
+                    json.dumps({k: v for k, v in details.items() if k in rankings})
+                    if details else None,
                 ),
             )
             get_db().commit()
@@ -1121,9 +1465,8 @@ def set_cached_trending_snapshot(
             if t_id not in rankings:
                 changed_ids.add(t_id)
                 
-        for t_id in changed_ids:
-            invalidate_final_posters(t_id, media_type)
-            
+        invalidate_trending_turnover(media_type, changed_ids)
+
     except Exception as exc:
         logger.error(f"Trending snapshot cache write error: {exc}")
 
@@ -1293,7 +1636,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    text_backdrop_path, original_poster_path,
                    poster_langs_json, imdb_id,
                    tmdb_release_date, last_air_date, next_episode_json,
-                   last_episode_json, seasons_json, metadata_version
+                   last_episode_json, seasons_json, metadata_version,
+                   alt_poster_path, poster_pools_json
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -1313,6 +1657,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             poster_langs_json, imdb_id,
             tmdb_release_date, last_air_date, next_episode_json,
             last_episode_json, seasons_json, metadata_version,
+            alt_poster_path, poster_pools_json,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -1352,7 +1697,17 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # Rows created before newer metadata fields were added were migrated
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
-        if vote_count is None or original_title is None or metadata_version != 4:
+        #
+        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765).  A v4 row is
+        # otherwise identical, so only a TV row still carrying 10765 is
+        # refetched, and its composites with it: they drew the old label.
+        _v4_split = (
+            metadata_version == 4
+            and cache_key.startswith("tv_")
+            and 10765 in json.loads(genre_ids_raw or "[]")
+        )
+        if (vote_count is None or original_title is None
+                or metadata_version not in (4, 5) or _v4_split):
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1361,6 +1716,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                     "DELETE FROM tmdb_metadata_cache WHERE cache_key = ?", (cache_key,)
                 )
                 get_db().commit()
+            if _v4_split:
+                invalidate_final_posters(cache_key.split("_")[1], "tv")
             return None
 
         return {
@@ -1382,8 +1739,10 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "vote_count":           vote_count,
             "vote_average":         vote_average,
             "text_backdrop_path":   text_backdrop_path,
+            "alt_poster_path":      alt_poster_path,
             "original_poster_path": original_poster_path,
             "poster_langs":         json.loads(poster_langs_json or "{}"),
+            "poster_pools":         json.loads(poster_pools_json or "{}"),
             "imdb_id":              imdb_id,
             "tmdb_release_date":    tmdb_release_date,
             "last_air_date":        last_air_date,
@@ -1418,15 +1777,17 @@ def set_cached_tmdb_metadata(
     vote_count: int | None = None,
     vote_average: float | None = None,
     text_backdrop_path: str | None = None,
+    alt_poster_path: str | None = None,
     original_poster_path: str | None = None,
     poster_langs: dict | None = None,
+    poster_pools: dict | None = None,
     imdb_id: str | None = None,
     tmdb_release_date: str | None = None,
     last_air_date: str | None = None,
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 4,
+    metadata_version: int = 5,
 ) -> None:
     try:
         with _db_lock:
@@ -1442,8 +1803,9 @@ def set_cached_tmdb_metadata(
                      text_backdrop_path, original_poster_path,
                      poster_langs_json, imdb_id,
                      tmdb_release_date, last_air_date, next_episode_json,
-                     last_episode_json, seasons_json, metadata_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_episode_json, seasons_json, metadata_version,
+                     alt_poster_path, poster_pools_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -1475,6 +1837,8 @@ def set_cached_tmdb_metadata(
                     json.dumps(last_episode) if last_episode else None,
                     json.dumps(seasons or []),
                     metadata_version,
+                    alt_poster_path,
+                    json.dumps(poster_pools or {}),
                 ),
             )
             get_db().commit()
@@ -1732,6 +2096,43 @@ def set_cached_movie_release_info(
         logger.error(f"Movie release info cache write error: {exc}")
 
 
+# A title's certificate and companies rarely change once it has them; one
+# still missing its certificate (unreleased, or TMDB lacks it) is looked at
+# again sooner.
+_BADGE_FACTS_TTL         = 30 * 86400
+_BADGE_FACTS_PARTIAL_TTL = 7 * 86400
+
+
+def get_cached_badge_facts(cache_key: str) -> dict | None:
+    try:
+        row = get_db().execute(
+            "SELECT facts_json, cached_at FROM badge_facts_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        facts = json.loads(row[0])
+        ttl = _BADGE_FACTS_TTL if facts.get("cert") or facts.get("logo_path") else _BADGE_FACTS_PARTIAL_TTL
+        if time.time() - row[1] > ttl:
+            return None
+        return facts
+    except Exception as exc:
+        logger.error(f"Badge facts cache read error: {exc}")
+        return None
+
+
+def set_cached_badge_facts(cache_key: str, facts: dict) -> None:
+    try:
+        with _db_lock:
+            get_db().execute(
+                "INSERT OR REPLACE INTO badge_facts_cache (cache_key, facts_json, cached_at) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(facts), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Badge facts cache write error: {exc}")
+
+
 def get_cached_release_status(cache_key: str) -> str | None:
     """Return the cached release status string, or None if absent / expired."""
     try:
@@ -1816,6 +2217,33 @@ def set_cached_text_detection(cache_key: str, has_text: bool) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Text-detection cache write error: {exc}")
+
+
+def get_cached_face_boxes(cache_key: str) -> "list[tuple[float, ...]] | None":
+    """Cached face boxes [(x, y, w, h, score), …] for an image hash, or None if
+    absent.  Like text detection, never stale: the key covers the pixels and
+    the detector."""
+    try:
+        row = get_db().execute(
+            "SELECT boxes_json FROM face_box_cache WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
+        return None if row is None else [tuple(box) for box in json.loads(row[0])]
+    except Exception as exc:
+        logger.error(f"Face-box cache read error: {exc}")
+        return None
+
+
+def set_cached_face_boxes(cache_key: str, boxes: "list[tuple[float, ...]]") -> None:
+    try:
+        with _db_lock:
+            get_db().execute(
+                "INSERT OR REPLACE INTO face_box_cache (cache_key, boxes_json, cached_at) "
+                "VALUES (?, ?, ?)",
+                (cache_key, json.dumps([list(box) for box in boxes]), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Face-box cache write error: {exc}")
 
 
 # ---------------------------------------------------------------------------

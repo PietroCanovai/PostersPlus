@@ -126,11 +126,28 @@ def status() -> dict:
         "path": IMDB_DATASET_PATH if is_enabled() else None,
         "refresh_hours": IMDB_DATASET_REFRESH_HOURS,
         "min_votes": IMDB_DATASET_MIN_VOTES,
-        "last_refresh_unix": _last_refresh_ts,
-        "last_refresh_rows": _last_refresh_rows,
+        # This process's own refresh when it ran one; otherwise the persisted
+        # timestamp, since after a restart (or on a worker that lost the
+        # claim) the in-memory figures stay empty for up to a day.
+        "last_refresh_unix": _last_refresh_ts or _persisted_refresh_ts(),
+        "last_refresh_rows": _last_refresh_rows or row_count(),
         "last_refresh_error": _last_refresh_error,
         "row_count": row_count(),
     }
+
+
+def _persisted_refresh_ts() -> float | None:
+    """When the table on disk was last loaded, by whichever worker or process
+    did it — written into imdb_ratings_meta alongside the swap."""
+    if not is_enabled():
+        return None
+    try:
+        row = _get_db().execute(
+            "SELECT value FROM imdb_ratings_meta WHERE key = 'last_refresh'"
+        ).fetchone()
+        return float(row[0]) if row else None
+    except Exception:
+        return None
 
 
 def _count_rows() -> int:
@@ -188,7 +205,12 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
         return 0
 
     try:
-        resp = await client.get(_DATASET_URL, timeout=120.0)
+        # identity: the file is itself a .gz, parsed as one below.  A
+        # negotiated Content-Encoding on top would be decoded by httpx and
+        # hand the parser plain text.
+        resp = await client.get(
+            _DATASET_URL, timeout=120.0, headers={"Accept-Encoding": "identity"}
+        )
         resp.raise_for_status()
         raw = resp.content
     except Exception as exc:
@@ -337,4 +359,13 @@ async def imdb_dataset_refresh_loop(client: httpx.AsyncClient) -> None:
         # "nothing to load". Check back shortly instead of in a day; once rows
         # are visible, settle into the normal cadence. This also gets a failed
         # download retried in a minute rather than at the next daily tick.
-        await asyncio.sleep(interval if _row_count > 0 else _NOT_READY_RETRY_SECS)
+        #
+        # Once ready, wake when the table on disk is due rather than a full
+        # interval from now: after a restart inside the claim window, sleeping
+        # `interval` from startup would leave the data up to ~2 intervals old.
+        if _row_count > 0:
+            last = _persisted_refresh_ts()
+            delay = interval if last is None else last + interval - time.time()
+            await asyncio.sleep(max(_NOT_READY_RETRY_SECS, delay))
+        else:
+            await asyncio.sleep(_NOT_READY_RETRY_SECS)

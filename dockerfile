@@ -2,7 +2,9 @@
 # Compiles pycairo (and any future C-extension wheels) against the cairo dev
 # headers, then we copy only the resulting wheels into the runtime image so the
 # ~200MB of build toolchain doesn't ship to users.
-FROM python:3.11-slim AS builder
+# Pinned by digest (Dependabot keeps it current): a moved tag can't change
+# what the published image is built from.
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,7 +18,7 @@ RUN pip wheel --wheel-dir /wheels --no-cache-dir -r requirements.txt
 RUN find /wheels -type f -name 'opencv_python-*.whl' -delete
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 WORKDIR /app
 
 # libcairo2 (runtime only — no -dev headers needed) for pycairo;
@@ -26,6 +28,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     libcairo2 \
     tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# skia-python links libEGL.so.1 and libGL.so.1, though the sash is drawn on the
+# CPU and never opens a GL context.  The libegl1/libgl1 packages depend on
+# Mesa's drivers, which bring LLVM: ~185 MB for code that is never run.  Only
+# glvnd's four dispatch libraries are needed for the module to load, so they
+# are unpacked from their packages directly (~3 MB).  Nothing else links them.
+RUN apt-get update \
+    && cd /tmp \
+    && apt-get download libegl1 libgl1 libglx0 libglvnd0 \
+    && for deb in ./*.deb; do dpkg -x "$deb" /; done \
+    && ldconfig \
+    && rm -f ./*.deb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /wheels /wheels
@@ -59,10 +74,26 @@ RUN if [ "$BAKE_PPOCR_MODEL" = "true" ]; then \
 
 RUN adduser --disabled-password --gecos '' appuser
 
-# Copy app files and set ownership on everything except the cache dir,
-# which is a runtime volume mount — permissions are fixed by entrypoint.sh.
+# The code stays owned by root, so the process serving requests cannot rewrite
+# its own code or pages; the cache volume is the only thing it writes, and
+# entrypoint.sh hands that to appuser.  (A `chown -R` here also used to copy
+# every file into a second layer, static/ included, ~80 MB for nothing.)
+# The bytecode is compiled now for the same reason: appuser cannot write
+# __pycache__, and main.py is large enough that every worker compiling it at
+# start-up is noticeable.
 COPY . .
-RUN chown -R appuser:appuser /app
+RUN python3 -m compileall -q -l /app \
+    && mkdir -p /app/cache \
+    && chown appuser:appuser /app/cache
+
+# Pin glibc's mmap threshold at 4 MB.  Left dynamic, it ratchets up to 32 MB
+# after the first large free, so a big canvas's image buffers (16-24 MB at
+# 2000 px) are carved from the malloc arenas instead of mmap'd; freed, they
+# fragment the arenas and stay resident.  Measured per worker after a
+# 1000-2000 px burst: ~0.8-1.1 GB held dynamic vs ~350 MB pinned, peak ~1.3 GB
+# vs ~0.85 GB.  500 px renders (1.5 MB buffers) are unaffected; above that,
+# renders run ~10-20% slower from page-faulting fresh mappings.
+ENV MALLOC_MMAP_THRESHOLD_=4194304
 
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.

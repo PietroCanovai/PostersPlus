@@ -27,8 +27,10 @@ running process so the dashboard can say so.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -42,7 +44,9 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/app/cache/settings.json").stri
 # What a field looks like in the dashboard, and how a submitted value is
 # checked.  Every kind is stored as a string, the way the environment would
 # carry it; parsing stays in config.py.
-KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url")
+# "order" is a ranking of a fixed set: every choice once, most important
+# first, stored comma-separated.
+KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url", "order")
 
 
 @dataclass
@@ -54,6 +58,8 @@ class Setting:
     label: str = ""
     help: str = ""
     choices: tuple[str, ...] = ()
+    # Display names for choice / order values that are ids ("878" -> "Sci-Fi").
+    labels: dict[str, str] = field(default_factory=dict)
     min: float | None = None
     max: float | None = None
     # Shown behind the group's "advanced" fold — the ADVANCED.md tier.
@@ -81,9 +87,11 @@ GROUP_ORDER = (
     "Trending",
     "Watchlist",
     "Ratings",
+    "Genres",
     "Caching",
     "Cache warming",
     "TVDB fallback art",
+    "fanart.tv",
     "Cinemeta fallback",
     "Anime sources",
     "Rendering",
@@ -104,22 +112,42 @@ _file_loaded = False
 _running: dict[str, str] = {}
 
 
+_file_stamp: "tuple[int, int] | None" = None   # (mtime_ns, size) the values were read at
+
+
+def _stamp() -> "tuple[int, int] | None":
+    try:
+        st = os.stat(SETTINGS_PATH)
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
 def _load_file() -> dict[str, str]:
-    global _file_values, _file_loaded
-    if _file_loaded:
+    """The settings file's values, read again whenever the file has changed:
+    with WORKERS>1 another worker may have saved since this one read it, and
+    the dashboard is answered by whichever worker the request lands on."""
+    global _file_values, _file_loaded, _file_stamp
+    stamp = _stamp()
+    if _file_loaded and stamp == _file_stamp:
         return _file_values
     _file_loaded = True
+    _file_stamp = stamp
+    values: dict[str, str] = {}
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
         if isinstance(data, dict):
-            _file_values = {str(k): str(v) for k, v in data.items() if v is not None}
+            values = {str(k): str(v) for k, v in data.items() if v is not None}
     except FileNotFoundError:
         pass
     except Exception as exc:
         # A corrupt file must not stop the service: run on env + defaults and
         # say why the dashboard's values are not being honoured.
         logger.error(f"Settings file {SETTINGS_PATH} could not be read ({exc}); using environment and defaults")
+        if _file_values:
+            return _file_values   # keep what was last read rather than forget it
+    _file_values = values
     return _file_values
 
 
@@ -132,6 +160,7 @@ def env(
     label: str = "",
     help: str = "",
     choices: tuple[str, ...] = (),
+    labels: dict[str, str] | None = None,
     min: float | None = None,
     max: float | None = None,
     advanced: bool = False,
@@ -153,7 +182,7 @@ def env(
             dep = (dep_key, tuple(v.lower() for v in dep_values))
         REGISTRY[key] = Setting(
             key=key, default=default, group=group, kind=kind, label=label or key,
-            help=help, choices=tuple(choices), min=min, max=max, advanced=advanced,
+            help=help, choices=tuple(choices), labels=dict(labels or {}), min=min, max=max, advanced=advanced,
             placeholder=placeholder, show_if=dep, order=len(REGISTRY),
         )
         if group not in GROUPS:
@@ -243,6 +272,11 @@ def normalise(setting: Setting, raw) -> str | None:
             number = float(value)
         except ValueError:
             raise ValueError("must be a number")
+        # float() takes "nan" and "inf".  NaN passes every bounds check (it
+        # compares false both ways) and inf passes an unbounded one, and either
+        # is saved only to break whatever sleeps or sizes on it after a restart.
+        if not math.isfinite(number):
+            raise ValueError("must be a finite number")
         _check_bounds(setting, number)
         return value
 
@@ -260,6 +294,18 @@ def normalise(setting: Setting, raw) -> str | None:
     if kind == "list":
         return ",".join(part.strip() for part in value.split(",") if part.strip())
 
+    if kind == "order":
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        unknown = [p for p in parts if p not in setting.choices]
+        if unknown:
+            raise ValueError("unknown entry " + ", ".join(unknown))
+        if len(set(parts)) != len(parts):
+            raise ValueError("lists an entry twice")
+        # An entry left out keeps its default place at the end rather than
+        # dropping out of the ranking.
+        parts += [c for c in setting.choices if c not in parts]
+        return ",".join(parts)
+
     return value
 
 
@@ -274,16 +320,20 @@ def save(changes: dict[str, str | None]) -> dict[str, str]:
     """Apply *changes* to the settings file: a string sets the key, None
     removes it (so env / default show through).  Values are already
     normalised.  Written atomically; returns the new file contents."""
-    global _file_values
-    with _lock:
+    global _file_values, _file_stamp
+    directory = os.path.dirname(SETTINGS_PATH) or "."
+    os.makedirs(directory, exist_ok=True)
+    # The flock serialises saves across worker processes and the fresh read
+    # under it starts from what is on disk now, so a save through one worker
+    # no longer reverts keys another worker saved.
+    with _lock, open(os.path.join(directory, ".settings.lock"), "a") as lock_fh:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
         current = dict(_load_file())
         for key, value in changes.items():
             if value is None:
                 current.pop(key, None)
             else:
                 current[key] = value
-        directory = os.path.dirname(SETTINGS_PATH) or "."
-        os.makedirs(directory, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".settings-", suffix=".json", dir=directory)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -297,13 +347,15 @@ def save(changes: dict[str, str | None]) -> dict[str, str]:
                 pass
             raise
         _file_values = current
+        _file_stamp = _stamp()
         return dict(current)
 
 
 def _reset_for_tests(path: str | None = None) -> None:
     """Forget the loaded file (and optionally point at another one)."""
-    global SETTINGS_PATH, _file_values, _file_loaded
+    global SETTINGS_PATH, _file_values, _file_loaded, _file_stamp
     if path is not None:
         SETTINGS_PATH = path
     _file_values = {}
     _file_loaded = False
+    _file_stamp = None

@@ -36,7 +36,7 @@ services:
       - QUALITY_BG_CONCURRENCY=${QUALITY_BG_CONCURRENCY:-5}
       - CDN_CACHE_TTL=${CDN_CACHE_TTL:-auto}
       - COMPOSITE_CACHE_TTL=${COMPOSITE_CACHE_TTL:-604800}
-      - COMPOSITE_MAX_ENTRIES=${COMPOSITE_MAX_ENTRIES:-0}
+      - COMPOSITE_MAX_ENTRIES=${COMPOSITE_MAX_ENTRIES:-500000}
       - DEFAULT_LOGO_LANGUAGE=${DEFAULT_LOGO_LANGUAGE:-en}
     healthcheck:
       # Exec form (no shell) so a probe that overruns is killed outright rather

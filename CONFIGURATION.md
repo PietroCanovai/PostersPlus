@@ -6,7 +6,7 @@ Everything here can be set from the [admin dashboard](README.md#admin-dashboard)
 - [Settings reference](#settings-reference)
 - [Quality via QualiCache](#quality-via-qualicache)
 - [Watchlist marker](#watchlist-marker)
-- [Custom trending sources](#custom-trending-sources)
+- [Custom trending sources](#custom-trending-sources) and the [trending catalogs addon](#trending-catalogs-addon)
 - [Customising directors, studios and cast](#customising-directors-studios-and-cast)
 - [Caching](#caching) and [cache warming](#cache-warming)
 - [Plex and Jellyfin sync](#plex-and-jellyfin-sync)
@@ -35,7 +35,7 @@ Every setting is optional: API keys can be omitted from the server and passed pe
 
 **Restart to apply.** Every module reads its configuration at startup, so saves apply on the next start. The dashboard says which settings are waiting and shows a *Restart required* notice with a **Restart now** button: the server stops gracefully (in-flight renders finish) and the container's restart policy starts it again- `compose.yaml` ships with `restart: unless-stopped`; without a policy the container stays stopped and you `docker compose up -d` it by hand. The page waits for the server to come back and reloads itself.
 
-**Security.** `ADMIN_KEY` is deliberately env-only, and it is not `ACCESS_KEY`: that one travels in every poster URL your clients hold, so it is shared with all of your users, not just you. A key shorter than 12 characters leaves the dashboard disabled, with the reason in the log; without one, `/admin` explains how to turn it on. The API takes the key only in the `X-Admin-Key` header (never a query parameter, which would end up in access logs); wrong keys are slowed down and eight failures from one address lock it out for ten minutes. Secrets are never sent back to the page- a set key shows as `Set (…ab12)` and can be replaced or cleared. Put the instance behind HTTPS before using this over the internet, as with `ACCESS_KEY`.
+**Security.** `ADMIN_KEY` is deliberately env-only, and it is not `ACCESS_KEY`: that one travels in every poster URL your clients hold, so it is shared with all of your users, not just you. A key shorter than 12 characters leaves the dashboard disabled, with the reason in the log; without one, `/admin` explains how to turn it on. The API takes the key only in the `X-Admin-Key` header (never a query parameter, which would end up in access logs); wrong keys are slowed down and eight failures from one address lock it out for ten minutes. Behind a reverse proxy (Caddy, Traefik, nginx) that "address" is the proxy's unless you set `FORWARDED_ALLOW_IPS` to the proxy's IP or subnet (e.g. `172.18.0.0/16` for a Docker network, or `*` if nothing but the proxy can reach port 8000): uvicorn only trusts `X-Forwarded-For` from those addresses, and without it every visitor shares one lockout, so anyone can lock you out of the dashboard. Secrets are never sent back to the page- a set key shows as `Set (…ab12)` and can be replaced or cleared. Put the instance behind HTTPS before using this over the internet, as with `ACCESS_KEY`.
 
 ## Settings reference
 
@@ -52,6 +52,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `MDBLIST_API_KEY_2` | - | Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset. |
 | `TVDB_API_KEY` | - | Optional TheTVDB v4 key. When set, TVDB is a fallback art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable, reducing fallbacks to text titles and genre canvases. Blank disables it entirely. |
 | `TVDB_SUBSCRIBER_PIN` | - | Only for user-supported (subscriber) TVDB keys; leave blank for company keys. |
+| `FANART_API_KEY` | - | Optional fanart.tv project key, needed for the fanart.tv poster source (see FANART_POSTERS). |
 
 #### Access & serving
 
@@ -59,6 +60,10 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 |---|---|---|
 | `ADMIN_KEY` | - | Enables the [admin dashboard](README.md#admin-dashboard) at `/admin`. At least 12 characters. Env-only: it is the one setting the dashboard cannot manage, because it is what protects the dashboard. |
 | `ACCESS_KEY` | - | Shared secret every poster and configurator request must carry as access_key. Leave blank for open access. |
+| `CONFIGURATOR_EXTERNAL_AUTH` | `false` | Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key. `true` or `false`. |
+| `SHOW_ADMIN_LINK` | `false` | Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled. `true` or `false`. |
+| `MAX_POSTER_RESOLUTION` | `500` | Largest portrait width the resolution URL parameter (500, 780, 1000, 1500, 2000) may request. 500 turns larger sizes off; a request above the limit gets the largest allowed size. Larger posters cost far more CPU and memory to render (2000 px is about 12x a 500), so raise this only on an instance you control. One of `500`, `780`, `1000`, `1500`, `2000`. |
+| `PREVIEW_AT_RESOLUTION` | `false` | Render the configurator's live preview at the poster resolution picked there, instead of always at 500 wide. Useful for judging sharpness; each settings change then costs a render at that size (a 2000 px render is about 12x a 500). Only used when `MAX_POSTER_RESOLUTION` is `780` or `1000` or `1500` or `2000`. `true` or `false`. |
 | `CDN_CACHE_TTL` | `auto` | Cache-Control: public, max-age=N on poster responses, capped at the composite's remaining life so a cached copy never outlives the trending rank or release status baked into it. auto (the default) advertises that remaining life with no fixed ceiling: a trending poster expires in a day, a settled title lasts the full composite TTL. A number caps it; 0 sends no Cache-Control. |
 
 #### Quality source
@@ -86,22 +91,24 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRENDING_FETCH_TIME` | - | Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Blank refreshes on a rolling 24-hour interval from startup instead. |
+| `TRENDING_FETCH_TIME` | - | Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Every poster showing a rank is cached until then, so the ranks all change at once. Blank refreshes 24 hours after the previous refresh instead. |
 | `TRENDING_FETCH_TIMEZONE` | `UTC` | IANA timezone for the fetch time, e.g. America/New_York. |
 | `TRENDING_FETCH_COUNT` | `40` | Ranks 1 to this number get the Trending sash. |
 | `TRENDING_BROAD_FETCH_COUNT` | `100` | Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash. |
 | `TRENDING_SOURCE_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list. |
 | `TRENDING_SOURCE_TV` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list. |
+| `TRENDING_CATALOGS_ENABLED` | `true` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series and Anime catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Also gives posters requested with an AniList id the AniList trending rank used by the anime catalog. On by default; turn off to serve no addon. `true` or `false`. |
 
 #### Watchlist
 
 | Variable | Default | Description |
 |---|---|---|
-| `WATCHLIST_SOURCE` | - | Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, or any MDBList list page URL. Blank disables the feature. |
-| `WATCHLIST_REFRESH_MINUTES` | `30` | How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls). Only used when `WATCHLIST_SOURCE` is set. |
+| `WATCHLIST_SOURCE` | - | Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature. |
+| `WATCHLIST_REFRESH_MINUTES` | `30` | How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls; one PMDB list lookup plus one page per 500 titles, well inside PMDB's free-tier hourly limit at the default interval). Only used when `WATCHLIST_SOURCE` is set. |
 | `SIMKL_CLIENT_ID` | - | From a free app at simkl.com/settings/developer. Register it as "TV, devices & command line": PostersPlus links by code (the device/PIN flow), so that type needs no secret and no redirect URL. The account is then linked once from the admin dashboard's Watchlist group. Only used when `WATCHLIST_SOURCE` is `simkl`. |
 | `TRAKT_CLIENT_ID` | - | From an existing Trakt API app (creating one needs Trakt VIP). Only used when `WATCHLIST_SOURCE` is `trakt`. |
 | `TRAKT_USERNAME` | - | The public profile whose watchlist is read. Only used when `WATCHLIST_SOURCE` is `trakt`. |
+| `PMDB_API_KEY` | - | A PublicMetaDB API key (pm-...), created under Settings → API on publicmetadb.com. Only read access is used. Only used when `WATCHLIST_SOURCE` is `pmdb`. |
 
 #### Ratings
 
@@ -119,7 +126,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 |---|---|---|
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Stream quality for older titles is stable, so it is cached this long; new titles keep a 1-day window. |
 | `COMPOSITE_CACHE_TTL` | `604800` | How long a fully rendered poster is kept before it is re-rendered. Default 604800 (7 days). |
-| `COMPOSITE_MAX_ENTRIES` | `0` | Oldest entries are evicted past this many. 0 relies on the TTL alone. |
+| `COMPOSITE_MAX_ENTRIES` | `500000` | Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound. |
 
 #### Cache warming
 
@@ -141,6 +148,12 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TVDB_LOGO_PRIORITY` | `3` | Where a TVDB clearlogo sits in the logo chain: 1 before TMDB and Metahub, 2 after TMDB but before Metahub, 3 last resort (only when both have nothing). TVDB logos are often higher quality, so 1 or 2 improve results but change logos currently sourced from TMDB or Metahub. One of `1`, `2`, `3`. |
 | `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker. |
 
+#### fanart.tv
+
+| Variable | Default | Description |
+|---|---|---|
+| `FANART_POSTERS` | `false` | Let users pick fanart.tv as their poster source: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
+
 #### Cinemeta fallback
 
 | Variable | Default | Description |
@@ -155,12 +168,19 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `ANIME_COMPOSITE_LOGO` | `true` | Composite a title logo over anime cover art. That art rarely carries a logotype (or only a small block of Japanese corner text), so a proper logo is usually an improvement; off serves the provider's art untouched. Logos come from TMDB, Metahub or TVDB, so the request needs a tmdb_id or imdb_id, or anime id mapping to supply one. `true` or `false`. |
 | `ANIME_ID_MAP_ENABLED` | `true` | Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. `true` or `false`. |
 
+#### Rendering
+
+| Variable | Default | Description |
+|---|---|---|
+| `RANDOM_POSTERS` | `false` | Let users pick a random one of the top five posters (TMDB or fanart.tv) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders. `true` or `false`. |
+
 #### Text detection
 
 | Variable | Default | Description |
 |---|---|---|
 | `TEXTLESS_TEXT_DETECTION` | `true` | Detect title text on posters TMDB mislabelled as textless and skip compositing a logo over them. Uses the PP-OCRv5 Mobile detector. `true` or `false`. |
 | `TEXTLESS_DETECTION_MAX_VOTES` | `3000` | Foreground OCR vote limit. Titles with more TMDB votes render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. |
+| `TEXTLESS_BACKDROP_FALLBACK` | `true` | When a poster TMDB tags as textless turns out to have its title burned in, use the runner-up textless poster (titles with 6+ of them) or a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. `true` or `false`. |
 
 #### Performance
 
@@ -257,15 +277,32 @@ Set `WATCHLIST_SOURCE` to one of:
 | `mdblist` | The MDBList watchlist of the account behind `MDBLIST_API_KEY` | Nothing extra. **Trakt users:** enable Trakt sync in MDBList's preferences and MDBList mirrors your Trakt watchlist here- Trakt's own API now needs a VIP-gated app key, so this is the free route |
 | `simkl` | The account's *Plan to Watch* list (`WATCHLIST_SIMKL_STATUSES` adds `watching` / `hold`) | A free SIMKL app: create one at [simkl.com/settings/developer](https://simkl.com/settings/developer/), choosing **TV, devices & command line**- PostersPlus links by code, so that type needs no secret and no redirect URL (pick **AUTH V2** if offered; V1 still works but retires around April 2027)- and set `SIMKL_CLIENT_ID`. Then open the [admin dashboard](README.md#admin-dashboard)'s **Watchlist** group: a *SIMKL account* panel offers a link code; open the link, sign in, approve, and the panel flips to linked. (The same link and code are printed in the container log, which is the route without an `ADMIN_KEY`.) Tokens live in the cache volume and V2 tokens refresh themselves. Only an app registered as *Server apps & services* also needs `SIMKL_CLIENT_SECRET` |
 | `trakt` | `TRAKT_USERNAME`'s watchlist | `TRAKT_CLIENT_ID` from an existing Trakt API app (creating one requires Trakt VIP as of August 2026). Reads the public profile with no OAuth; a private profile needs `TRAKT_ACCESS_TOKEN` too |
+| `pmdb` | The [PublicMetaDB](https://publicmetadb.com) watchlist of the account behind `PMDB_API_KEY` (`PMDB_LIST_ID` reads another list instead) | A PMDB API key from **Settings → API** on publicmetadb.com. PMDB lists carry only TMDB ids, so the sash needs the title's TMDB id: it shows wherever the server or client has a TMDB key, but not on a Cinemeta-only render |
 | an MDBList list URL | That list, via its JSON export- a shared household "to watch" list, for example | Nothing; public lists need no key |
 
 The same panel has an **Unlink account** button once linked: it forgets the token, takes the sash off every poster that had it, and offers a new code- for switching accounts, or moving from a V1 app to a V2 one. (A V2 grant is revoked at SIMKL as well; a V1 token has no revoke endpoint, so remove PostersPlus at simkl.com/settings/connected-apps if you want it gone there too.) Linking is an operator action, which is why it lives behind `ADMIN_KEY` rather than in the configurator: the link code is withheld from users of the instance, since approving it with their own account would point the instance at their watchlist. The configurator only shows which source is configured and how many titles it holds.
 
-The list is re-checked every `WATCHLIST_REFRESH_MINUTES` (default 30). Each check is cheap- one MDBList page per 500 titles, SIMKL's tiny `/sync/activities` call with the list itself only re-read when it changed, two Trakt calls- and when a title is added or removed, only the cached posters for *that* title are re-rendered, so the marker follows the tracker within one interval. The snapshot survives restarts. The sash is first in the default priority (a queued title beats an Oscar winner); drag it lower in the configurator if you would rather keep the prestige sashes on top. Plex/Jellyfin users need to re-run the sync script to push the updated posters.
+The list is re-checked every `WATCHLIST_REFRESH_MINUTES` (default 30). Each check is cheap- one MDBList page per 500 titles, SIMKL's tiny `/sync/activities` call with the list itself only re-read when it changed, two Trakt calls, PMDB's list lookup plus one page per 500 titles- and when a title is added or removed, only the cached posters for *that* title are re-rendered, so the marker follows the tracker within one interval. The snapshot survives restarts. The sash is first in the default priority (a queued title beats an Oscar winner); drag it lower in the configurator if you would rather keep the prestige sashes on top. Plex/Jellyfin users need to re-run the sync script to push the updated posters.
 
 ## Custom trending sources
 
 Set `TRENDING_SOURCE_MOVIE` and/or `TRENDING_SOURCE_TV` to an ordinary MDBList page URL or any endpoint returning TMDB-shaped `{"results": [{"id": 1234}]}` JSON. The source order becomes the ranking for both Trending sashes and cache warming. Movie and TV sources are independent; leave either one empty to keep TMDB's global list for that media type. Entries must contain numeric TMDB ids.
+
+## Trending catalogs addon
+
+The Trending sashes print a rank ("#10 Today"), but a Trending row in your metadata addon is built from its own copy of the list, fetched at a different time. TMDB's list moves every few minutes, so the two rarely agree. PostersPlus serves the lists behind the sashes as a small Stremio addon, so the row order matches the labels exactly. It is on by default; set `TRENDING_CATALOGS_ENABLED=false` to turn it off.
+
+The manifest is at `/trending/manifest.json`, or `/trending/<ACCESS_KEY>/manifest.json` when an access key is set (the configurator shows the full URL under Core). It has three catalogs:
+
+| Catalog | List |
+|---|---|
+| Trending Movies | TMDB's day list, or `TRENDING_SOURCE_MOVIE` |
+| Trending Series | TMDB's day list, or `TRENDING_SOURCE_TV` |
+| Trending Anime | AniList's trending anime (TV, TV short and ONA) |
+
+Each catalog lists ranks 1 to `TRENDING_BROAD_FETCH_COUNT`, and item N is rank N. In AIOMetadata, import the manifest as a custom manifest and set each catalog's cache time to 0, so the row is re-read from PostersPlus whenever it opens. A longer cache time works too, but the row then lags the labels for up to that long after each daily refresh. AIOMetadata's own filters, such as an age-rating cap, can still remove titles from a row, which leaves a gap in the numbers.
+
+The anime catalog gives its titles AniList ids, and with the addon enabled a poster requested with an AniList id shows its AniList trending rank. Posters requested with a Kitsu, TMDB or IMDb id keep the TMDB rank, so a show that is in both lists shows the rank for the row it is in.
 
 ## Customising directors, studios and cast
 

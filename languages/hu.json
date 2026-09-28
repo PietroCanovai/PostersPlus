@@ -29,6 +29,9 @@
   "monthsShort": ["Jan", "Feb", "Márc", "Ápr", "Máj", "Jún", "Júl", "Aug", "Szept", "Okt", "Nov", "Dec"],
   "sashLabels": {
     "trendingToday": "#{rank} ma",
+    "Film": "Film",
+    "Series": "Sorozat",
+    "Anime": "Anime",
     "releaseDay": "{window} {month} {day}.",
     "releaseMonth": "{window} {year} {month}",
     "releaseDayStreaming": "Streaming {month} {day}.",

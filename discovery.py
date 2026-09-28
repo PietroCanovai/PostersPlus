@@ -834,6 +834,23 @@ def pick_sash(
     return None
 
 
+TRENDING_SLOTS = ("trending", "trending_broad")
+
+
+def shown_trending_rank(meta: DiscoveryMeta, priority: list[str]) -> int | None:
+    """The rank a trending_style other than "sash" draws: the title's rank when
+    a trending slot in *priority* covers it, wherever in the list that slot is.
+    The rank mark is separate from the sash, so nothing above it can hide it."""
+    rank = meta.trending_rank
+    if not rank:
+        return None
+    if "trending" in priority and rank <= _cfg.TRENDING_FETCH_COUNT:
+        return rank
+    if "trending_broad" in priority and _cfg.TRENDING_FETCH_COUNT < rank <= _cfg.TRENDING_BROAD_FETCH_COUNT:
+        return rank
+    return None
+
+
 def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
     """Return a label string if this slot has a match, else None."""
 

@@ -8,6 +8,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from pxscale import fixed, px, pxi, pxr
+
 try:
     import cairo as _cairo
     _HAS_CAIRO = True
@@ -423,7 +425,7 @@ def _cairo_pill_mask(w: int, h: int, radius: int) -> Image.Image:
         surface.flush()
         stride = surface.get_stride()
         arr = np.frombuffer(bytes(surface.get_data()), dtype=np.uint8).reshape((h, stride))[:, :w].copy()
-        return Image.fromarray(arr, "L")
+        return Image.fromarray(arr)
     else:
         mask = Image.new("L", (w, h), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
@@ -467,12 +469,16 @@ def draw_score_bar(
             return
     score = max(0, min(int(score), 100))
     W, H = image.size
-    bar_h  = max(8, round(H * 0.012))
+    bar_h  = max(fixed(8), pxr(H * 0.012))
+    # side_margin and the radius cap are pixels on the 500-wide canvas.
+    side_margin = round(side_margin * W / 500)
     x0, x1 = side_margin, W - side_margin
     y1, y0  = H - bottom_margin, H - bottom_margin - bar_h
     bar_w   = x1 - x0
-    fill_w  = int(bar_w * (score / 100))
-    radius  = min(bar_h // 2, 8)
+    fill_w  = px(bar_w * (score / 100))
+    radius  = min(px(bar_h / 2), round(8 * W / 500))
+    # 500-wide units above (pxscale); whole pixels from here on.
+    bar_h, y0, y1, fill_w, radius = round(bar_h), round(y0), round(y1), round(fill_w), round(radius)
 
     # ── Track (background pill) ───────────────────────────────────────────
     # Drawn before the early-return so score=0 still shows an empty track
@@ -506,7 +512,7 @@ def draw_score_bar(
     # Stack into RGBA (fill_w, 4), then broadcast to (bar_h, fill_w, 4)
     row  = np.stack([r_ch, g_ch, b_ch, a_ch], axis=1)             # (fill_w, 4)
     grad_arr = np.broadcast_to(row, (bar_h, fill_w, 4)).copy()    # (bar_h, fill_w, 4)
-    grad = Image.fromarray(grad_arr, "RGBA")
+    grad = Image.fromarray(grad_arr)
 
     # Rounded left/right mask — cairo-antialiased pill, right end cropped flat
     # when score < 99 so the cut-off aligns cleanly with the track edge.
@@ -580,8 +586,10 @@ def _draw_solid_pip(
     Shared primitive used by score-driven pips (where the caller computes
     the colour from the score palette).
     """
-    y0     = int(y_center - height / 2)
-    radius = max(1, width // 2)
+    # Sized in 500-wide units by the caller (pxscale); snapped to pixels here.
+    y0     = pxi(y_center - height / 2)
+    radius = round(max(fixed(1), px(width / 2)))
+    width, height = round(width), round(height)
 
     pip_mask  = _cairo_pill_mask(width, height, radius)
     pip_strip = Image.new("RGBA", (width, height), (*color, 0))
@@ -590,7 +598,7 @@ def _draw_solid_pip(
     # outside the canvas for a pip near the edge; alpha_composite clips exactly
     # as paste did (verified pixel-identical across negative and overflowing
     # offsets), so the edge cases behave the same.
-    image.alpha_composite(pip_strip, dest=(int(x), y0))
+    image.alpha_composite(pip_strip, dest=(pxi(x), y0))
 
 
 def draw_score_bar_vertical(
@@ -637,6 +645,7 @@ def draw_frosted_bar(
     fill_color: tuple[int, int, int] | None = None,
     tint_rgb: tuple[float, float, float] | None = None,
     text_color: tuple[int, int, int] | None = None,
+    center_run=None,
 ) -> Image.Image:
     """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
@@ -649,15 +658,20 @@ def draw_frosted_bar(
     tint_rgb overrides the sampled dominant colour for frosted styles so the bar
     and the info-sash notch can share one tint (sampling the glass texture still
     comes from the actual poster region — only the colour cast is forced).
+    center_run, when given, is called as center_run(font_size, measure, budget)
+    for a list of rating_badges runs, spread evenly across the bar in place of
+    center_text (one run is centred).
     """
     import os, colorsys as _cs
 
     width, height = image.size
-    bar_h = max(24, int(height * bar_height_ratio))
-    bar_y = height - bar_h - int(height * bottom_inset)
+    # Laid out in 500-wide units (pxscale) and snapped to this canvas's pixels
+    # once the sizes that derive from bar_h are known.  Plain ints at 500.
+    bar_h = max(fixed(24), px(height * bar_height_ratio))
+    bar_y = height - bar_h - px(height * bottom_inset)
 
     # ── Font ─────────────────────────────────────────────────────────────────
-    font_size = max(10, int(bar_h * font_size_ratio))
+    font_size = max(fixed(10), px(bar_h * font_size_ratio))
     font_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"
     )
@@ -670,16 +684,21 @@ def draw_frosted_bar(
     _ref_b = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), _REF, font=font)
     # Pure optical centering — no base nudge; the stripe branches add their own
     # downward compensation to account for the accent bar stealing top space.
-    text_y = (bar_h - (_ref_b[3] - _ref_b[1])) // 2 - _ref_b[1]
+    text_y = px((bar_h - (_ref_b[3] - _ref_b[1])) / 2) - _ref_b[1]
 
     _SILVER = (210, 210, 218)
     _GOLD   = (212, 175, 55)
     # Solid accent styles use a thin stripe; rating bar modes use a larger one.
-    _accent_stripe = max(2, int(bar_h * 0.06))
-    _rating_stripe = max(3, int(bar_h * 0.10))
+    _accent_stripe = max(fixed(2), px(bar_h * 0.06))
+    _rating_stripe = max(fixed(3), px(bar_h * 0.10))
+    _lift          = max(fixed(1), px(bar_h * 0.025))   # small upward correction for non-plain styles
+    _stripe_nudge  = max(fixed(1), px(bar_h * 0.05)) + px(_rating_stripe / 2) - _lift
+    _plain_nudge   = max(fixed(1), px(bar_h * 0.03))
+    _accent_nudge  = max(fixed(1), px(bar_h * 0.05)) + px(_accent_stripe / 2) - _lift
+    _blur_r        = max(fixed(6), px(bar_h * 0.45))
+    bar_h, bar_y = round(bar_h), round(bar_y)
+    _accent_stripe, _rating_stripe = round(_accent_stripe), round(_rating_stripe)
     stripe = _accent_stripe  # overridden per branch below
-    _lift          = max(1, int(bar_h * 0.025))   # small upward correction for non-plain styles
-    _stripe_nudge  = max(1, int(bar_h * 0.05)) + _rating_stripe // 2 - _lift
 
     def _score_pct() -> int:
         try:    return max(0, min(int(score), 100))   # type: ignore[arg-type]
@@ -687,7 +706,7 @@ def draw_frosted_bar(
 
     def _build_frosted_base() -> tuple[Image.Image, float, float, float]:
         """Returns (bar_img, raw_h, raw_s, raw_v) — HSV before lightening."""
-        blur_r = max(6, int(bar_h * 0.45))
+        blur_r = _blur_r
         cy = max(0, bar_y); ch = min(bar_h, height - cy)
         reg = image.crop((0, cy, width, cy + ch))
         blr = reg.filter(ImageFilter.GaussianBlur(radius=blur_r))
@@ -714,9 +733,9 @@ def draw_frosted_bar(
         ink = (*_SILVER, 248)
         arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
         arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
-        bar_img = Image.fromarray(arr, "RGBA")
+        bar_img = Image.fromarray(arr)
         # No accent stripe, so no stripe compensation — centre like plain frosted.
-        text_y += max(1, int(bar_h * 0.03))
+        text_y += _plain_nudge
 
     elif style in ("silver", "gold"):
         stripe = _accent_stripe
@@ -726,8 +745,8 @@ def draw_frosted_bar(
         arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
         arr[:stripe, :, 0] = accent[0]; arr[:stripe, :, 1] = accent[1]
         arr[:stripe, :, 2] = accent[2]; arr[:stripe, :, 3] = 240
-        bar_img = Image.fromarray(arr, "RGBA")
-        text_y += max(1, int(bar_h * 0.05)) + stripe // 2 - _lift
+        bar_img = Image.fromarray(arr)
+        text_y += _accent_nudge
 
     elif style == "rating_black":
         stripe = _rating_stripe
@@ -740,11 +759,11 @@ def draw_frosted_bar(
         arr[:stripe, :, 0] = dim[0]; arr[:stripe, :, 1] = dim[1]
         arr[:stripe, :, 2] = dim[2]; arr[:stripe, :, 3] = 240
         # Filled
-        fw = int(width * _score_pct() / 100)
+        fw = pxi(width * _score_pct() / 100)
         if fw > 0:
             arr[:stripe, :fw, 0] = fc[0]; arr[:stripe, :fw, 1] = fc[1]
             arr[:stripe, :fw, 2] = fc[2]; arr[:stripe, :fw, 3] = 240
-        bar_img = Image.fromarray(arr, "RGBA")
+        bar_img = Image.fromarray(arr)
         text_y += _stripe_nudge
 
     elif style == "rating_frosted":
@@ -769,35 +788,48 @@ def draw_frosted_bar(
             fr2, fg2, fb2 = _cs.hsv_to_rgb(_h2, min(1.0, _s2 * 1.6), _fv)
             fill_col = (int(fr2 * 255), int(fg2 * 255), int(fb2 * 255))
             dim_col  = tuple(max(0, int(c * 0.12)) for c in fill_col)
-        fw = int(width * _score_pct() / 100)
+        fw = pxi(width * _score_pct() / 100)
         sa = np.zeros((stripe, width, 4), dtype=np.uint8)
         sa[:, :, 0] = dim_col[0]; sa[:, :, 1] = dim_col[1]
         sa[:, :, 2] = dim_col[2]; sa[:, :, 3] = 90
         if fw > 0:
             sa[:, :fw, 0] = fill_col[0]; sa[:, :fw, 1] = fill_col[1]
             sa[:, :fw, 2] = fill_col[2]; sa[:, :fw, 3] = 230
-        bar_img.alpha_composite(Image.fromarray(sa, "RGBA"), (0, 0))
+        bar_img.alpha_composite(Image.fromarray(sa), (0, 0))
         text_y += _stripe_nudge
 
     else:  # plain frosted — small nudge down, no stripe compensation needed
         ink = (*_frosted_ink(), 248)
         bar_img, _, _, _ = _build_frosted_base()
-        text_y += max(1, int(bar_h * 0.03))
+        text_y += _plain_nudge
 
     if text_color is not None:
         ink = (*text_color, 248)
 
     txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
     td        = ImageDraw.Draw(txt_layer)
-    h_pad     = max(20, int(width * 0.055))
+    h_pad     = max(fixed(20), px(width * 0.055))
 
-    if center_text:
-        cw = int(td.textlength(center_text, font=font))
-        td.text(((width - cw) // 2, text_y), center_text, font=font, fill=ink)
+    if center_run is not None:
+        import rating_badges
+
+        def _measure(text: str) -> float:
+            return td.textlength(text, font=font)
+        runs = center_run(font_size, _measure, width - 2 * h_pad)
+        widths = [rating_badges.run_width(r, _measure) for r in runs]
+        # Equal space before, between and after the entries.
+        gap = (width - sum(widths)) / (len(runs) + 1)
+        x = gap
+        for r, w in zip(runs, widths):
+            rating_badges.draw_run(txt_layer, td, r, px(x), text_y, font, ink, _measure)
+            x += w + gap
+    elif center_text:
+        cw = px(td.textlength(center_text, font=font))
+        td.text((px((width - cw) / 2), text_y), center_text, font=font, fill=ink)
     if left_text:
         td.text((h_pad, text_y), left_text, font=font, fill=ink)
     if right_text:
-        rw = int(td.textlength(right_text, font=font))
+        rw = px(td.textlength(right_text, font=font))
         td.text((width - h_pad - rw, text_y), right_text, font=font, fill=ink)
 
     bar_final = Image.alpha_composite(bar_img, txt_layer)

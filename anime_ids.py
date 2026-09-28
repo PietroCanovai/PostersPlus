@@ -59,6 +59,13 @@ _SCHEMA = """
     )
 """
 
+# For reverse_lookup: which anime entries a TMDB or IMDb id belongs to.
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS anime_id_map_tmdb_tv    ON anime_id_map (tmdb_tv)",
+    "CREATE INDEX IF NOT EXISTS anime_id_map_tmdb_movie ON anime_id_map (tmdb_movie)",
+    "CREATE INDEX IF NOT EXISTS anime_id_map_imdb       ON anime_id_map (imdb_id)",
+)
+
 _local = threading.local()
 _last_refresh_ts: float | None = None
 _last_refresh_error: str | None = None
@@ -85,6 +92,8 @@ def _get_db() -> sqlite3.Connection:
         conn = sqlite3.connect(ANIME_ID_MAP_PATH, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(_SCHEMA.format(table="anime_id_map"))
+        for ddl in _INDEXES:
+            conn.execute(ddl)
         conn.commit()
         _local.conn = conn
     return conn
@@ -151,6 +160,39 @@ def lookup(namespace: str, anime_id: int, media_type: str) -> MappedIds | None:
     return MappedIds(str(tmdb) if tmdb is not None else None, imdb_id or None)
 
 
+def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) -> dict[str, int]:
+    """The AniList and Kitsu ids the list gives a TMDB or IMDb title, by
+    namespace ({"anilist": 21, "kitsu": 11}); empty when it isn't anime.
+
+    The TMDB id is matched as the kind being rendered (see lookup) and wins
+    over the IMDb id when it matches anything.  A series' later seasons map
+    to the same TMDB and IMDb ids as its first, so a show matches several
+    entries per namespace; the lowest id is taken, which on both sites is
+    normally the first season — the same entry MDBList's MyAnimeList score
+    comes from.
+    """
+    if not is_enabled():
+        return {}
+    col = "tmdb_movie" if media_type == "movie" else "tmdb_tv"
+    tries = []
+    if tmdb_id and str(tmdb_id).isascii() and str(tmdb_id).isdigit():
+        tries.append((col, int(tmdb_id)))
+    if imdb_id and str(imdb_id).startswith("tt"):
+        tries.append(("imdb_id", imdb_id))
+    for column, value in tries:
+        try:
+            rows = _get_db().execute(
+                f"SELECT namespace, MIN(anime_id) FROM anime_id_map WHERE {column} = ? GROUP BY namespace",
+                (value,),
+            ).fetchall()
+        except Exception as exc:
+            logger.warning(f"Anime id reverse lookup failed for {column}={value}: {exc}")
+            return {}
+        if rows:
+            return {ns: int(aid) for ns, aid in rows if ns in _NAMESPACE_FIELDS}
+    return {}
+
+
 def _rows_from_list(entries: list) -> "list[tuple]":
     """(namespace, anime_id, tmdb_tv, tmdb_movie, imdb_id) for every entry that
     maps a namespace we source from to anything we can use."""
@@ -211,6 +253,8 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
             conn.executemany("INSERT INTO anime_id_map_new VALUES (?, ?, ?, ?, ?)", rows)
             conn.execute("DROP TABLE anime_id_map")
             conn.execute("ALTER TABLE anime_id_map_new RENAME TO anime_id_map")
+            for ddl in _INDEXES:
+                conn.execute(ddl)
             conn.commit()
         finally:
             conn.close()

@@ -29,6 +29,9 @@
   "monthsShort": ["Sij", "Velj", "Ožu", "Tra", "Svi", "Lip", "Srp", "Kol", "Ruj", "Lis", "Stu", "Pro"],
   "sashLabels": {
     "trendingToday": "#{rank} danas",
+    "Film": "Film",
+    "Series": "Serija",
+    "Anime": "Anime",
     "releaseDay": "{window} {day}. {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Streaming {day}. {month}",

@@ -29,6 +29,9 @@
   "monthsShort": ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"],
   "sashLabels": {
     "trendingToday": "#{rank} i dag",
+    "Film": "Film",
+    "Series": "Serie",
+    "Anime": "Anime",
     "releaseDay": "{window} {day}. {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Strømming {day}. {month}",

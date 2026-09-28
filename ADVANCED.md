@@ -128,6 +128,10 @@ Default: `10`
 
 +/- half this many seconds of per-title jitter applied to COMPOSITE_CACHE_TTL, so a large batch of composites rendered around the same time (e.g. cache warming) don't all expire and re-render at once. Default: 172800 (2 days).
 
+### `PROVISIONAL_CACHE_TTL`
+
+How long a *provisional* poster is kept: one rendered with a piece missing — quality badges still being fetched, a rating source rate-limited or down, a text-detection scan still queued. It is served without an ETag and with `Cache-Control: public, max-age` no longer than what is left of this window, so neither the server nor a client holds an incomplete poster for long, while an outage of the thing it waits on costs one render per title and configuration per window rather than one per view. `0` never keeps them: every view renders again until the poster is complete (the behaviour before this setting). Default: `300`.
+
 Default: `172800`
 
 ### `TRENDING_SOURCE_MAX_ITEMS`
@@ -138,15 +142,21 @@ Default: `500`
 
 ### `COMPOSITE_MEM_ENTRIES`
 
-Fully-rendered composites kept in an in-memory LRU (L1) cache, served without a SQLite read. ~100-300 KB each; 500 entries is roughly 50-150 MB. Set to 0 to disable the in-memory cache entirely. Default: 500.
+Fully-rendered composites kept in each worker's in-memory LRU (L1) cache, served without a SQLite read. Off by default: the SQLite read it saves takes well under a millisecond (the OS page cache, shared by all workers, keeps hot rows in memory anyway), while each entry costs roughly 100-600 KB per worker. Configurator previews produce a new composite for every change, so they churn the cache rather than hit it.
 
-Default: `500`
+Default: `0`
 
 ### `DISABLE_COMPOSITE_CACHE`
 
 Disable composite poster caching entirely. Every request re-renders from scratch. Only use this during development — never in production. Set to `true` to disable; caching is on unless you do.
 
 Default: `false`
+
+### `PUBLIC_URL`
+
+The address clients reach this instance on, e.g. `https://posters.example.com`. The [trending catalogs addon](CONFIGURATION.md#trending-catalogs-addon) puts it in front of every poster link it hands out. Left blank, it is worked out from each request's `Host`, `X-Forwarded-Host` and `X-Forwarded-Proto` headers, which works behind most reverse proxies. The catch is that those headers come from the client: behind a CDN or shared cache that does not key on them, a forged header could point a cached catalog's posters at another host. Setting this removes the guesswork.
+
+Default: blank (derived from the request)
 
 ---
 
@@ -265,7 +275,7 @@ Rotten Tomatoes, Metacritic, Popcornmeter, Roger Ebert).
 
 ## Watchlist marker
 
-The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`) are in [CONFIGURATION.md](CONFIGURATION.md#watchlist-marker). These are the rest.
+The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`, `PMDB_API_KEY`) are in [CONFIGURATION.md](CONFIGURATION.md#watchlist-marker). These are the rest.
 
 ### `WATCHLIST_REFRESH_MINUTES`
 
@@ -297,6 +307,12 @@ Reads `/sync/watchlist` as the token's owner instead of `TRAKT_USERNAME`'s publi
 
 Default: unset
 
+### `PMDB_LIST_ID`
+
+Reads this PublicMetaDB list (its id, `lst_...`) instead of the `PMDB_API_KEY` account's watchlist. Any list the key can see works, including someone else's public list. Only used when `WATCHLIST_SOURCE` is `pmdb`.
+
+Default: unset (the account's watchlist)
+
 ---
 
 ## Cache warming
@@ -322,6 +338,26 @@ Comma-separated Stremio addon manifest URLs to pre-warm in addition to TMDB tren
 Max items pre-warmed per catalog (across pagination), so one large catalog can't consume the whole cycle's budget. Default: 100.
 
 Default: `100`
+
+---
+
+## Genres
+
+A title usually has several genres. The first one it carries, in the order below, is the genre printed on the poster. It also sets the tint and background of the no-art fallback card and the font used for a text title. The easiest way to change an order is to drag the list in the [admin dashboard](README.md#admin-dashboard). In the environment, give comma-separated TMDB genre ids. Unknown or repeated ids are ignored, and any id you leave out keeps its default place at the end. Changing an order re-renders cached posters once.
+
+TMDB gives TV shows a merged "Sci-Fi & Fantasy" genre (10765). PostersPlus splits it into Sci-Fi (878) or Fantasy (14) using the show's TMDB keywords. When the keywords tie, it asks Cinemeta for IMDb's genres. Shows that neither source decides keep 10765, which prints as Sci-Fi. "Action & Adventure" (10759) and "War & Politics" (10768) aren't split. They print as Action and War, and are listed separately so they can be ranked on their own.
+
+### `GENRE_PRIORITY`
+
+The order for every title except those requested by anime id. Horror, Thriller, Sci-Fi and Fantasy come first because they say the most about a title. Mystery comes after them because TMDB puts it on so much of its TV. War ranks above Action and History. Drama and Adventure come near the end because so many titles carry them, and Animation is after them because the poster art already shows a title is animated.
+
+Default: `27,53,878,10765,14,9648,80,35,10749,10751,10752,10768,28,10759,36,10402,37,99,18,12,16,10764,10762,10763,10766,10767`
+
+### `ANIME_GENRE_PRIORITY`
+
+The order for titles requested by an AniList or Kitsu id. Action, Adventure and Fantasy rank higher here than in the main order, because they describe anime better than the Mystery or Supernatural tags the providers add liberally. Animation stays last, as the label when nothing else matches.
+
+Default: `10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,10402,18,10762,10751,16`
 
 ---
 

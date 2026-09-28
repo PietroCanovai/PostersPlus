@@ -1,0 +1,58 @@
+name: Tests
+
+# The Docker workflow only proves the image builds; this runs the suite, so a
+# regression is caught on the PR rather than on the first instance to pull it.
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'Showcase/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          # The image's interpreter (dockerfile: python:3.11-slim).
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install cairo headers and GL libraries
+        # pycairo builds from source against the cairo headers, as in the image's
+        # builder stage.  skia-python needs libEGL/libGL present to load (the
+        # image unpacks bare stubs; the full packages are fine here).
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcairo2-dev pkg-config libegl1 libgl1
+
+      - name: Install dependencies
+        # Same substitution as the dockerfile: RapidOCR declares the GUI OpenCV
+        # wheel, the image ships the headless one in its place.
+        run: |
+          pip install -r requirements.txt pytest
+          pip uninstall -y opencv-python
+          pip install --force-reinstall --no-deps 'opencv-python-headless>=4.8,<5'
+
+      - name: Create the cache directory
+        # The app keeps its SQLite cache, settings file and image caches under
+        # /app/cache (the image creates it; see dockerfile), and the suite
+        # exercises those paths for real.  The runner has no /app at all.
+        run: sudo mkdir -p /app/cache && sudo chown -R "$USER" /app
+
+      - name: Run tests
+        run: python -m pytest -q

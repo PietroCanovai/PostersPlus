@@ -354,3 +354,33 @@ class AdminApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiWorkerSaveTests(unittest.TestCase):
+    """With WORKERS>1 each process holds its own copy of the file."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = os.path.join(self.dir.name, "_settings.json")
+        self._old = _settings.SETTINGS_PATH
+        _settings._reset_for_tests(self.path)
+        self.addCleanup(_settings._reset_for_tests, self._old)
+
+    def _other_worker_saves(self, values):
+        # Another process writes the file; this one's cached copy is stale.
+        with open(self.path, "w", encoding="utf-8") as fh:
+            json.dump(values, fh)
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+    def test_a_save_keeps_what_another_worker_saved(self):
+        _settings.save({"A": "1"})
+        self._other_worker_saves({"A": "1", "B": "2"})
+        self.assertEqual(_settings.save({"C": "3"}), {"A": "1", "B": "2", "C": "3"})
+
+    def test_reads_see_another_workers_save(self):
+        _settings.save({"A": "1"})
+        self._other_worker_saves({"A": "9"})
+        self.assertEqual(_settings.file_values(), {"A": "9"})

@@ -1,10 +1,14 @@
+import asyncio
 import logging
 import os
 import re
+from urllib.parse import urlsplit
 
 import httpx
 
 logger = logging.getLogger(__name__)
+import pxscale
+from pxscale import fixed
 from PIL import Image, ImageDraw, ImageFont
 
 import config as _cfg
@@ -44,8 +48,31 @@ class _QualityPending:
 
 QUALITY_PENDING = _QualityPending()
 
+
+class _TitleFailed:
+    """Singleton sentinel: the source answered, but failed this one title."""
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    def __repr__(self):
+        return "TITLE_FAILED"
+
+# The source is up but refused or failed this title: a 4xx for an id it
+# doesn't index (an addon without anime support given "kitsu:…"), or
+# AIOStreams with no results because one of its scrapers errored.  Unlike
+# FETCH_FAILED it says nothing about the source, so the caller backs off
+# only the title, not every title, and doesn't retry it straight away.
+TITLE_FAILED = _TitleFailed()
+
+
+def _title_level(status: int) -> bool:
+    """A 4xx about the request rather than about us or the source's load."""
+    return 400 <= status < 500 and status not in (401, 403, 407, 408, 429)
+
 # Union of everything a fetch function may return.
-QualityResult = "list[str] | _FetchFailed | _QualityPending"
+QualityResult = "list[str] | _FetchFailed | _QualityPending | _TitleFailed"
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +187,7 @@ async def fetch_quality_from_aiostreams(
 
         if resp.status_code != 200:
             logger.warning(f"AIOStreams error {resp.status_code} for {imdb_id}")
-            return FETCH_FAILED
+            return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         payload = resp.json()
         if not payload.get("success"):
@@ -178,11 +205,11 @@ async def fetch_quality_from_aiostreams(
                     f"AIOStreams returned no results for {imdb_id} "
                     f"with scraper errors present: {errors}"
                 )
-                return FETCH_FAILED
+                return TITLE_FAILED
 
             logger.info(f"AIOStreams returned authoritative empty result for {imdb_id}")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         seen: set[str] = set()
@@ -192,7 +219,7 @@ async def fetch_quality_from_aiostreams(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"AIOStreams quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -220,6 +247,14 @@ def _normalize_scraper_url(url: str) -> str:
     if url.endswith("/manifest.json"):
         url = url[: -len("/manifest.json")]
     return url.rstrip("/")
+
+
+def _scraper_host(url: str) -> str:
+    """Scheme and host of a scraper URL, for logs.  Torrentio, Comet and
+    friends carry their whole config — debrid API key included — in the path,
+    so the query-stripping sanitiser used for other sources is not enough."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.hostname or '?'}"
 
 
 def _tokens_from_stremio_stream(
@@ -312,13 +347,13 @@ async def fetch_quality_from_scraper(
     url = f"{base}/stream/{stream_type}/{stream_id}.json"
 
     try:
-        logger.info(f"External API Call: Stremio scraper quality fetch for {imdb_id} → {url}")
+        logger.info(f"External API Call: Stremio scraper quality fetch for {stream_id} → {_scraper_host(url)}")
         resp = await client.get(url, timeout=20.0, follow_redirects=True)
 
         if resp.status_code != 200:
             logger.warning(
-                f"Scraper returned {resp.status_code} for {imdb_id} "
-                f"(url={url})"
+                f"Scraper returned {resp.status_code} for {stream_id} "
+                f"({_scraper_host(url)})"
             )
             # For series, fall back to a show-level lookup (no season/episode).
             # Some addons support this and it avoids failures when a specific
@@ -326,7 +361,7 @@ async def fetch_quality_from_scraper(
             if is_series:
                 fallback_url = f"{base}/stream/series/{imdb_id}.json"
                 logger.info(
-                    f"Trying show-level series fallback for {imdb_id} → {fallback_url}"
+                    f"Trying show-level series fallback for {imdb_id} → {_scraper_host(fallback_url)}"
                 )
                 resp = await client.get(fallback_url, timeout=20.0, follow_redirects=True)
                 if resp.status_code != 200:
@@ -334,16 +369,16 @@ async def fetch_quality_from_scraper(
                         f"Scraper series fallback also returned {resp.status_code} "
                         f"for {imdb_id}"
                     )
-                    return FETCH_FAILED
+                    return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
             else:
-                return FETCH_FAILED
+                return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         streams = resp.json().get("streams") or []
 
         if not streams:
             logger.info(f"Scraper returned no streams for {imdb_id} — caching empty result")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         # Aggregate tokens across the top 5 streams (same logic as AIOStreams).
@@ -358,7 +393,7 @@ async def fetch_quality_from_scraper(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"Scraper quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -417,7 +452,7 @@ async def fetch_quality_from_qualicache(
     season: int = 1,
     episode: int = 1,
     release_date: str | None = None,
-) -> "list[str] | _FetchFailed | _QualityPending":
+) -> "list[str] | _FetchFailed | _QualityPending | _TitleFailed":
     """
     Read cached quality tokens from a QualiCache instance.
 
@@ -469,7 +504,7 @@ async def fetch_quality_from_qualicache(
             return FETCH_FAILED
         if resp.status_code != 200:
             logger.warning(f"QualiCache error {resp.status_code} for {imdb_id}")
-            return FETCH_FAILED
+            return TITLE_FAILED if _title_level(resp.status_code) else FETCH_FAILED
 
         payload = resp.json()
         status = payload.get("status") or ""
@@ -489,7 +524,7 @@ async def fetch_quality_from_qualicache(
         if status == "empty":
             logger.info(f"QualiCache found no trusted release for {imdb_id}")
             tokens: list[str] = []
-            set_cached_quality(imdb_id, tokens, release_date)
+            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
             return tokens
 
         if status != "ready":
@@ -515,7 +550,7 @@ async def fetch_quality_from_qualicache(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"QualiCache quality for {imdb_id}: {tokens}")
-        set_cached_quality(imdb_id, tokens, release_date)
+        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
         return tokens
 
     except Exception as exc:
@@ -557,7 +592,7 @@ async def fetch_quality(
     season: int = 1,
     episode: int = 1,
     release_date: str | None = None,
-) -> "list[str] | _FetchFailed | _QualityPending":
+) -> "list[str] | _FetchFailed | _QualityPending | _TitleFailed":
     """
     Fetch quality tokens from whichever backend QUALITY_SOURCE selects.
 
@@ -690,13 +725,13 @@ def _resize_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Imag
     arr = np.array(img, dtype=np.float32)          # H×W×4, values 0–255
     alpha = arr[..., 3:4] / 255.0                  # normalised alpha, H×W×1
     arr[..., :3] *= alpha                           # premultiply RGB
-    pre = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+    pre = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
     pre = pre.resize(size, Image.Resampling.LANCZOS)
     arr2 = np.array(pre, dtype=np.float32)
     alpha2 = arr2[..., 3:4] / 255.0
     nonzero = alpha2[..., 0] > 0
     arr2[nonzero, :3] /= alpha2[nonzero]           # un-premultiply where visible
-    result = Image.fromarray(np.clip(arr2, 0, 255).astype(np.uint8), "RGBA")
+    result = Image.fromarray(np.clip(arr2, 0, 255).astype(np.uint8))
 
     # Sharpen only the RGB channels; leave alpha intact to avoid edge ringing.
     r, g, b, a = result.split()
@@ -820,18 +855,25 @@ def render_badges_left(
         return
 
     draw = ImageDraw.Draw(image)
+    # On a larger canvas the badges were resized to a whole-pixel height (34
+    # for 22 * 1.56 = 34.32), each a little narrow, and that added up along the
+    # row.  Advance by each badge's width at the exact scaled height instead,
+    # snapping only where it is pasted.  A no-op at 500 (pxscale).
+    k = pxscale.scale()
+    exact_h = fixed(round(badge_height / k))
+    gap = fixed(round(badge_gap / k))
     x = x_start
 
     for badge_img, label in items:
         if badge_img is not None:
-            image.paste(badge_img, (x, y_top), badge_img)
-            x += badge_img.width + badge_gap
+            image.paste(badge_img, (round(x), y_top), badge_img)
+            x += badge_img.width * exact_h / badge_height + gap
         else:
             # Text fallback
             bb = draw.textbbox((0, 0), label, font=_FALLBACK_FONT)
             text_h = bb[3] - bb[1]
             ty = y_top + (badge_height - text_h) // 2
-            draw.text((x, ty), label, font=_FALLBACK_FONT, fill=(255, 255, 255, 220))
-            x += int(bb[2] - bb[0]) + badge_gap
+            draw.text((round(x), ty), label, font=_FALLBACK_FONT, fill=(255, 255, 255, 220))
+            x += int(bb[2] - bb[0]) + gap
 
 

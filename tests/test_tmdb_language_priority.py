@@ -6,11 +6,16 @@ from unittest.mock import patch
 
 from i18n import load_languages, translate_genre, translate_sash
 from tmdb import (
+    LOGO_PRIORITY_PRESETS,
     _image_language_keys,
     _image_matches_language,
     _tmdb_include_image_languages,
     fetch_logo,
     image_language_order,
+    logo_language_steps,
+    logo_priority_draws_text,
+    logo_priority_uses_custom,
+    parse_logo_priority,
 )
 
 
@@ -33,6 +38,69 @@ class _FakeClient:
         return _FakeImageResponse()
 
 
+class LogoPriorityListTests(unittest.TestCase):
+    def test_presets_parse_as_themselves(self):
+        for name in LOGO_PRIORITY_PRESETS:
+            with self.subTest(name=name):
+                self.assertEqual(parse_logo_priority(name), name)
+
+    def test_list_matching_a_preset_is_stored_under_its_name(self):
+        # Keeps the composite cache key of a configurator URL that spells the
+        # default order out the same as the one that leaves it to the preset.
+        for name, sources in LOGO_PRIORITY_PRESETS.items():
+            with self.subTest(name=name):
+                self.assertEqual(parse_logo_priority(",".join(sources)), name)
+
+    def test_custom_list_is_normalised(self):
+        self.assertEqual(
+            parse_logo_priority(" Original, bogus,native,original,text,neutral"),
+            "original,native,text",
+        )
+
+    def test_invalid_or_empty_values_are_rejected(self):
+        for value in (None, "", "bogus", " , "):
+            with self.subTest(value=value):
+                self.assertIsNone(parse_logo_priority(value))
+
+    def test_steps_follow_the_list(self):
+        self.assertEqual(
+            logo_language_steps("fr", "ja", "english,neutral,native,text"),
+            ["en", "metahub", "null", "fr"],
+        )
+
+    def test_steps_skip_sources_with_no_language(self):
+        self.assertEqual(
+            logo_language_steps("fr", None, "native,custom,original,text"),
+            ["fr"],
+        )
+
+    def test_native_if_original_only_applies_to_native_content(self):
+        self.assertEqual(
+            logo_language_steps("fr", "fr", "native_if_original,english"),
+            ["fr", "en", "metahub"],
+        )
+        self.assertEqual(
+            logo_language_steps("fr", "ja", "native_if_original,english"),
+            ["en", "metahub"],
+        )
+
+    def test_text_and_custom_flags(self):
+        self.assertTrue(logo_priority_draws_text("native_original"))
+        self.assertFalse(logo_priority_draws_text("native,original"))
+        self.assertTrue(logo_priority_uses_custom("native_custom_text"))
+        self.assertFalse(logo_priority_uses_custom("native_original"))
+
+    def test_disabled_neutral_is_never_used(self):
+        async def run_case():
+            logos = [{"file_path": "/neutral.png", "iso_639_1": None, "vote_average": 9}]
+            return await fetch_logo(
+                _FakeClient(), logos, logo_language="fr", original_language="ja",
+                logo_priority="native,original,text", use_metahub=False,
+            )
+
+        self.assertIsNone(asyncio.run(run_case()))
+
+
 class ImageLanguageOrderTests(unittest.TestCase):
     def test_native_content_keeps_native_language_first(self):
         self.assertEqual(
@@ -50,18 +118,20 @@ class ImageLanguageOrderTests(unittest.TestCase):
                     ["en", original_language],
                 )
 
-    def test_existing_priorities_are_unchanged(self):
+    def test_presets_order_languages_as_their_lists_do(self):
+        # English is part of every preset's list, at the end of the language
+        # tags; the language-neutral and Metahub steps are not languages.
         self.assertEqual(
             image_language_order("fr", "ja", "native_original"),
-            ["fr", "ja"],
+            ["fr", "ja", "en"],
         )
         self.assertEqual(
             image_language_order("fr", "ja", "original_native"),
-            ["ja", "fr"],
+            ["ja", "fr", "en"],
         )
         self.assertEqual(
             image_language_order("fr", "ja", "native_text"),
-            ["fr"],
+            ["fr", "en"],
         )
 
     def test_duplicate_languages_are_only_tried_once(self):

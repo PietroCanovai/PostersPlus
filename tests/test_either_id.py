@@ -407,10 +407,16 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.calls[0][0], "https://api.themoviedb.org/3/tv/286801/external_ids")
 
     async def test_reverse_lookup_failure_raises_and_is_not_cached(self):
+        self.addCleanup(tmdb._reverse_idmap_failed_at.clear)
         with _MemoryJsonCache(tmdb, cinemeta) as cache:
             with self.assertRaises(tmdb.IdResolveError):
                 await tmdb.resolve_tmdb_to_imdb(_FakeClient(_FakeResponse(503)), "278", "movie", "k")
             self.assertEqual(cache.store, {})
+            # Not asked again straight away, which in a blip only adds load.
+            client = _FakeClient(RuntimeError("must not be called"))
+            with self.assertRaises(tmdb.IdResolveError):
+                await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k")
+            self.assertEqual(client.calls, [])
 
     async def test_find_seeds_the_reverse_map(self):
         with _MemoryJsonCache(tmdb, cinemeta):
@@ -583,9 +589,15 @@ class ImdbUnderTmdbTests(unittest.IsolatedAsyncioTestCase):
         self._stub("tt9999999")
         self.assertEqual(await self._kept(), "")
 
-    async def test_failed_lookup_drops_the_imdb_id(self):
+    async def test_failed_lookup_keeps_the_imdb_id_unverified(self):
+        # A TMDB blip says nothing about the link: dropping the id cached the
+        # poster for days under another identity.
         self._stub(tmdb.IdResolveError("down"))
-        self.assertEqual(await self._kept(), "")
+        self.assertEqual(await self._kept(), "tt13207736")
+        self.assertEqual(
+            await main._imdb_id_under_tmdb_checked("286801", "tt13207736", "series", "k", False),
+            ("tt13207736", True),
+        )
 
     async def test_cinemeta_spine_and_keyless_requests_keep_it(self):
         self._stub(RuntimeError("must not be called"))
@@ -658,6 +670,14 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         }
         self._cm_fetch = cinemeta.fetch_cinemeta_metadata
         self._cm_meta = cinemeta.fetch_cinemeta_meta
+        # The stubbed client cannot serve TMDB's trending list, so every render
+        # here reads it, fails, and retries: no real pause for that, and no
+        # cooldown left behind for the next test.
+        self._retry_delay = tmdb._TRENDING_RETRY_DELAY_SECS
+        tmdb._TRENDING_RETRY_DELAY_SECS = 0
+        tmdb._trending_source_failed_at.clear()
+        self.addCleanup(tmdb._trending_source_failed_at.clear)
+        self.addCleanup(setattr, tmdb, "_TRENDING_RETRY_DELAY_SECS", self._retry_delay)
         main._cfg.ACCESS_KEY = ""
         main._cfg.SERVER_MDBLIST_KEYS = []
         main._cfg.CINEMETA_ENABLED = True
@@ -754,11 +774,16 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
             seen.append(key)
             return None
         main.get_cached_final_poster_entry = _spy
+        # Past the in-memory tier too, or the second request is answered by
+        # the first one's freshly cached render before reaching the spy.
+        real_l1 = main.get_cached_final_poster_l1
+        main.get_cached_final_poster_l1 = lambda key: None
         try:
             await self._get(imdb_id="tt0111161", type="movie", cb="either2")
             await self._get(imdb_id="tt0111161", tmdb_id="278", type="movie", cb="either2")
         finally:
             main.get_cached_final_poster_entry = real_lookup
+            main.get_cached_final_poster_l1 = real_l1
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].startswith("tt0111161:278:movie:"))
@@ -778,11 +803,16 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
             seen.append(key)
             return None
         main.get_cached_final_poster_entry = _spy
+        # Past the in-memory tier too, or the second request is answered by
+        # the first one's freshly cached render before reaching the spy.
+        real_l1 = main.get_cached_final_poster_l1
+        main.get_cached_final_poster_l1 = lambda key: None
         try:
             await self._get(imdb_id="tt13207736", tmdb_id="286801", type="series", cb="either3")
             await self._get(tmdb_id="286801", type="series", cb="either3")
         finally:
             main.get_cached_final_poster_entry = real_lookup
+            main.get_cached_final_poster_l1 = real_l1
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].startswith("tmdb:286801:"))

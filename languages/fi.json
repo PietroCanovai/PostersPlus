@@ -29,6 +29,9 @@
   "monthsShort": ["Tammi", "Helmi", "Maalis", "Huhti", "Touko", "Kesä", "Heinä", "Elo", "Syys", "Loka", "Marras", "Joulu"],
   "sashLabels": {
     "trendingToday": "#{rank} tänään",
+    "Film": "Elokuva",
+    "Series": "Sarja",
+    "Anime": "Anime",
     "releaseDay": "{window} {day}. {month}",
     "releaseMonth": "{window} {month} {year}",
     "releaseDayStreaming": "Suoratoisto {day}. {month}",
