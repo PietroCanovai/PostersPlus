@@ -29,7 +29,7 @@
   back from the cached rating row, and a changed order re-renders cached
   posters once.
 
-### Client insets, and controls beside their labels
+### Client insets, and sliders
 
 - The trending ribbon takes the Primary Client's top inset, like the notch:
   on Stremio Desktop/Web it grows upwards by that much, so the client's crop
@@ -37,7 +37,19 @@
 - The configurator's bar and notch inset sliders are gone; the Primary
   Client sets both. `bar_bottom_inset` and `sash_badge_inset` still work in
   a URL, and the configurator keeps them when it imports one.
-- Sliders and dropdowns sit on the same line as their label.
+- Sliders have a thicker gold track and a larger handle, and the value no
+  longer runs into the edge of a narrow row.
+- Sliders sit on the same line as their label.
+- On a phone, the six tabs fit across the panel instead of cutting off
+  Weights at the edge; the small preview moves to the top reliably when it
+  would cover the end of a tab, including one too short to scroll; the
+  Trending Catalogs Addon link has a Copy button, and the full-screen
+  preview keeps its buttons directly under the poster whether or not the
+  browser's toolbar is showing.
+- Back (or the back gesture) closes an open Load preset, Import or What's
+  new dialog first, and only then the full-screen preview.
+- Tapping a button on a phone no longer sometimes opens its tooltip over what
+  the button just showed (e.g. the IMDb/TMDB menu).
 
 ### Code review fixes (27 Sep 2026)
 

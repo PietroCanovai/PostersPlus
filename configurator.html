@@ -584,29 +584,18 @@
     text-transform: uppercase;
   }
 
-  /* A slider or dropdown shares its label's line, so a panel of them reads
-     as a list of names down the left rather than label/control pairs.  Not
-     inside a .field-row, whose two half-width columns are too narrow to
-     split again.  Anything else in the field (a hint, a preview) takes the
-     full width under both. */
-  .field:not(.field-row > .field):has(> .field-label + .range-row),
-  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) {
+  /* A slider shares its label's line, to save a row.  Not inside a
+     .field-row, whose half-width columns are too narrow to split again.
+     Anything else in the field (a hint) takes the full width under both. */
+  .field:not(.field-row > .field):has(> .field-label + .range-row) {
     display: grid;
     grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
     column-gap: 14px;
     align-items: center;
   }
-  .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label,
-  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > .field-label {
-    margin-bottom: 0;
-  }
-  .field:not(.field-row > .field):has(> .field-label + .range-row) > :not(.field-label, .range-row),
-  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > :not(.field-label, select) {
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label { margin-bottom: 0; }
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > :not(.field-label, .range-row) {
     grid-column: 1 / -1;
-  }
-  .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > select {
-    padding-block: 7px;
-    text-overflow: ellipsis;
   }
 
   /* --text-muted sits near 2:1 on the panel fill — unreadable at this size.
@@ -1183,10 +1172,14 @@
   }
 
   /* ── RANGE ── */
-  .range-row { display: flex; align-items: center; gap: 10px; }
+  /* min-width 0 on both: a range input's intrinsic width would otherwise
+     push the value past the row's edge in a narrow column. */
+  .range-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
   input[type="range"] {
     flex: 1;
+    min-width: 0;
+    width: 100%;
     -webkit-appearance: none;
     appearance: none;
     height: 10px;
@@ -1201,29 +1194,29 @@
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 10px; height: 10px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--gold);
     border: none;
     cursor: pointer;
-    box-shadow: 0 0 8px rgba(201,168,76,0.4);
-    margin-top: -4px; /* (thumb 10px - track 2px) / 2 */
+    margin-top: -6px; /* (thumb 16px - track 4px) / 2 */
   }
 
   input[type="range"]::-webkit-slider-runnable-track {
-    background: linear-gradient(90deg, var(--gold-dim) var(--pct, 0%), var(--border) var(--pct, 0%));
-    height: 2px;
-    border-radius: 1px;
+    background: linear-gradient(90deg, var(--gold) var(--pct, 0%), var(--black4) var(--pct, 0%));
+    height: 4px;
+    border-radius: 2px;
   }
 
   input[type="range"]::-moz-range-track {
-  height: 2px;
-  background: var(--border);
-  border-radius: 1px;
+  height: 4px;
+  background: var(--black4);
+  border-radius: 2px;
   }
+  input[type="range"]::-moz-range-progress { height: 4px; background: var(--gold); border-radius: 2px; }
 
   input[type="range"]::-moz-range-thumb {
-    width: 10px; height: 10px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--gold);
     border: none;
@@ -1231,9 +1224,11 @@
   }
 
   .range-val {
+    flex: none;
     font-size: 11px;
+    font-weight: 500;
     color: var(--gold);
-    min-width: 36px;
+    min-width: 40px;
     text-align: right;
     cursor: text;
     border-radius: 3px;
@@ -1365,15 +1360,12 @@
     letter-spacing: 0.02em;
   }
 
-  /* currentColor is set inline per slot, so the halo tracks the dot's hue.
-     The neutral shadow first is the fallback wherever color-mix is unsupported. */
+  /* currentColor is set inline per slot. */
   .sash-type-dot {
-    width: 6px; height: 6px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
     background: currentColor;
-    box-shadow: 0 0 0 3px rgba(255,255,255,0.05);
-    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
   }
 
   .sash-disable-btn, .sash-enable-btn {
@@ -1963,11 +1955,14 @@
 
     .two-col, .inline-grid, .field-row { grid-template-columns: 1fr; }
     .weight-item { grid-template-columns: 96px 1fr 38px; column-gap: 8px; }
-    /* Tabs no longer fit on one line at phone widths — let the row scroll.  The
-       inset pseudo-rule would scroll away with it, so use a real border here. */
+    /* Six tabs spread edge to edge fit a 360px phone at this gap and padding
+       (the old 20px gap left Weights half cut off at the edge of a 390px one).
+       Narrower than that the row scrolls.  The inset pseudo-rule would scroll
+       away with it, so use a real border here. */
     .tab-bar {
-      justify-content: flex-start;
-      gap: 20px;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 16px;
       overflow-x: auto;
       scrollbar-width: none;
       border-bottom: 1px solid var(--border);
@@ -1985,9 +1980,8 @@
       margin-top: -11px;
       margin-bottom: calc(var(--gap-label) - 11px);
     }
-    /* Beside its control there is no gap below to keep: cancel both sides. */
-    .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label[data-tip],
-    .field:not(.field-row > .field):has(> .field-label + select:not(.segmented-source)) > .field-label[data-tip] {
+    /* Beside its slider there is no gap below to keep: cancel both sides. */
+    .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label[data-tip] {
       margin-block: -11px;
     }
     .group-title[data-tip] {
@@ -2005,14 +1999,14 @@
     .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
     input[type="text"], input[type="number"], select { min-height: 44px; font-size: 16px; }
     input[type="range"] { height: 28px; background: transparent; touch-action: pan-x; }
-    input[type="range"]::-webkit-slider-runnable-track { height: 2px; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 4px; }
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       width: 22px; height: 22px;
       border-radius: 50%;
       background: var(--gold);
       border: 3px solid var(--black1);
-      margin-top: -10px;
+      margin-top: -9px;
     }
     input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 3px solid var(--black1); }
     .section-body { padding: var(--gap-group) 16px calc(var(--gap-group) - var(--gap-field)); }
@@ -2062,16 +2056,33 @@
     .preview-panel.expanded .preview-actions { display: grid; }
     /* :not([hidden]) so expanding never reveals an error that isn't set. */
     .preview-panel.expanded .preview-error:not([hidden]) { display: block; }
+    /* The poster takes whatever height the buttons leave, and the buttons sit
+       in one row directly under it.  Shrinks but never grows: when the
+       browser's toolbar hides, the screen is taller than a full-width poster
+       needs, and a growing frame opened a gap between poster and buttons.  The
+       spare height goes below the buttons instead, so nothing moves as the
+       toolbar comes and goes. */
     .preview-panel.expanded .preview-frame {
-      flex: none;
-      height: 54vh;
-      height: 54dvh;
+      flex: 0 1 auto;
+      min-height: 0;
+      padding: 12px 12px 0;
       overflow: hidden;
     }
-    .preview-panel.expanded .preview-poster { max-height: 100%; object-fit: contain; }
-    /* Controls area below the poster scrolls if content is tall */
+    .preview-panel.expanded .preview-poster {
+      width: auto;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .preview-panel.expanded .preview-actions {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    }
+    .preview-panel.expanded .preview-actions .btn { padding: 8px 4px; white-space: normal; text-align: center; letter-spacing: 0.08em; }
     .preview-panel.expanded .preview-controls {
-      flex: 1;
+      flex: none;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -2348,7 +2359,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </label>
                 </div>
               </div>
-              <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
+              <!-- A button, because on a phone a long press on a readonly
+                   input drags its caret along the URL instead of offering Copy. -->
+              <div class="search-input-row">
+                <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
+                <button type="button" class="btn-search" id="trending-copy-btn" onclick="copyTrendingUrl()">Copy</button>
+              </div>
             </div>
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
@@ -2811,14 +2827,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
                 <div class="field">
-                  <label class="field-label">Font Horizontal Position</label>
+                  <label class="field-label">Font X Position</label>
                   <div class="range-row">
                     <input type="range" id="cfg-x-mode3" min="0.01" max="0.20" step="0.005" value="0.065" oninput="updateRange(this,'rng-x3'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-x3">0.065</span>
                   </div>
                 </div>
                 <div class="field">
-                  <label class="field-label">Font Vertical Position</label>
+                  <label class="field-label">Font Y Position</label>
                   <div class="range-row">
                     <input type="range" id="cfg-y-mode3" min="0.00" max="0.98" step="0.01" value="0.92" oninput="updateRange(this,'rng-y3'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-y3">0.92</span>
@@ -3137,79 +3153,82 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="field" id="sash-trending-style-field">
-              <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
-              <select class="segmented-source" id="cfg-trending-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
-                <option value="sash" selected>Sash Label</option>
-                <option value="number">Number</option>
-                <option value="ribbon">Ribbon</option>
-              </select>
-              <div class="segmented" data-for="cfg-trending-style"></div>
-            </div>
-            <div id="sash-trending-mark-fields" style="display:none;">
-              <div class="field">
-                <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes.">Trending Rank Side</label>
-                <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
-                  <option value="left" selected>Left</option>
-                  <option value="right">Right</option>
+            <div class="cfg-sep" id="sash-trending-group">
+              <span class="group-title">Trending Rank</span>
+              <div class="field" id="sash-trending-style-field">
+                <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
+                <select class="segmented-source" id="cfg-trending-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
+                  <option value="sash" selected>Sash Label</option>
+                  <option value="number">Number</option>
+                  <option value="ribbon">Ribbon</option>
                 </select>
-                <div class="segmented" data-for="cfg-trending-side"></div>
+                <div class="segmented" data-for="cfg-trending-style"></div>
               </div>
-              <div class="field">
-                <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
-                <select class="segmented-source" id="cfg-trending-sash" onchange="build(); queuePreviewReload()">
-                  <option value="keep" selected>Do Nothing</option>
-                  <option value="hide">Hide</option>
-                  <option value="opposite">Opposite Side</option>
-                </select>
-                <div class="segmented" data-for="cfg-trending-sash"></div>
-              </div>
-              <div class="field">
-                <label class="field-label" data-tip="Size of the Trending number or ribbon against its default.">Trending Rank Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-trending-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-trs'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-trs">1.00</span>
-                </div>
-              </div>
-              <div class="field" id="sash-trending-ribbon-style-field">
-                <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour from the same sample as a frosted notch, with its own opacity and saturation.">Ribbon Style</label>
-                <select id="cfg-trending-ribbon-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
-                  <option value="charcoal" selected>Charcoal</option>
-                  <option value="frosted">Frosted</option>
-                  <option value="black">Pure Black</option>
-                  <option value="silver">Black, Silver Trim</option>
-                  <option value="gold">Black, Gold Trim</option>
-                </select>
-              </div>
-              <div id="sash-trending-frost-fields" style="display:none;">
+              <div id="sash-trending-mark-fields" style="display:none;">
                 <div class="field">
-                  <label class="field-label">Ribbon Opacity</label>
-                  <div class="range-row">
-                    <input type="range" id="cfg-trending-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-trfo'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-trfo">0.75</span>
-                  </div>
+                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes.">Trending Rank Side</label>
+                  <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
+                    <option value="left" selected>Left</option>
+                    <option value="right">Right</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-trending-side"></div>
                 </div>
                 <div class="field">
-                  <label class="field-label">Ribbon Colour Saturation</label>
+                  <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
+                  <select class="segmented-source" id="cfg-trending-sash" onchange="build(); queuePreviewReload()">
+                    <option value="keep" selected>Do Nothing</option>
+                    <option value="hide">Hide</option>
+                    <option value="opposite">Opposite Side</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-trending-sash"></div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Size of the Trending number or ribbon against its default.">Trending Rank Size</label>
                   <div class="range-row">
-                    <input type="range" id="cfg-trending-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-trfs'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-trfs">1.20</span>
+                    <input type="range" id="cfg-trending-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-trs'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-trs">1.00</span>
                   </div>
                 </div>
-              </div>
-              <div class="toggle-row" id="sash-trending-label-row">
-                <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-trending-label" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" id="sash-trending-corner-row">
-                <span class="toggle-label" data-tip="Tucks the ribbon right into the corner. Off leaves a small gap, so apps that round poster corners don't clip it.">Ribbon: Nest in Corner</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-trending-corner" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
+                <div class="field" id="sash-trending-ribbon-style-field">
+                  <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour from the same sample as a frosted notch, with its own opacity and saturation.">Ribbon Style</label>
+                  <select id="cfg-trending-ribbon-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
+                    <option value="charcoal" selected>Charcoal</option>
+                    <option value="frosted">Frosted</option>
+                    <option value="black">Pure Black</option>
+                    <option value="silver">Black, Silver Trim</option>
+                    <option value="gold">Black, Gold Trim</option>
+                  </select>
+                </div>
+                <div id="sash-trending-frost-fields" style="display:none;">
+                  <div class="field">
+                    <label class="field-label">Ribbon Opacity</label>
+                    <div class="range-row">
+                      <input type="range" id="cfg-trending-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-trfo'); build(); queuePreviewReload()">
+                      <span class="range-val" id="rng-trfo">0.75</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Ribbon Colour Saturation</label>
+                    <div class="range-row">
+                      <input type="range" id="cfg-trending-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-trfs'); build(); queuePreviewReload()">
+                      <span class="range-val" id="rng-trfs">1.20</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="toggle-row" id="sash-trending-label-row">
+                  <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-label" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="toggle-row" id="sash-trending-corner-row">
+                  <span class="toggle-label" data-tip="Tucks the ribbon right into the corner. Off leaves a small gap, so apps that round poster corners don't clip it.">Ribbon: Nest in Corner</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-corner" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -4073,8 +4092,29 @@ function collapsePreview() {
   }
 }
 
-// Back gesture / button: collapse the panel instead of leaving the page.
+// A modal opened over the page (or over the expanded preview) gets its own
+// history entry, so Back closes the modal first and only a second Back
+// collapses the preview.  Closing it any other way pops that entry again.
+function _pushModalState(id) {
+  history.pushState({ modal: id }, '');
+}
+function _popModalState(id) {
+  if (history.state && history.state.modal === id) history.back();
+}
+const _BACK_MODALS = {
+  'preset-modal':   () => closePresetModal(),
+  'import-modal':   () => closeImportModal(),
+  'whatsnew-modal': () => closeWhatsNew(),
+};
+
+// Back gesture / button: close the topmost layer instead of leaving the page.
 window.addEventListener('popstate', () => {
+  for (const [id, close] of Object.entries(_BACK_MODALS)) {
+    if (document.getElementById(id)?.classList.contains('open')) { close(); return; }
+  }
+  // A modal's own close pops its entry too, landing back on the preview's —
+  // which is not a request to collapse it.
+  if (history.state && history.state.previewExpanded) return;
   if (previewPanel.classList.contains('expanded')) {
     previewPanel.classList.remove('expanded');
     _unlockScroll();
@@ -4102,16 +4142,29 @@ document.getElementById('preview-frame').addEventListener('click', () => {
   if (previewPanel.classList.contains('expanded')) collapsePreview();
 });
 
-window.addEventListener('scroll', () => {
-  if (!_isMobileViewport()) return;
-  // When scrolled to the bottom (with a 50px buffer), move preview to top right
-  const scrolledToBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
-  if (scrolledToBottom && !previewPanel.classList.contains('expanded')) {
-    previewPanel.classList.add('preview-at-top');
-  } else {
+// At the bottom of the page the collapsed preview moves to the top right, if
+// down in its corner it would cover the end of the config panel.  A tab that
+// ends clear of it keeps it at the bottom, off the header's buttons.
+// Measured against the document's scroll height and run on tab switches too:
+// body has min-height 100vh, so on a tab too short to scroll its offsetHeight
+// was the viewport, no scroll event came, and the preview sat on the last
+// controls until the mobile toolbar happened to resize the viewport.
+function placePreview() {
+  if (!_isMobileViewport() || previewPanel.classList.contains('expanded')) {
     previewPanel.classList.remove('preview-at-top');
+    return;
   }
-}, { passive: true });
+  const doc = document.documentElement;
+  const atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 50;
+  // The panel's bottom against where the thumbnail's top edge sits when it is
+  // down in the corner (12px off the edge, like the CSS).
+  const panel = document.querySelector('.left-col');
+  const covers = panel && panel.getBoundingClientRect().bottom >
+                 window.innerHeight - 12 - previewPanel.offsetHeight;
+  previewPanel.classList.toggle('preview-at-top', atBottom && !!covers);
+}
+window.addEventListener('scroll', placePreview, { passive: true });
+window.addEventListener('resize', placePreview);
 
 function showTab(tab) {
   document.querySelectorAll('.section').forEach(s => {
@@ -4122,6 +4175,9 @@ function showTab(tab) {
   });
   const host = document.getElementById('tab-host');
   if (host) host.scrollTop = 0;
+  // A shorter tab can leave the page scrolled to its new bottom without a
+  // scroll event firing.
+  placePreview();
 }
 
 function updateRange(el, outId) {
@@ -5718,6 +5774,15 @@ function updateTrendingCatalogsField() {
     `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${cfg ? cfg + '/' : ''}manifest.json`;
 }
 
+async function copyTrendingUrl() {
+  const btn = document.getElementById('trending-copy-btn');
+  const inp = document.getElementById('trending-catalogs-url');
+  if (await copyText(inp.value)) { flashButton(btn, 'Copied'); return; }
+  inp.focus();
+  inp.select();
+  setStatus('URL selected — copy it manually.', 'info');
+}
+
 function build() {
   updateTrendingCatalogsField();
   const url = buildPreviewUrl();
@@ -7295,7 +7360,7 @@ function updateShapeFields() {
   // Sash tab: the mode (drawn or not), the release-status filters and the
   // priority list are read; the rest styles the portrait sash / notch.
   for (const id of ['sash-cinema-greyscale-row', 'sash-winner-star-row', 'sash-text-color-field',
-                    'sash-trending-style-field', 'sash-trending-mark-fields',
+                    'sash-trending-group', 'sash-trending-style-field', 'sash-trending-mark-fields',
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
@@ -7442,8 +7507,7 @@ function initSegmented() {
     const M   = 8;   // keep this far off every viewport edge
 
     // Left-aligned to the label rather than centred: .field-label is a
-    // block wider than its text, so centring on its box would ignore where
-    // the text is.
+    // full-width block, so centring on its box would ignore where the text is.
     let left = Math.max(M, Math.min(r.left, window.innerWidth - tr.width - M));
 
     // ABOVE by default. The control this label names sits beside or directly
@@ -7476,7 +7540,18 @@ function initSegmented() {
 
   const target = ev => ev.target?.closest?.('[data-tip]') || null;
 
+  // A tap is followed by a synthetic mouseover, which queued the hover
+  // tooltip for a button that was just tapped.  The click handler below
+  // cancels it, but only if the click reaches document: the link button's
+  // menu stops propagation, so its tooltip opened over the menu it had just
+  // shown.  Touch has its own path (touchend), so hover ignores anything
+  // this soon after a touch.
+  let lastTouch = 0;
+  document.addEventListener('touchstart', () => { lastTouch = Date.now(); }, { capture: true, passive: true });
+  const fromTouch = () => Date.now() - lastTouch < 1000;
+
   document.addEventListener('mouseover', ev => {
+    if (fromTouch()) return;
     const a = target(ev);
     if (!a) hide();
     else if (a !== anchor && a !== pending) show(a);
@@ -7877,11 +7952,15 @@ function _portraitOnlyControlIds() {
 
 function openPresetModal() {
   _buildPresetGrid();
-  document.getElementById('preset-modal').classList.add('open');
+  const modal = document.getElementById('preset-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('preset-modal');
 }
 
 function closePresetModal() {
   document.getElementById('preset-modal').classList.remove('open');
+  _popModalState('preset-modal');
 }
 
 function loadPreset(id) {
@@ -7907,7 +7986,11 @@ function loadPreset(id) {
 }
 
 function toggleImportBar() {
-  document.getElementById('import-modal').classList.add('open');
+  const modal = document.getElementById('import-modal');
+  if (!modal.classList.contains('open')) {
+    modal.classList.add('open');
+    _pushModalState('import-modal');
+  }
   const input = document.getElementById('import-input');
   // Slight delay so the display:flex transition completes before focus
   setTimeout(() => { input.focus(); input.select(); }, 50);
@@ -7916,6 +7999,7 @@ function toggleImportBar() {
 function closeImportModal() {
   document.getElementById('import-modal').classList.remove('open');
   document.getElementById('import-input').value = '';
+  _popModalState('import-modal');
 }
 
 function applyImport() {
@@ -7934,11 +8018,15 @@ function applyImport() {
 const WHATS_NEW_VERSION = '1.2.0';
 
 function openWhatsNew() {
-  document.getElementById('whatsnew-modal').classList.add('open');
+  const modal = document.getElementById('whatsnew-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('whatsnew-modal');
 }
 
 function closeWhatsNew() {
   document.getElementById('whatsnew-modal').classList.remove('open');
+  _popModalState('whatsnew-modal');
   try { localStorage.setItem('postersplus_whatsnew_acked', WHATS_NEW_VERSION); } catch (_) {}
   const ver = document.getElementById('whatsnew-version');
   if (ver) ver.dataset.acked = 'true';
@@ -8517,9 +8605,9 @@ function initCustomMobileSliders() {
     const wrap = document.createElement('div');
     wrap.style.cssText = `position:relative;height:28px;display:flex;align-items:center;flex:1;cursor:pointer;touch-action:pan-y;`;
     const track = document.createElement('div');
-    track.style.cssText = `position:absolute;left:0;right:0;height:2px;background:var(--border);pointer-events:none;`;
+    track.style.cssText = `position:absolute;left:0;right:0;height:4px;border-radius:2px;background:var(--black4);pointer-events:none;`;
     const fill = document.createElement('div');
-    fill.style.cssText = `position:absolute;left:0;height:2px;background:var(--gold-dim);pointer-events:none;`;
+    fill.style.cssText = `position:absolute;left:0;height:4px;border-radius:2px;background:var(--gold);pointer-events:none;`;
     const thumb = document.createElement('div');
     thumb.style.cssText = `position:absolute;width:22px;height:22px;border-radius:50%;background:var(--gold);border:3px solid var(--black1);transform:translate(-50%,-50%);top:50%;pointer-events:none;`;
     wrap.appendChild(track); wrap.appendChild(fill); wrap.appendChild(thumb);
