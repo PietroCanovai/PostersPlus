@@ -445,6 +445,7 @@
   /* Marks the client a plain left-click copies for. */
   .menu-item.is-current { color: var(--gold-bright); }
   .menu-item.is-current::after { content: " \2713"; }
+  .menu-sep { height: 1px; margin: 3px 4px; background: var(--border); }
 
   /* Status readout sits bare next to the preview title — a state dot, not a
      chip, so it doesn't compete with the version pill opposite it.  Qualified
@@ -583,6 +584,20 @@
     text-transform: uppercase;
   }
 
+  /* A slider shares its label's line, to save a row.  Not inside a
+     .field-row, whose half-width columns are too narrow to split again.
+     Anything else in the field (a hint) takes the full width under both. */
+  .field:not(.field-row > .field):has(> .field-label + .range-row) {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    column-gap: 14px;
+    align-items: center;
+  }
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label { margin-bottom: 0; }
+  .field:not(.field-row > .field):has(> .field-label + .range-row) > :not(.field-label, .range-row) {
+    grid-column: 1 / -1;
+  }
+
   /* --text-muted sits near 2:1 on the panel fill — unreadable at this size.
      Still used by the other tabs and the callout until they are converted. */
   .field-hint {
@@ -683,7 +698,7 @@
 
   #tooltip.open { opacity: 1; visibility: visible; }
 
-  /* Two controls side by side (e.g. native language + priority). */
+  /* Two controls side by side (e.g. native language + fallback poster style). */
   .field-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -692,6 +707,8 @@
     margin-bottom: var(--gap-field);
   }
   .field-row > .field { margin-bottom: 0; }
+  /* Landscape hides the fallback style (portrait-only); the language takes the row. */
+  .field-row:has(> #fallback-bg-style-field[style*="none"]) { grid-template-columns: 1fr; }
 
   input[type="text"],
   input[type="number"],
@@ -851,6 +868,43 @@
   }
 
   .segmented-opt:hover { color: var(--silver-bright); border-color: var(--black5); }
+  /* Graphic badge groups */
+  .gb-group-row { display: grid; grid-template-columns: 1fr 68px; gap: 6px; }
+  .gb-xy { margin-top: 12px; display: grid; gap: 8px; }
+  .gb-align-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+  .gb-align-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+                    color: var(--silver-dim); }
+  .gb-align-row .gb-seg { width: 186px; }
+  .gb-xy .gb-axis { font-family: var(--mono); font-size: 10px; color: var(--silver-dim); flex: none; width: 12px; }
+  /* "Badges" on the left, a caption over the group pickers on the right. */
+  .gb-list-label { display: flex; justify-content: space-between; align-items: baseline; }
+  .gb-list-label .gb-col { width: 150px; margin-right: 12px; text-align: center;
+                           font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em;
+                           text-transform: uppercase; color: var(--silver-dim); }
+  .sash-item.gb-item { cursor: default; gap: 10px; padding-top: 7px; padding-bottom: 7px; }
+  .gb-item .sash-label { flex: 1; }
+  .gb-order { display: flex; flex-direction: column; gap: 1px; flex: none; }
+  .gb-move {
+    background: none; border: none; padding: 0; width: 16px; height: 11px; line-height: 0;
+    color: var(--silver-dim); cursor: pointer; border-radius: 3px;
+  }
+  .gb-move svg { width: 10px; height: 6px; }
+  .gb-move:hover:not(:disabled) { color: var(--gold-bright); background: var(--gold-faint); }
+  .gb-move:disabled { opacity: 0.2; cursor: default; }
+  .gb-seg {
+    display: inline-flex; flex: none; width: 150px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--black2);
+  }
+  .gb-seg span {
+    flex: 1; padding: 5px 0; text-align: center; cursor: pointer; user-select: none;
+    font-family: var(--mono); font-size: 10.5px; color: var(--silver);
+    transition: color 0.15s, background 0.15s;
+  }
+  .gb-seg span + span { border-left: 1px solid var(--border); }
+  .gb-seg span:hover { color: var(--silver-bright); }
+  .gb-seg span.active { color: var(--gold-bright); background: linear-gradient(180deg, rgba(201,168,76,0.18), rgba(201,168,76,0.06)); }
+  .gb-item.sash-item-disabled .sash-label { color: var(--silver-dim); }
   .segmented-opt:focus-visible { outline: none; border-color: var(--gold-dim); }
 
   .segmented-opt.active {
@@ -1118,10 +1172,14 @@
   }
 
   /* ── RANGE ── */
-  .range-row { display: flex; align-items: center; gap: 10px; }
+  /* min-width 0 on both: a range input's intrinsic width would otherwise
+     push the value past the row's edge in a narrow column. */
+  .range-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
   input[type="range"] {
     flex: 1;
+    min-width: 0;
+    width: 100%;
     -webkit-appearance: none;
     appearance: none;
     height: 10px;
@@ -1136,29 +1194,29 @@
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 10px; height: 10px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--gold);
     border: none;
     cursor: pointer;
-    box-shadow: 0 0 8px rgba(201,168,76,0.4);
-    margin-top: -4px; /* (thumb 10px - track 2px) / 2 */
+    margin-top: -6px; /* (thumb 16px - track 4px) / 2 */
   }
 
   input[type="range"]::-webkit-slider-runnable-track {
-    background: linear-gradient(90deg, var(--gold-dim) var(--pct, 0%), var(--border) var(--pct, 0%));
-    height: 2px;
-    border-radius: 1px;
+    background: linear-gradient(90deg, var(--gold) var(--pct, 0%), var(--black4) var(--pct, 0%));
+    height: 4px;
+    border-radius: 2px;
   }
 
   input[type="range"]::-moz-range-track {
-  height: 2px;
-  background: var(--border);
-  border-radius: 1px;
+  height: 4px;
+  background: var(--black4);
+  border-radius: 2px;
   }
+  input[type="range"]::-moz-range-progress { height: 4px; background: var(--gold); border-radius: 2px; }
 
   input[type="range"]::-moz-range-thumb {
-    width: 10px; height: 10px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--gold);
     border: none;
@@ -1166,9 +1224,11 @@
   }
 
   .range-val {
+    flex: none;
     font-size: 11px;
+    font-weight: 500;
     color: var(--gold);
-    min-width: 36px;
+    min-width: 40px;
     text-align: right;
     cursor: text;
     border-radius: 3px;
@@ -1300,15 +1360,12 @@
     letter-spacing: 0.02em;
   }
 
-  /* currentColor is set inline per slot, so the halo tracks the dot's hue.
-     The neutral shadow first is the fallback wherever color-mix is unsupported. */
+  /* currentColor is set inline per slot. */
   .sash-type-dot {
-    width: 6px; height: 6px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
     background: currentColor;
-    box-shadow: 0 0 0 3px rgba(255,255,255,0.05);
-    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
   }
 
   .sash-disable-btn, .sash-enable-btn {
@@ -1336,6 +1393,8 @@
   .sash-enable-btn:hover  { color: var(--gold); background: var(--gold-faint); opacity: 1; }
 
   .sash-disabled-section { margin-top: 14px; }
+  .lp-list { margin-bottom: 0; }
+  .lp-sub { color: var(--text-muted); margin-left: 6px; }
   .sash-disabled-header {
     font-size: 8.5px;
     color: var(--silver-dim);
@@ -1896,11 +1955,14 @@
 
     .two-col, .inline-grid, .field-row { grid-template-columns: 1fr; }
     .weight-item { grid-template-columns: 96px 1fr 38px; column-gap: 8px; }
-    /* Tabs no longer fit on one line at phone widths — let the row scroll.  The
-       inset pseudo-rule would scroll away with it, so use a real border here. */
+    /* Six tabs spread edge to edge fit a 360px phone at this gap and padding
+       (the old 20px gap left Weights half cut off at the edge of a 390px one).
+       Narrower than that the row scrolls.  The inset pseudo-rule would scroll
+       away with it, so use a real border here. */
     .tab-bar {
-      justify-content: flex-start;
-      gap: 20px;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 16px;
       overflow-x: auto;
       scrollbar-width: none;
       border-bottom: 1px solid var(--border);
@@ -1918,6 +1980,10 @@
       margin-top: -11px;
       margin-bottom: calc(var(--gap-label) - 11px);
     }
+    /* Beside its slider there is no gap below to keep: cancel both sides. */
+    .field:not(.field-row > .field):has(> .field-label + .range-row) > .field-label[data-tip] {
+      margin-block: -11px;
+    }
     .group-title[data-tip] {
       padding-block: 8px;
       margin-top: -8px;
@@ -1933,14 +1999,14 @@
     .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
     input[type="text"], input[type="number"], select { min-height: 44px; font-size: 16px; }
     input[type="range"] { height: 28px; background: transparent; touch-action: pan-x; }
-    input[type="range"]::-webkit-slider-runnable-track { height: 2px; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 4px; }
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       width: 22px; height: 22px;
       border-radius: 50%;
       background: var(--gold);
       border: 3px solid var(--black1);
-      margin-top: -10px;
+      margin-top: -9px;
     }
     input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 3px solid var(--black1); }
     .section-body { padding: var(--gap-group) 16px calc(var(--gap-group) - var(--gap-field)); }
@@ -1990,16 +2056,33 @@
     .preview-panel.expanded .preview-actions { display: grid; }
     /* :not([hidden]) so expanding never reveals an error that isn't set. */
     .preview-panel.expanded .preview-error:not([hidden]) { display: block; }
+    /* The poster takes whatever height the buttons leave, and the buttons sit
+       in one row directly under it.  Shrinks but never grows: when the
+       browser's toolbar hides, the screen is taller than a full-width poster
+       needs, and a growing frame opened a gap between poster and buttons.  The
+       spare height goes below the buttons instead, so nothing moves as the
+       toolbar comes and goes. */
     .preview-panel.expanded .preview-frame {
-      flex: none;
-      height: 54vh;
-      height: 54dvh;
+      flex: 0 1 auto;
+      min-height: 0;
+      padding: 12px 12px 0;
       overflow: hidden;
     }
-    .preview-panel.expanded .preview-poster { max-height: 100%; object-fit: contain; }
-    /* Controls area below the poster scrolls if content is tall */
+    .preview-panel.expanded .preview-poster {
+      width: auto;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .preview-panel.expanded .preview-actions {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    }
+    .preview-panel.expanded .preview-actions .btn { padding: 8px 4px; white-space: normal; text-align: center; letter-spacing: 0.08em; }
     .preview-panel.expanded .preview-controls {
-      flex: 1;
+      flex: none;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -2269,90 +2352,46 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--gap-label);">
                 <label class="field-label" style="margin-bottom:0;" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
                 <div class="toggle-row" style="margin:0; gap:8px;">
-                  <span class="toggle-label" data-tip="On: posters in these catalogs show only their Trending rank, whatever your sash list says. Off: they use your sash list, like your other posters.">Trending Only</span>
+                  <span class="toggle-label" data-tip="On: these catalogs show only each poster's Trending rank (greyscale still applies). Off: your usual sash list. Only works where the app shows this addon's own posters, e.g. installed straight into Stremio: AIOMetadata's global poster pattern and Nuvio's custom poster override swap in your usual posters.">Trending Only</span>
                   <label class="toggle-switch">
                     <input type="checkbox" id="tog-trending-only" checked onchange="saveTrendingOnly(); updateTrendingCatalogsField()">
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
                   </label>
                 </div>
               </div>
-              <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
+              <!-- A button, because on a phone a long press on a readonly
+                   input drags its caret along the URL instead of offering Copy. -->
+              <div class="search-input-row">
+                <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
+                <button type="button" class="btn-search" id="trending-copy-btn" onclick="copyTrendingUrl()">Copy</button>
+              </div>
             </div>
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
             <div class="field">
-              <label class="field-label" data-tip="Sets recommended bar and notch insets for your client. Both stay adjustable.">Primary Client</label>
+              <label class="field-label" data-tip="Nudges anything drawn on the top or bottom edge (bar, notch, ribbon) clear of the edge your client's poster grid crops.">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Nuvio TV, Stremio TV, Plex, Jellyfin</option>
                 <option value="stremio_desktop_web">Nuvio Desktop, Nuvio HTPC, Stremio Desktop</option>
               </select>
             </div>
+            <!-- Shown only when the server's MAX_POSTER_RESOLUTION allows more
+                 than the default canvas (serverCaps.max_poster_resolution). -->
+            <div class="field" id="resolution-field" hidden>
+              <label class="field-label" id="resolution-label" data-tip="Portrait poster size. Larger posters look sharper on big screens but take longer to render and download. Landscape is unaffected.">Poster Resolution</label>
+              <select id="cfg-resolution" onchange="build(); if (serverCaps.preview_at_resolution) queuePreviewReload()">
+                <option value="500" selected>500 × 750 (default)</option>
+                <option value="780">780 × 1170</option>
+                <option value="1000">1000 × 1500</option>
+                <option value="1500">1500 × 2250</option>
+                <option value="2000">2000 × 3000</option>
+              </select>
+            </div>
             <div class="field-row">
             <div class="field">
               <label class="field-label" data-tip="★ marks languages whose poster text is fully translated, not just the logo.">Native Language</label>
-              <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
+              <select id="cfg-language" oninput="buildLogoPriorityList(); build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English ★</option>
-                <option value="es">Spanish ★</option>
-                <option value="es-es">Spanish (Spain) ★</option>
-                <option value="es-mx">Spanish (Mexico) ★</option>
-                <option value="fr">French ★</option>
-                <option value="fr-fr">French (France) ★</option>
-                <option value="de">German ★</option>
-                <option value="it">Italian ★</option>
-                <option value="pt">Portuguese ★</option>
-                <option value="pt-br">Portuguese (Brazil) ★</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="zh">Chinese</option>
-                <option value="ru">Russian ★</option>
-                <option value="tr">Turkish ★</option>
-                <option value="pl">Polish ★</option>
-                <option value="nl">Dutch ★</option>
-                <option value="sv">Swedish ★</option>
-                <option value="da">Danish ★</option>
-                <option value="fi">Finnish ★</option>
-                <option value="no">Norwegian ★</option>
-                <option value="el">Greek ★</option>
-                <option value="cs">Czech ★</option>
-                <option value="hu">Hungarian ★</option>
-                <option value="ro">Romanian ★</option>
-                <option value="uk">Ukrainian ★</option>
-                <option value="bg">Bulgarian ★</option>
-                <option value="hr">Croatian ★</option>
-                <option value="sk">Slovak ★</option>
-                <option value="ar">Arabic</option>
-                <option value="hi">Hindi</option>
-                <option value="bn">Bengali</option>
-                <option value="ta">Tamil</option>
-                <option value="te">Telugu</option>
-                <option value="ml">Malayalam</option>
-                <option value="ur">Urdu</option>
-                <option value="fa">Persian</option>
-                <option value="he">Hebrew ★</option>
-                <option value="id">Indonesian ★</option>
-                <option value="ms">Malay ★</option>
-                <option value="vi">Vietnamese ★</option>
-                <option value="sw">Swahili ★</option>
-                <option value="af">Afrikaans ★</option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="field-label" data-tip="Sources are tried left to right. Original is the content's own language; Custom is your secondary language.">Language Priority</label>
-              <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
-                <option value="native_original" selected>Native → Original → Text</option>
-                <option value="original_native">Original → Native → Text</option>
-                <option value="native_if_original_english">Native if Original, else English → Original → Text</option>
-                <option value="native_text">Native → English → Neutral → Text</option>
-                <option value="native_custom_text">Native → Custom → Text</option>
-                <option value="native_custom_original_text">Native → Custom → Original → Text</option>
-              </select>
-            </div>
-            </div><!-- /field-row -->
-            <div class="field" id="secondary-lang-field" style="display:none;">
-              <label class="field-label" data-tip="Tried after your native language in the Custom priority modes. ★ marks fully translated languages.">Secondary Language (Custom)</label>
-              <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
-                <option value="" selected>None</option>
-                <option value="en">English ★</option>
                 <option value="es">Spanish ★</option>
                 <option value="es-es">Spanish (Spain) ★</option>
                 <option value="es-mx">Spanish (Mexico) ★</option>
@@ -2406,6 +2445,61 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="photoreal" selected>Photorealistic</option>
               </select>
             </div>
+            </div><!-- /field-row -->
+            <div class="field">
+              <label class="field-label" data-tip="Where a title's logo comes from, tried top to bottom — the first that has one wins. Native is your language; Original is the title's own language; Custom is a second language of your choice; English includes the Metahub logo library; Neutral is a logo TMDB has not tagged with any language, usually a symbol or an untagged wordmark. Text draws the title as text when nothing above has a logo; disable it to show no title at all. Drag to reorder, ✕ to disable.">Logo Priority</label>
+              <input type="hidden" id="cfg-logo-priority" value="native_original" data-default="native_original">
+              <div class="sash-list lp-list" id="logo-priority-list"></div>
+            </div>
+            <div class="field" id="secondary-lang-field" style="display:none;">
+              <label class="field-label" data-tip="The language the Custom entry of Logo Priority stands for. ★ marks fully translated languages.">Custom Language</label>
+              <select id="cfg-language-secondary" oninput="buildLogoPriorityList(); build(); queuePreviewReload()">
+                <option value="" selected>None</option>
+                <option value="en">English ★</option>
+                <option value="es">Spanish ★</option>
+                <option value="es-es">Spanish (Spain) ★</option>
+                <option value="es-mx">Spanish (Mexico) ★</option>
+                <option value="fr">French ★</option>
+                <option value="fr-fr">French (France) ★</option>
+                <option value="de">German ★</option>
+                <option value="it">Italian ★</option>
+                <option value="pt">Portuguese ★</option>
+                <option value="pt-br">Portuguese (Brazil) ★</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
+                <option value="ru">Russian ★</option>
+                <option value="tr">Turkish ★</option>
+                <option value="pl">Polish ★</option>
+                <option value="nl">Dutch ★</option>
+                <option value="sv">Swedish ★</option>
+                <option value="da">Danish ★</option>
+                <option value="fi">Finnish ★</option>
+                <option value="no">Norwegian ★</option>
+                <option value="el">Greek ★</option>
+                <option value="cs">Czech ★</option>
+                <option value="hu">Hungarian ★</option>
+                <option value="ro">Romanian ★</option>
+                <option value="uk">Ukrainian ★</option>
+                <option value="bg">Bulgarian ★</option>
+                <option value="hr">Croatian ★</option>
+                <option value="sk">Slovak ★</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+                <option value="bn">Bengali</option>
+                <option value="ta">Tamil</option>
+                <option value="te">Telugu</option>
+                <option value="ml">Malayalam</option>
+                <option value="ur">Urdu</option>
+                <option value="fa">Persian</option>
+                <option value="he">Hebrew ★</option>
+                <option value="id">Indonesian ★</option>
+                <option value="ms">Malay ★</option>
+                <option value="vi">Vietnamese ★</option>
+                <option value="sw">Swahili ★</option>
+                <option value="af">Afrikaans ★</option>
+              </select>
+            </div>
             </div><!-- /presentation group -->
 
             <div class="cfg-sep" id="landscape-fields" style="display:none;">
@@ -2428,6 +2522,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label">Display score out of 10</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row" id="landscape-star-row">
+                <span class="toggle-label" data-tip="Put a star beside the score, as Clean does on a portrait: Genre • Year ★ 87.">Star beside score</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-score-star" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -2608,7 +2709,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode1-fields">
                 <div class="field">
                   <label class="field-label" data-tip="What to append after the genre.">Label Suffix</label>
-                  <select id="cfg-bar-append" onchange="build(); queuePreviewReload()">
+                  <select id="cfg-bar-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Info sash</option>
                     <option value="2">Year + Info sash</option>
@@ -2686,7 +2787,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode3-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label" data-tip="If rating is not chosen, the separator colour gives an approximation of it.">Append</label>
-                  <select class="segmented-source" id="cfg-min-append" onchange="_updateMinimalistRows(); build(); queuePreviewReload()">
+                  <select class="segmented-source" id="cfg-min-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Rating</option>
                     <option value="2">Both</option>
@@ -2726,14 +2827,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
                 <div class="field">
-                  <label class="field-label">Font Horizontal Position</label>
+                  <label class="field-label">Font X Position</label>
                   <div class="range-row">
                     <input type="range" id="cfg-x-mode3" min="0.01" max="0.20" step="0.005" value="0.065" oninput="updateRange(this,'rng-x3'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-x3">0.065</span>
                   </div>
                 </div>
                 <div class="field">
-                  <label class="field-label">Font Vertical Position</label>
+                  <label class="field-label">Font Y Position</label>
                   <div class="range-row">
                     <input type="range" id="cfg-y-mode3" min="0.00" max="0.98" step="0.01" value="0.92" oninput="updateRange(this,'rng-y3'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-y3">0.92</span>
@@ -2743,7 +2844,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode4-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label">Style</label>
-                  <select id="cfg-bar-style" onchange="_updateBarRatingRows(); build(); queuePreviewReload()">
+                  <select id="cfg-bar-style" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="frosted" selected>Frosted</option>
                     <option value="pure_black">Pure Black</option>
                     <option value="silver">Black, Silver Trim</option>
@@ -2766,7 +2867,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="field">
                   <label class="field-label">Append</label>
-                  <select id="cfg-bar4-append" onchange="build(); queuePreviewReload()">
+                  <select id="cfg-bar4-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="rating_year" selected>Rating and Year</option>
                     <option value="rating">Rating</option>
                     <option value="year">Year</option>
@@ -2815,13 +2916,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <span class="range-val" id="rng-bsat">1.20</span>
                   </div>
                 </div>
-                <div class="field">
-                  <label class="field-label">Inset from Bottom</label>
-                  <div class="range-row">
-                    <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-bi5">0.000</span>
-                  </div>
-                </div>
               </div>
             </div><!-- /rating-style-group -->
 
@@ -2850,7 +2944,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep">
+            <div class="cfg-sep" id="rating-labels-group">
               <span class="group-title">Labels</span>
               <div id="hide-genre-home"></div>
               <div class="toggle-row" id="hide-genre-row">
@@ -2864,7 +2958,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="toggle-row" id="hide-year-row">
                 <span class="toggle-label" data-tip="Removes the release year and its separator. Minimalist's Year mode shows the score as the colour of the separator before the year, so with the year hidden it prints the score instead.">Hide Year</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-hide-year" onchange="build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-hide-year" onchange="updateRatingFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -2916,6 +3010,28 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
             </div>
+            <div class="cfg-sep" id="rating-badges-fields" style="display:none;">
+              <span class="group-title">Rating Badges</span>
+              <div class="field">
+                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating). The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove.">Sites</label>
+                <input type="hidden" id="cfg-rating-badges" value="" data-default="">
+                <div class="sash-list lp-list" id="rating-badges-list"></div>
+              </div>
+              <div class="field" id="rating-badge-scale-field" style="display:none;">
+                <label class="field-label" data-tip="Each site's own scale is what the site itself shows — IMDb 7.8, Rotten Tomatoes 92%, Letterboxd 3.9. P+ scale puts every score on the weighted score's scale instead, following this mode's Out of 10 switch.">Badge Scores</label>
+                <select id="cfg-rating-badge-scale" onchange="build(); queuePreviewReload()">
+                  <option value="native" selected>Each site's own scale</option>
+                  <option value="normalized">P+ scale</option>
+                </select>
+              </div>
+              <div class="field" id="rating-badge-style-field" style="display:none;">
+                <label class="field-label" data-tip="Colour draws each site's logo in its own colours. Mono draws every badge in the colour of the text beside it — white on dark art, dark on a light frosted Bar — as a solid shape with the logo cut out, so a tinted vignette can't clash with a logo.">Badge Style</label>
+                <select id="cfg-rating-badge-style" onchange="build(); queuePreviewReload()">
+                  <option value="color" selected>Colour</option>
+                  <option value="mono">Mono</option>
+                </select>
+              </div>
+            </div>
           </div>        </div>
 
         <!-- 3. LOGO -->
@@ -2935,6 +3051,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <select id="cfg-original-art-source" onchange="build(); queuePreviewReload()">
                 <option value="primary" selected>Primary (TMDB default)</option>
                 <option value="top_rated">Top-rated</option>
+              </select>
+            </div>
+            <!-- Poster source and pick; each shown only when the operator allows it -->
+            <div class="field" id="poster-source-field" hidden>
+              <label class="field-label" data-tip="Where posters come from. fanart.tv art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without fanart.tv art keep their TMDB poster.">Poster Source</label>
+              <select id="cfg-poster-source" onchange="build(); queuePreviewReload()">
+                <option value="tmdb" selected>TMDB</option>
+                <option value="fanart">fanart.tv</option>
+              </select>
+            </div>
+            <div class="field" id="poster-pick-field" hidden>
+              <label class="field-label" data-tip="Top uses the best-rated poster. Random picks one of the top five, fixed until the poster is re-rendered (about weekly), so some picks will be duds.">Poster Pick</label>
+              <select id="cfg-poster-pick" onchange="build(); queuePreviewReload()">
+                <option value="top" selected>Top</option>
+                <option value="random">Random top 5</option>
               </select>
             </div>
             <!-- Logo overlay controls — N/A in Original Art mode (no logo drawn),
@@ -3002,6 +3133,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="gold">Black, Gold Trim</option>
               </select>
             </div>
+            <div class="field" id="sash-badge-pos-field" style="display:none;">
+              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
+              <select id="cfg-sash-badge-pos" onchange="build(); queuePreviewReload()">
+                <option value="center" selected>Centre</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+                <option value="auto">Auto</option>
+                <option value="auto_hug">Auto, Beside Notch</option>
+              </select>
+            </div>
             <div class="field" id="sash-text-color-field" style="display:none;">
               <label class="field-label" data-tip="Hex colour for the sash/notch text. Leave blank for the mode default.">Text Colour</label>
               <div class="color-field">
@@ -3009,6 +3150,85 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                        oninput="_syncSashColorPicker(); build(); queuePreviewReload()">
                 <input type="color" id="cfg-sash-text-color-picker" value="#e1e1e1"
                        oninput="document.getElementById('cfg-sash-text-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+              </div>
+            </div>
+
+            <div class="cfg-sep" id="sash-trending-group">
+              <span class="group-title">Trending Rank</span>
+              <div class="field" id="sash-trending-style-field">
+                <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
+                <select class="segmented-source" id="cfg-trending-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
+                  <option value="sash" selected>Sash Label</option>
+                  <option value="number">Number</option>
+                  <option value="ribbon">Ribbon</option>
+                </select>
+                <div class="segmented" data-for="cfg-trending-style"></div>
+              </div>
+              <div id="sash-trending-mark-fields" style="display:none;">
+                <div class="field">
+                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes.">Trending Rank Side</label>
+                  <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
+                    <option value="left" selected>Left</option>
+                    <option value="right">Right</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-trending-side"></div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
+                  <select class="segmented-source" id="cfg-trending-sash" onchange="build(); queuePreviewReload()">
+                    <option value="keep" selected>Do Nothing</option>
+                    <option value="hide">Hide</option>
+                    <option value="opposite">Opposite Side</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-trending-sash"></div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Size of the Trending number or ribbon against its default.">Trending Rank Size</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-trending-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-trs'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-trs">1.00</span>
+                  </div>
+                </div>
+                <div class="field" id="sash-trending-ribbon-style-field">
+                  <label class="field-label" data-tip="Charcoal is the ribbon's own look; the others match the notch styles. Frosted takes its colour from the same sample as a frosted notch, with its own opacity and saturation.">Ribbon Style</label>
+                  <select id="cfg-trending-ribbon-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
+                    <option value="charcoal" selected>Charcoal</option>
+                    <option value="frosted">Frosted</option>
+                    <option value="black">Pure Black</option>
+                    <option value="silver">Black, Silver Trim</option>
+                    <option value="gold">Black, Gold Trim</option>
+                  </select>
+                </div>
+                <div id="sash-trending-frost-fields" style="display:none;">
+                  <div class="field">
+                    <label class="field-label">Ribbon Opacity</label>
+                    <div class="range-row">
+                      <input type="range" id="cfg-trending-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-trfo'); build(); queuePreviewReload()">
+                      <span class="range-val" id="rng-trfo">0.75</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Ribbon Colour Saturation</label>
+                    <div class="range-row">
+                      <input type="range" id="cfg-trending-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-trfs'); build(); queuePreviewReload()">
+                      <span class="range-val" id="rng-trfs">1.20</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="toggle-row" id="sash-trending-label-row">
+                  <span class="toggle-label" data-tip="Film, Series or Anime under the rank, in the poster language.">Ribbon: Show Type</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-label" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="toggle-row" id="sash-trending-corner-row">
+                  <span class="toggle-label" data-tip="Tucks the ribbon right into the corner. Off leaves a small gap, so apps that round poster corners don't clip it.">Ribbon: Nest in Corner</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-corner" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -3096,13 +3316,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-pad" min="0.50" max="1.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-sbp'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbp">1.00</span>
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label" data-tip="Adjust as required for your client — this won't match the preview.">Inset</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-sbi">0.000</span>
                 </div>
               </div>
               <div class="field">
@@ -3200,6 +3413,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="4" selected>Quality Notch</option>
                 <option value="6">Quality Bookmark</option>
                 <option value="2">Quality Badge Row</option>
+                <option value="7">Graphic Badges</option>
                 <option value="5">Combined Badge</option>
                 <option value="1">Quality Age Rating</option>
                 <option value="3">Age Rating Only</option>
@@ -3254,10 +3468,154 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
+            <!-- Graphic Badges (mode 7): three groups, each an anchor, a max and the
+                 badges assigned to it.  The hidden inputs hold each group's URL
+                 spelling and are the source of truth; the list below edits them. -->
+            <div id="badge-groups-fields" class="cfg-sep" style="display:none">
+              <span class="group-title">Badge Groups</span>
+              <!-- data-default: a hidden input's defaultValue follows every write. -->
+              <input type="hidden" id="cfg-badge-group1" value="chip:4:video,audio,res,cert" data-default="chip:4:video,audio,res,cert">
+              <input type="hidden" id="cfg-badge-group2" value="" data-default="">
+              <input type="hidden" id="cfg-badge-group3" value="" data-default="">
+              <div class="field">
+                <label class="field-label" data-tip="Beside Chip is the top corner the notch or sash leaves free. Above/Below Logo centre the group on the title logo, however tall it is, moving further off if the rating is in the way. A group whose corner is taken slides away from the edge until it fits; badges that still don't fit drop from the end of the list. Custom puts it exactly where you set it, for dodging a badge your client draws; Align picks which edge of the row sits at X.">Group 1</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-1" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl">Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl">Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-1" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-1" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-1" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx1">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-1" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby1'); gbFromControls()">
+                    <span class="range-val" id="rng-gby1">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-1" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Group 2</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-2" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl">Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl" selected>Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-2" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-2" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-2" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx2">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-2" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby2'); gbFromControls()">
+                    <span class="range-val" id="rng-gby2">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-2" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Group 3</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-3" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl" selected>Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl">Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-3" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-3" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-3" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx3">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-3" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby3'); gbFromControls()">
+                    <span class="range-val" id="rng-gby3">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-3" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="gb-list-label">
+                  <label class="field-label" data-tip="Order sets the order across each row, and which badges stay when there is no room for all of them: the last in a group drops first.">Badges</label>
+                  <span class="gb-col">Group</span>
+                </div>
+                <div class="sash-list" id="gb-badge-list"></div>
+              </div>
+            </div>
+
             <!-- Sliders (hidden entirely when Display Mode = Hidden) -->
             <div id="badge-layout-fields" class="cfg-sep">
               <span class="group-title">Layout</span>
-              <div class="field">
+              <div class="gb-layout-group" id="gb-layout-1" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 1 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-1" min="10" max="60" step="1" value="22" oninput="updateRange(this,'rng-gbsz1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz1">22</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 1 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-1" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap1">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="gb-layout-group" id="gb-layout-2" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 2 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-2" min="10" max="60" step="1" value="22" oninput="updateRange(this,'rng-gbsz2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz2">22</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 2 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-2" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap2">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="gb-layout-group" id="gb-layout-3" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 3 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-3" min="10" max="60" step="1" value="22" oninput="updateRange(this,'rng-gbsz3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz3">22</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 3 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-3" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap3">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field" id="badge-size-field">
                 <label class="field-label">Badge Size</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-h" min="16" max="80" step="1" value="20" oninput="updateRange(this,'rng-bh'); build(); queuePreviewReload()">
@@ -3477,7 +3835,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 <div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="import-modal-box">
     <div class="import-modal-title">Import URL</div>
-    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
+    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL or shared settings here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
     <div class="import-modal-btns">
       <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" onclick="applyImport()">Import</button>
@@ -3586,9 +3944,10 @@ const _SHOW_URL_BOX   = _NO_CLIPBOARD || qs.get('urlbox') === '1';
   }
 })();
 
-// anilist/kitsu only ever carry a value for titles requested by anilist_id /
-// kitsu_id. A source with no value contributes nothing and the remaining
-// weights renormalise, so a non-zero weight here is inert for everything else.
+// anilist/kitsu only carry a value for anime: the title's own site when it is
+// requested by anilist_id / kitsu_id, otherwise both through the anime id list.
+// A source with no value contributes nothing and the remaining weights
+// renormalise, so a non-zero weight here is inert for everything else.
 // Both score noticeably higher than the Western sources (anime clusters ~65-80,
 // and a poor show still scores mid-50s), so blend them deliberately.
 const MOVIE_SOURCES = ['letterboxd','trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','rogerebert','myanimelist','anilist','kitsu'];
@@ -3612,19 +3971,15 @@ const ANIME_TV_SOURCES    = ['myanimelist','anilist','kitsu','trakt','tomatoes',
 const DEFAULT_ANIME_MOVIE_W = {myanimelist:0.6,anilist:0,kitsu:0,letterboxd:0.4,trakt:0,tomatoes:0,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,rogerebert:0};
 const DEFAULT_ANIME_TV_W    = {myanimelist:0.6,anilist:0,kitsu:0,trakt:0.4,tomatoes:0,popcorn:0,imdb:0,metacriticuser:0,tmdb:0,letterboxd:0};
 
-const CLIENT_INSETS = {
-  stremio_tv_nuvio:    { bar: 0.000, notch: 0.000 },
-  stremio_desktop_web: { bar: 0.007, notch: 0.004 },
-};
+// The edge insets themselves live on the server (_CLIENT_EDGE_INSETS), keyed
+// by primary_client.  An explicit bar_bottom_inset / sash_badge_inset in an
+// imported URL still wins there, so one is carried through unchanged until the
+// client is changed here.
+const PRIMARY_CLIENTS = new Set(['stremio_tv_nuvio', 'stremio_desktop_web']);
+let _legacyInsets = {};
 
 function onPrimaryClientChange({ rebuild = true } = {}) {
-  const profile = CLIENT_INSETS[vEl("cfg-primary-client")] || CLIENT_INSETS.stremio_desktop_web;
-  const bar = document.getElementById("cfg-bar-inset");
-  const notch = document.getElementById("cfg-sash-badge-inset");
-  bar.value = profile.bar.toFixed(3);
-  notch.value = profile.notch.toFixed(3);
-  updateRange(bar, "rng-bi5");
-  updateRange(notch, "rng-sbi");
+  _legacyInsets = {};
   saveApiKeys();
   if (rebuild) { build(); queuePreviewReload(); }
 }
@@ -3737,8 +4092,29 @@ function collapsePreview() {
   }
 }
 
-// Back gesture / button: collapse the panel instead of leaving the page.
+// A modal opened over the page (or over the expanded preview) gets its own
+// history entry, so Back closes the modal first and only a second Back
+// collapses the preview.  Closing it any other way pops that entry again.
+function _pushModalState(id) {
+  history.pushState({ modal: id }, '');
+}
+function _popModalState(id) {
+  if (history.state && history.state.modal === id) history.back();
+}
+const _BACK_MODALS = {
+  'preset-modal':   () => closePresetModal(),
+  'import-modal':   () => closeImportModal(),
+  'whatsnew-modal': () => closeWhatsNew(),
+};
+
+// Back gesture / button: close the topmost layer instead of leaving the page.
 window.addEventListener('popstate', () => {
+  for (const [id, close] of Object.entries(_BACK_MODALS)) {
+    if (document.getElementById(id)?.classList.contains('open')) { close(); return; }
+  }
+  // A modal's own close pops its entry too, landing back on the preview's —
+  // which is not a request to collapse it.
+  if (history.state && history.state.previewExpanded) return;
   if (previewPanel.classList.contains('expanded')) {
     previewPanel.classList.remove('expanded');
     _unlockScroll();
@@ -3766,16 +4142,29 @@ document.getElementById('preview-frame').addEventListener('click', () => {
   if (previewPanel.classList.contains('expanded')) collapsePreview();
 });
 
-window.addEventListener('scroll', () => {
-  if (!_isMobileViewport()) return;
-  // When scrolled to the bottom (with a 50px buffer), move preview to top right
-  const scrolledToBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
-  if (scrolledToBottom && !previewPanel.classList.contains('expanded')) {
-    previewPanel.classList.add('preview-at-top');
-  } else {
+// At the bottom of the page the collapsed preview moves to the top right, if
+// down in its corner it would cover the end of the config panel.  A tab that
+// ends clear of it keeps it at the bottom, off the header's buttons.
+// Measured against the document's scroll height and run on tab switches too:
+// body has min-height 100vh, so on a tab too short to scroll its offsetHeight
+// was the viewport, no scroll event came, and the preview sat on the last
+// controls until the mobile toolbar happened to resize the viewport.
+function placePreview() {
+  if (!_isMobileViewport() || previewPanel.classList.contains('expanded')) {
     previewPanel.classList.remove('preview-at-top');
+    return;
   }
-}, { passive: true });
+  const doc = document.documentElement;
+  const atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 50;
+  // The panel's bottom against where the thumbnail's top edge sits when it is
+  // down in the corner (12px off the edge, like the CSS).
+  const panel = document.querySelector('.left-col');
+  const covers = panel && panel.getBoundingClientRect().bottom >
+                 window.innerHeight - 12 - previewPanel.offsetHeight;
+  previewPanel.classList.toggle('preview-at-top', atBottom && !!covers);
+}
+window.addEventListener('scroll', placePreview, { passive: true });
+window.addEventListener('resize', placePreview);
 
 function showTab(tab) {
   document.querySelectorAll('.section').forEach(s => {
@@ -3786,6 +4175,9 @@ function showTab(tab) {
   });
   const host = document.getElementById('tab-host');
   if (host) host.scrollTop = 0;
+  // A shorter tab can leave the page scrolled to its new bottom without a
+  // scroll event firing.
+  placePreview();
 }
 
 function updateRange(el, outId) {
@@ -3919,6 +4311,30 @@ function openFallbackGallery() {
   window.open(url, '_blank', 'noopener');
 }
 
+// The resolution picker exists only where the operator has raised
+// MAX_POSTER_RESOLUTION; sizes above the limit are hidden, and a restored or
+// imported value above it is brought down to the largest allowed, which is
+// what the server would serve anyway.
+function updateResolutionAvailability() {
+  const field = document.getElementById('resolution-field');
+  const sel   = document.getElementById('cfg-resolution');
+  if (!field || !sel) return;
+  const max = Number(serverCaps.max_poster_resolution) || 500;
+  field.hidden = max <= 500;
+  document.getElementById('resolution-label')?.setAttribute('data-tip',
+    'Portrait poster size. Larger posters look sharper on big screens but take longer to render '
+    + 'and download. Landscape is unaffected. '
+    + (serverCaps.preview_at_resolution ? 'The preview renders at this size.'
+                                        : 'The preview always renders at 500 wide.'));
+  let best = '500';
+  for (const opt of sel.options) {
+    const allowed = Number(opt.value) <= max;
+    opt.hidden = opt.disabled = !allowed;
+    if (allowed && Number(opt.value) <= Number(sel.value)) best = opt.value;
+  }
+  if (sel.value !== best) { sel.value = best; build(); }
+}
+
 async function fetchServerCaps() {
   try {
     const ak = vEl('cfg-access-key');
@@ -3933,8 +4349,22 @@ async function fetchServerCaps() {
       document.getElementById('cfg-access-key').value = '';
       build();
     }
+    // Behind the operator's own login (CONFIGURATOR_EXTERNAL_AUTH) the page is
+    // handed the key instead of carrying it in its URL; previews and copied
+    // URLs need it. A preview requested before this answered was refused, so
+    // it goes again.
+    if (serverCaps.access_key && vEl('cfg-access-key') !== serverCaps.access_key) {
+      document.getElementById('cfg-access-key').value = serverCaps.access_key;
+      build();
+      queuePreviewReload();
+    }
     updateKeyBadges();
     updateImdbSourceAvailability();
+    updateResolutionAvailability();
+    document.getElementById('poster-source-field').hidden = !serverCaps.fanart_posters;
+    document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
+    // Restored before the caps answered, so the URL left them out.
+    if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
@@ -4057,9 +4487,18 @@ function updateImdbSourceAvailability() {
   }
 }
 
+// Whether the badges shown need stream quality at all.  Mirrors _uses_quality
+// in main.py: graphic badges only when some group shows a quality badge —
+// certificate, network and studio come from TMDB alone.
+function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode'))) {
+  if ([1, 2, 4, 5, 6].includes(mode)) return true;
+  if (mode !== 7) return false;
+  return GB_GROUPS.some(g => (gbParse(vEl(`cfg-badge-group${g}`))?.slots || [])
+    .some(id => ['video', 'audio', 'res'].includes(id)));
+}
+
 function updateScraperHint() {
-  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
-  const qualityMode = mode === 1 || mode === 2 || mode === 4 || mode === 5 || mode === 6;
+  const qualityMode = badgeUsesQuality();
   document.getElementById('wait-quality-field').style.display = qualityMode ? '' : 'none';
   const aiosHint = document.getElementById('aiostreams-hint');
   if (aiosHint) {
@@ -4099,7 +4538,167 @@ const BADGE_MODE_TIPS = {
   4: 'A medal-coloured marker based on stream quality.',
   5: 'Minimalist text badge: resolution · visual tag, pip coloured by source. Needs both resolution and source; visual tag defaults to SDR if absent.',
   6: 'A small corner bookmark coloured by the same quality tier as Quality Notch. Clients render posters at different scales, so Badge Size usually needs adjusting to suit yours.',
+  7: 'Dolby Vision, Atmos, DTS:X, HDR and resolution marks and the US certificate, in up to three groups you place below. Pairs well with the Left/Right notch position.',
 };
+
+// ── Graphic badge groups ────────────────────────────────────────────────────
+// Hidden inputs cfg-badge-group1..3 hold "anchor:max:slot,slot"
+// (graphic_badges.parse_group).  The list shows every badge once, in one order
+// shared by all groups, with the group it belongs to; a badge in none is Off.
+const GB_GROUPS = [1, 2, 3];
+const GB_DEFAULT_ANCHOR = { 1: 'chip', 2: 'bl', 3: 'tl' };
+const GB_SLOTS = [
+  { id: 'video', label: 'Dolby Vision / HDR' },
+  { id: 'audio', label: 'Atmos / DTS:X' },
+  { id: 'res',   label: 'Resolution' },
+  { id: 'cert',  label: 'Certificate' },
+  { id: 'network', label: 'Network' },
+  { id: 'studio',  label: 'Studio' },
+];
+const GB_ANCHORS = ['chip', 'tl', 'tr', 'bl', 'br', 'above_logo', 'below_logo'];
+const GB_SIZE = 22, GB_SPACING = 0.028;   // graphic_badges.DEFAULT_SIZE / DEFAULT_SPACING
+
+function gbParse(raw) {
+  const [anchor, max, slots, sizeRaw, gapRaw] = (raw || '').split(':');
+  if (!anchor || !slots) return null;
+  // Mirrors graphic_badges.parse_group: optional size and spacing, clamped.
+  const size = sizeRaw === undefined ? GB_SIZE : Math.min(60, Math.max(10, Math.round(parseFloat(sizeRaw)) || GB_SIZE));
+  const spacing = gapRaw === undefined ? GB_SPACING : Math.min(0.08, Math.max(0, parseFloat(gapRaw) || 0));
+  let xy = null, align = 'l';
+  if (anchor.includes(',')) {
+    const parts = anchor.split(',');
+    xy = parts.slice(0, 2).map(Number);
+    if (parts.length > 3 || xy.length !== 2 || xy.some(v => !(v >= 0 && v <= 1))) return null;
+    // Mirrors graphic_badges._parse_xy: no align means the nearer edge.
+    align = parts[2] || (xy[0] < 0.5 ? 'l' : xy[0] > 0.5 ? 'r' : 'c');
+    if (!['l', 'c', 'r'].includes(align)) return null;
+  } else if (!GB_ANCHORS.includes(anchor)) return null;
+  const known = GB_SLOTS.map(s => s.id);
+  return { anchor: xy ? 'custom' : anchor, xy, align, size, spacing, max: Math.min(4, Math.max(1, parseInt(max) || 4)),
+           slots: slots.split(',').filter(id => known.includes(id)) };
+}
+
+// What a group's own controls show — used for a group with no badges yet, so
+// choosing its anchor before assigning anything to it isn't lost.
+function gbControls(g) {
+  return { anchor: vEl(`gb-anchor-${g}`) || GB_DEFAULT_ANCHOR[g],
+           max: parseInt(vEl(`gb-max-${g}`)) || 4,
+           size: parseInt(vEl(`gb-size-${g}`)) || GB_SIZE,
+           spacing: parseFloat(vEl(`gb-gap-${g}`)) || 0,
+           xy: [parseFloat(vEl(`gb-x-${g}`)) || 0, parseFloat(vEl(`gb-y-${g}`)) || 0],
+           align: document.getElementById(`gb-align-${g}`).dataset.value || 'l' };
+}
+
+// Current state: the groups plus one shared order (group 1's badges, then
+// group 2's, ..., then the unassigned ones in their default order).  A badge
+// listed in two groups stays in the earlier one, as on the server.
+function gbState() {
+  const gs = GB_GROUPS.map(g => gbParse(vEl(`cfg-badge-group${g}`)));
+  const assign = {}, order = [];
+  gs.forEach((grp, i) => (grp?.slots || []).forEach(id => {
+    if (assign[id]) return;
+    assign[id] = i + 1; order.push(id);
+  }));
+  GB_SLOTS.forEach(s => { if (!order.includes(s.id)) order.push(s.id); });
+  const groups = gs.map((grp, i) => {
+    const ctl = gbControls(i + 1);
+    return grp ? { anchor: grp.anchor, max: grp.max, size: grp.size, spacing: grp.spacing,
+                   xy: grp.xy || ctl.xy, align: grp.xy ? grp.align : ctl.align } : ctl;
+  });
+  return { order, assign, groups };
+}
+
+function gbWrite(st) {
+  GB_GROUPS.forEach(g => {
+    const grp = st.groups[g - 1];
+    const slots = st.order.filter(id => st.assign[id] === g);
+    const anchor = grp.anchor === 'custom'
+      ? [...grp.xy.map(v => +v.toFixed(3)), grp.align].join(',') : grp.anchor;
+    // Size and spacing only when they differ from the defaults, as
+    // graphic_badges.format_group writes them.
+    const spacing = +(+grp.spacing).toFixed(3);
+    const tail = spacing !== GB_SPACING ? `:${grp.size}:${spacing}` : grp.size !== GB_SIZE ? `:${grp.size}` : '';
+    document.getElementById(`cfg-badge-group${g}`).value =
+      !slots.length ? '' : `${anchor}:${grp.max}:${slots.join(',')}${tail}`;
+  });
+  gbRender();
+  // Assigning or removing a quality badge changes which quality settings apply.
+  document.getElementById('badge-min-score-field').style.display = badgeUsesQuality() ? '' : 'none';
+  updateScraperHint();
+  build(); queuePreviewReload();
+}
+
+function gbFromControls() {
+  const st = gbState();
+  st.groups = GB_GROUPS.map(gbControls);
+  gbWrite(st);
+}
+
+function gbSetAlign(g, align) {
+  document.getElementById(`gb-align-${g}`).dataset.value = align;
+  gbFromControls();
+}
+
+function gbMove(id, delta) {
+  const st = gbState();
+  const i = st.order.indexOf(id), j = i + delta;
+  if (j < 0 || j >= st.order.length) return;
+  [st.order[i], st.order[j]] = [st.order[j], st.order[i]];
+  gbWrite(st);
+}
+
+function gbAssign(id, group) {
+  const st = gbState();
+  if (group) st.assign[id] = group; else delete st.assign[id];
+  gbWrite(st);
+}
+
+const _GB_CHEVRON = up => `<svg viewBox="0 0 10 6" aria-hidden="true"><path d="${up ? 'M1 5l4-4 4 4' : 'M1 1l4 4 4-4'}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+function gbRender() {
+  const list = document.getElementById('gb-badge-list');
+  if (!list) return;
+  const st = gbState();
+  st.groups.forEach((grp, i) => {
+    const g = i + 1;
+    _setEl(`gb-anchor-${g}`, grp.anchor);
+    _setEl(`gb-max-${g}`, grp.max);
+    [['size', 'gbsz', grp.size], ['gap', 'gbgap', grp.spacing]].forEach(([k, rng, v]) => {
+      const el = document.getElementById(`gb-${k}-${g}`);
+      el.value = v;
+      updateRange(el, `rng-${rng}${g}`);
+    });
+    document.getElementById(`gb-layout-${g}`).style.display =
+      vEl('cfg-badge-display-mode') === '7' ? '' : 'none';
+    ['x', 'y'].forEach((axis, k) => {
+      const el = document.getElementById(`gb-${axis}-${g}`);
+      el.value = grp.xy[k];
+      updateRange(el, `rng-gb${axis}${g}`);
+    });
+    document.getElementById(`gb-xy-${g}`).style.display = grp.anchor === 'custom' ? '' : 'none';
+    const seg = document.getElementById(`gb-align-${g}`);
+    seg.dataset.value = grp.align;
+    seg.innerHTML = [['l', 'Left'], ['c', 'Centre'], ['r', 'Right']].map(([v, t]) =>
+      `<span class="${v === grp.align ? 'active' : ''}" onclick="gbSetAlign(${g}, '${v}')">${t}</span>`).join('');
+  });
+  list.innerHTML = '';
+  st.order.forEach((id, idx) => {
+    const slot = GB_SLOTS.find(s => s.id === id);
+    const g = st.assign[id] || 0;
+    const row = document.createElement('div');
+    row.className = 'sash-item gb-item' + (g ? '' : ' sash-item-disabled');
+    const pick = [...GB_GROUPS.map(n => [n, String(n)]), [0, 'Off']].map(([v, t]) =>
+      `<span class="${v === g ? 'active' : ''}" title="${v ? 'Group ' + v : 'Not shown'}" onclick="gbAssign('${id}', ${v})">${t}</span>`).join('');
+    row.innerHTML = `
+      <div class="gb-order">
+        <button class="gb-move" title="Move up" onclick="gbMove('${id}', -1)" ${idx === 0 ? 'disabled' : ''}>${_GB_CHEVRON(true)}</button>
+        <button class="gb-move" title="Move down" onclick="gbMove('${id}', 1)" ${idx === st.order.length - 1 ? 'disabled' : ''}>${_GB_CHEVRON(false)}</button>
+      </div>
+      <span class="sash-label">${slot.label}</span>
+      <div class="gb-seg">${pick}</div>`;
+    list.appendChild(row);
+  });
+}
 
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
@@ -4108,15 +4707,20 @@ function updateBadgeModeHint() {
   if (BADGE_MODE_TIPS[mode]) modeLabel.dataset.tip = BADGE_MODE_TIPS[mode];
   else modeLabel.removeAttribute('data-tip');
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
-  document.getElementById('badge-min-score-field').style.display   = [1,2,4,5,6].includes(mode) ? '' : 'none';
+  document.getElementById('badge-min-score-field').style.display   = badgeUsesQuality(mode) ? '' : 'none';
   document.getElementById('badge-stacked-field').style.display     = mode === 5 ? '' : 'none';
   updateScraperHint();
   // Hide the whole height / horizontal / vertical block when badges are off —
   // those knobs only mean anything when there's a badge being placed.  Gap is
   // already mode-2-only and stays nested under this wrapper, so it follows.
   document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
-  document.getElementById('badge-x-field').style.display           = mode === 6 ? 'none' : '';
-  document.getElementById('badge-y-field').style.display           = mode === 6 ? 'none' : '';
+  // The bookmark and the graphic groups place themselves.
+  document.getElementById('badge-x-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
+  document.getElementById('badge-y-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
+  document.getElementById('badge-groups-fields').style.display     = mode === 7 ? '' : 'none';
+  // Graphic badges size each group separately (in the Layout sliders gbRender shows).
+  document.getElementById('badge-size-field').style.display        = mode === 7 ? 'none' : '';
+  gbRender();   // also hides the per-group Layout sliders outside this mode
 }
 
 // Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
@@ -4127,9 +4731,9 @@ function applyBadgeModeDefaults() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
   if (mode === 0) return;
   const h = document.getElementById('cfg-badge-h');
-  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
+  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : mode === 7 ? 20 : 36;
   updateRange(h, 'rng-bh');
-  if ([1,2,4,5,6].includes(mode)) {
+  if ([1,2,4,5,6,7].includes(mode)) {
     // The mode's default only seeds an untouched field.  Unlike badge height,
     // a minimum quality means the same thing in every mode, so once the user
     // (or an imported URL) has picked one, switching modes must not throw it
@@ -4507,7 +5111,7 @@ function hydrateFromLocalStorage() {
   const lang = localStorage.getItem('postersplus_language');
   const client = localStorage.getItem('postersplus_primary_client');
   if (lang) document.getElementById('cfg-language').value = lang;
-  if (client && CLIENT_INSETS[client]) document.getElementById('cfg-primary-client').value = client;
+  if (client && PRIMARY_CLIENTS.has(client)) document.getElementById('cfg-primary-client').value = client;
   if (tmdb) document.getElementById('cfg-tmdb-key').value = tmdb;
   if (mdbl) document.getElementById('cfg-mdblist-key').value = mdbl;
   try {
@@ -4807,14 +5411,299 @@ function normaliseCustomPalette(raw = vEl('cfg-score-custom-palette')) {
     .join(',');
 }
 
-// The secondary-language picker is only meaningful for the "Custom" priority
-// modes, so only reveal it then.
+// ── Logo priority ─────────────────────────────────────────────────────────
+// An ordered list of sources, first with a logo wins.  The value lives in the
+// hidden #cfg-logo-priority (so presets, reset and the shape stash handle it
+// like any other control) as the server's canonical spelling: a preset name
+// when the order is one, else a comma list.  Mirrors LOGO_PRIORITY_SOURCES and
+// parse_logo_priority in tmdb.py — the two have to agree.
+const LOGO_SOURCES = [
+  { id: 'native',             label: 'Native' },
+  { id: 'native_if_original', label: 'Native, if Original',
+    tip: 'Your language, but only for titles originally in it' },
+  { id: 'custom',             label: 'Custom' },
+  { id: 'original',           label: 'Original', tip: "The title's own language" },
+  { id: 'english',            label: 'English',  tip: 'TMDB English, then Metahub' },
+  { id: 'neutral',            label: 'Neutral',  tip: 'Logos TMDB has tagged with no language — often a symbol or an untagged wordmark' },
+  { id: 'text',               label: 'Text',     tip: 'Draw the title as text. Always last; disable it to show no title when no logo is found' },
+];
+const LOGO_PRIORITY_PRESETS = {
+  native_original:             ['native', 'original', 'neutral', 'english', 'text'],
+  original_native:             ['original', 'native', 'neutral', 'english', 'text'],
+  native_if_original_english:  ['native_if_original', 'english', 'original', 'neutral', 'text'],
+  native_text:                 ['native', 'english', 'neutral', 'text'],
+  native_custom_text:          ['native', 'custom', 'english', 'neutral', 'text'],
+  native_custom_original_text: ['native', 'custom', 'original', 'english', 'neutral', 'text'],
+};
+
+function logoPrioritySources(value) {
+  value = (value || '').trim().toLowerCase();
+  if (LOGO_PRIORITY_PRESETS[value]) return [...LOGO_PRIORITY_PRESETS[value]];
+  const known = new Set(LOGO_SOURCES.map(s => s.id));
+  const out = [];
+  for (const token of value.split(',').map(t => t.trim())) {
+    if (!known.has(token) || out.includes(token)) continue;
+    out.push(token);
+    if (token === 'text') break;
+  }
+  return out.length ? out : [...LOGO_PRIORITY_PRESETS.native_original];
+}
+
+function logoPriorityValue(sources) {
+  const joined = sources.join(',');
+  for (const [name, preset] of Object.entries(LOGO_PRIORITY_PRESETS)) {
+    if (preset.join(',') === joined) return name;
+  }
+  return joined;
+}
+
+function _selectedOptionName(id) {
+  const el = document.getElementById(id);
+  const opt = el && el.options[el.selectedIndex];
+  return opt && opt.value ? opt.textContent.replace('★', '').trim() : '';
+}
+
+function setLogoPriority(sources) {
+  // Text can only ever be last: anything after it would never be reached.
+  const hasText = sources.includes('text');
+  sources = sources.filter(id => id !== 'text');
+  if (hasText) sources.push('text');
+  document.getElementById('cfg-logo-priority').value = logoPriorityValue(sources);
+  buildLogoPriorityList(); build(); queuePreviewReload();
+}
+
+function buildLogoPriorityList() {
+  const container = document.getElementById('logo-priority-list');
+  if (!container) return;
+  const order = logoPrioritySources(vEl('cfg-logo-priority'));
+  const sub = {
+    native: _selectedOptionName('cfg-language'),
+    native_if_original: _selectedOptionName('cfg-language'),
+    custom: _selectedOptionName('cfg-language-secondary') || 'pick a language',
+  };
+  const row = (src, idx) => {
+    const item = document.createElement('div');
+    const active = idx !== null;
+    const movable = active && src.id !== 'text';
+    item.className = 'sash-item lp-item' + (active ? '' : ' sash-item-disabled');
+    item.dataset.id = src.id;
+    if (src.tip) item.title = src.tip;
+    const subText = sub[src.id] ? `<span class="lp-sub">${sub[src.id]}</span>` : '';
+    // The last active source can't be removed: an empty list means nothing.
+    const canDisable = order.length > 1;
+    item.innerHTML = `
+      ${active ? `<span class="sash-drag-handle"${movable ? ' title="Drag to reorder"' : ' style="visibility:hidden"'}>⠿</span>
+      <span class="sash-rank">${idx + 1}</span>` : ''}
+      <span class="sash-label">${src.label}${subText}</span>
+      ${active
+        ? (canDisable ? `<button class="sash-disable-btn" title="Disable">✕</button>` : '')
+        : `<button class="sash-enable-btn" title="Enable">+</button>`}
+    `;
+    item.querySelector('button')?.addEventListener('click', () => {
+      setLogoPriority(active ? order.filter(id => id !== src.id) : [...order, src.id]);
+    });
+    if (active) {
+      item.draggable = movable;
+      item.addEventListener('dragstart', e => { _lpDragId = src.id; item.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+      item.addEventListener('dragend',   () => { item.classList.remove('dragging'); _lpClearOver(); });
+      item.addEventListener('dragover',  e => { if (!_lpDragId) return; e.preventDefault(); _lpClearOver(); item.classList.add('drag-over'); });
+      item.addEventListener('drop',      e => { e.preventDefault(); _lpMove(_lpDragId, src.id); _lpDragId = null; });
+      if (movable) item.querySelector('.sash-drag-handle').addEventListener('touchstart', _lpTouchStart, { passive: true });
+    }
+    return item;
+  };
+
+  container.innerHTML = '';
+  order.forEach((id, idx) => {
+    const src = LOGO_SOURCES.find(s => s.id === id);
+    if (src) container.appendChild(row(src, idx));
+  });
+  const disabled = LOGO_SOURCES.filter(s => !order.includes(s.id));
+  if (disabled.length) {
+    const section = document.createElement('div');
+    section.className = 'sash-disabled-section';
+    section.innerHTML = '<div class="sash-disabled-header">Disabled</div>';
+    disabled.forEach(src => section.appendChild(row(src, null)));
+    container.appendChild(section);
+  }
+  syncSecondaryLangVisibility();
+}
+
+let _lpDragId = null, _lpGhost = null, _lpOffX = 0, _lpOffY = 0;
+function _lpClearOver() {
+  document.querySelectorAll('.lp-item').forEach(el => el.classList.remove('drag-over'));
+}
+function _lpMove(srcId, targetId) {
+  if (!srcId || srcId === targetId) return;
+  const order = logoPrioritySources(vEl('cfg-logo-priority'));
+  const from = order.indexOf(srcId), to = order.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  order.splice(from, 1);
+  order.splice(to, 0, srcId);
+  setLogoPriority(order);
+}
+function _lpTouchStart(e) {
+  const item = e.currentTarget.closest('.lp-item');
+  const t = e.touches[0], r = item.getBoundingClientRect();
+  _lpDragId = item.dataset.id;
+  _lpOffX = t.clientX - r.left; _lpOffY = t.clientY - r.top;
+  _lpGhost = item.cloneNode(true);
+  _lpGhost.style.cssText = `position:fixed;pointer-events:none;z-index:9999;opacity:0.85;width:${item.offsetWidth}px;background:var(--black3);border-color:var(--gold-dim);left:${r.left}px;top:${r.top}px;`;
+  document.body.appendChild(_lpGhost);
+  item.classList.add('dragging');
+  document.addEventListener('touchmove', _lpTouchMove, { passive: false });
+  document.addEventListener('touchend',  _lpTouchEnd,  { passive: true });
+}
+function _lpTouchMove(e) {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (_lpGhost) { _lpGhost.style.left = (t.clientX - _lpOffX) + 'px'; _lpGhost.style.top = (t.clientY - _lpOffY) + 'px'; }
+  _lpClearOver();
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#logo-priority-list > .lp-item');
+  if (target && target.dataset.id !== _lpDragId) target.classList.add('drag-over');
+}
+function _lpTouchEnd(e) {
+  document.removeEventListener('touchmove', _lpTouchMove);
+  document.removeEventListener('touchend',  _lpTouchEnd);
+  if (_lpGhost) { _lpGhost.remove(); _lpGhost = null; }
+  document.querySelectorAll('.lp-item').forEach(el => el.classList.remove('dragging', 'drag-over'));
+  const t = e.changedTouches[0];
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#logo-priority-list > .lp-item');
+  if (target) _lpMove(_lpDragId, target.dataset.id);
+  _lpDragId = null;
+}
+
+// ── Rating badges ─────────────────────────────────────────────────────────
+// Sites whose own score is drawn behind its logo (rating_badges).  Same list
+// control as Logo Priority, but it starts empty: every site is disabled until
+// added.  Mirrors PROVIDERS and parse_providers in rating_badges.py.
+const RATING_BADGE_SOURCES = [
+  { id: 'pplus',          label: 'Posters+', tip: 'The weighted score, from your Weights, under the Posters+ mark' },
+  { id: 'imdb',           label: 'IMDb' },
+  { id: 'tomatoes',       label: 'Rotten Tomatoes', tip: 'Tomatometer — a fresh tomato at 60% or more, a splat below' },
+  { id: 'popcorn',        label: 'Popcornmeter',    tip: 'Rotten Tomatoes audience score — an upright bucket at 60% or more' },
+  { id: 'metacritic',     label: 'Metacritic' },
+  { id: 'metacriticuser', label: 'Metacritic User' },
+  { id: 'letterboxd',     label: 'Letterboxd' },
+  { id: 'trakt',          label: 'Trakt' },
+  { id: 'tmdb',           label: 'TMDB' },
+  { id: 'rogerebert',     label: 'Roger Ebert' },
+  { id: 'myanimelist',    label: 'MyAnimeList' },
+  { id: 'anilist',        label: 'AniList' },
+  { id: 'kitsu',          label: 'Kitsu' },
+];
+const RATING_BADGES_MAX = 6;
+
+function ratingBadgeSources(value) {
+  const known = new Set(RATING_BADGE_SOURCES.map(s => s.id));
+  const out = [];
+  for (const token of (value || '').toLowerCase().split(',').map(t => t.trim())) {
+    if (known.has(token) && !out.includes(token)) out.push(token);
+  }
+  return out.slice(0, RATING_BADGES_MAX);
+}
+
+function setRatingBadges(ids) {
+  document.getElementById('cfg-rating-badges').value = ratingBadgeSources(ids.join(',')).join(',');
+  buildRatingBadgeList(); updateRatingFields(); build(); queuePreviewReload();
+}
+
+function buildRatingBadgeList() {
+  const container = document.getElementById('rating-badges-list');
+  if (!container) return;
+  const order = ratingBadgeSources(vEl('cfg-rating-badges'));
+  const full = order.length >= RATING_BADGES_MAX;
+  const row = (src, idx) => {
+    const item = document.createElement('div');
+    const active = idx !== null;
+    item.className = 'sash-item rb-item' + (active ? '' : ' sash-item-disabled');
+    item.dataset.id = src.id;
+    if (src.tip) item.title = src.tip;
+    item.innerHTML = `
+      ${active ? `<span class="sash-drag-handle" title="Drag to reorder">⠿</span>
+      <span class="sash-rank">${idx + 1}</span>` : ''}
+      <span class="sash-label">${src.label}</span>
+      ${active ? `<button class="sash-disable-btn" title="Remove">✕</button>`
+               : (full ? '' : `<button class="sash-enable-btn" title="Add">+</button>`)}
+    `;
+    item.querySelector('button')?.addEventListener('click', () => {
+      setRatingBadges(active ? order.filter(id => id !== src.id) : [...order, src.id]);
+    });
+    if (active) {
+      item.draggable = true;
+      item.addEventListener('dragstart', e => { _rbDragId = src.id; item.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+      item.addEventListener('dragend',   () => { item.classList.remove('dragging'); _rbClearOver(); });
+      item.addEventListener('dragover',  e => { if (!_rbDragId) return; e.preventDefault(); _rbClearOver(); item.classList.add('drag-over'); });
+      item.addEventListener('drop',      e => { e.preventDefault(); _rbMove(_rbDragId, src.id); _rbDragId = null; });
+      item.querySelector('.sash-drag-handle').addEventListener('touchstart', _rbTouchStart, { passive: true });
+    }
+    return item;
+  };
+
+  container.innerHTML = '';
+  order.forEach((id, idx) => {
+    const src = RATING_BADGE_SOURCES.find(s => s.id === id);
+    if (src) container.appendChild(row(src, idx));
+  });
+  const disabled = RATING_BADGE_SOURCES.filter(s => !order.includes(s.id));
+  if (disabled.length) {
+    const section = document.createElement('div');
+    section.className = 'sash-disabled-section';
+    section.innerHTML = `<div class="sash-disabled-header">${order.length ? 'Not shown' : 'Off — add a site to show its badge'}</div>`;
+    disabled.forEach(src => section.appendChild(row(src, null)));
+    container.appendChild(section);
+  }
+}
+
+let _rbDragId = null, _rbGhost = null, _rbOffX = 0, _rbOffY = 0;
+function _rbClearOver() {
+  document.querySelectorAll('.rb-item').forEach(el => el.classList.remove('drag-over'));
+}
+function _rbMove(srcId, targetId) {
+  if (!srcId || srcId === targetId) return;
+  const order = ratingBadgeSources(vEl('cfg-rating-badges'));
+  const from = order.indexOf(srcId), to = order.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  order.splice(from, 1);
+  order.splice(to, 0, srcId);
+  setRatingBadges(order);
+}
+function _rbTouchStart(e) {
+  const item = e.currentTarget.closest('.rb-item');
+  const t = e.touches[0], r = item.getBoundingClientRect();
+  _rbDragId = item.dataset.id;
+  _rbOffX = t.clientX - r.left; _rbOffY = t.clientY - r.top;
+  _rbGhost = item.cloneNode(true);
+  _rbGhost.style.cssText = `position:fixed;pointer-events:none;z-index:9999;opacity:0.85;width:${item.offsetWidth}px;background:var(--black3);border-color:var(--gold-dim);left:${r.left}px;top:${r.top}px;`;
+  document.body.appendChild(_rbGhost);
+  item.classList.add('dragging');
+  document.addEventListener('touchmove', _rbTouchMove, { passive: false });
+  document.addEventListener('touchend',  _rbTouchEnd,  { passive: true });
+}
+function _rbTouchMove(e) {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (_rbGhost) { _rbGhost.style.left = (t.clientX - _rbOffX) + 'px'; _rbGhost.style.top = (t.clientY - _rbOffY) + 'px'; }
+  _rbClearOver();
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#rating-badges-list > .rb-item');
+  if (target && target.dataset.id !== _rbDragId) target.classList.add('drag-over');
+}
+function _rbTouchEnd(e) {
+  document.removeEventListener('touchmove', _rbTouchMove);
+  document.removeEventListener('touchend',  _rbTouchEnd);
+  if (_rbGhost) { _rbGhost.remove(); _rbGhost = null; }
+  document.querySelectorAll('.rb-item').forEach(el => el.classList.remove('dragging', 'drag-over'));
+  const t = e.changedTouches[0];
+  const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('#rating-badges-list > .rb-item');
+  if (target) _rbMove(_rbDragId, target.dataset.id);
+  _rbDragId = null;
+}
+
+// The custom-language picker only means something while Custom is in the list.
 function syncSecondaryLangVisibility() {
-  const lp    = vEl('cfg-logo-priority') || 'native_original';
   const field = document.getElementById('secondary-lang-field');
   if (!field) return;
-  const show  = (lp === 'native_custom_text' || lp === 'native_custom_original_text');
-  field.style.display = show ? '' : 'none';
+  field.style.display = logoPrioritySources(vEl('cfg-logo-priority')).includes('custom') ? '' : 'none';
 }
 
 // The trending catalogs addon's manifest, on the same address and access key
@@ -4847,6 +5736,14 @@ function trendingAddonConfigSegment() {
     for (const k of ['sash_mode', 'landscape_sash_mode']) {
       if (p.get(k) === 'hidden') p.set(k, 'sash');
     }
+    // Greyscale follows the release status sash, which the list above drops.
+    // Where the sash list has it, keep the greyscale, but not the sash: in
+    // a list with a status slot it goes to the front and hides the rank.
+    const statusSlots = ['cinema', 'streaming', 'physical', 'production', 'ended',
+                         'cancelled', 'airing', 'renewed'];
+    if (c('tog-cinema-greyscale') && sashOrder.some(id => statusSlots.includes(id))) {
+      p.set('cinema_greyscale_without_sash', 'true');
+    }
   }
   const query = p.toString();
   if (!query) return '';
@@ -4875,6 +5772,15 @@ function updateTrendingCatalogsField() {
   const cfg = trendingAddonConfigSegment();
   document.getElementById('trending-catalogs-url').value =
     `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${cfg ? cfg + '/' : ''}manifest.json`;
+}
+
+async function copyTrendingUrl() {
+  const btn = document.getElementById('trending-copy-btn');
+  const inp = document.getElementById('trending-catalogs-url');
+  if (await copyText(inp.value)) { flashButton(btn, 'Copied'); return; }
+  inp.focus();
+  inp.select();
+  setStatus('URL selected — copy it manually.', 'info');
 }
 
 function build() {
@@ -5005,7 +5911,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // see COPY_TEMPLATES.  An unrecognised id (or none, which is what the saved
   // settings and the concrete preview URL pass) falls back to the neutral
   // shape, so a remembered client choice never leaks into stored settings.
-  const template       = COPY_TEMPLATES.find(t => t.id === templateId) || COPY_TEMPLATE_NEUTRAL;
+  const template       = [...COPY_TEMPLATES, COPY_TEMPLATE_SHARE].find(t => t.id === templateId)
+                         || COPY_TEMPLATE_NEUTRAL;
   const domain         = (domainOverride || vEl('cfg-domain')).replace(/\/$/, '') || 'https://your-instance.com';
   const logoLanguage   = vEl('cfg-language') || 'en';
   // Unresolved stays empty rather than falling back to a literal "{imdb_id}":
@@ -5098,6 +6005,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (dualShape) params.set('shape', '{shape}');
   else if (landscape) params.set('shape', 'landscape');
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
+  for (const [k, v] of Object.entries(_legacyInsets)) params.set(k, v);
   if (accKey)         params.set('access_key',  accKey);
   // A client that has no "{tmdb_key}" / "{mdblist_key}" of its own would send
   // the placeholder verbatim, so it gets the key typed here instead.
@@ -5193,10 +6101,15 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
+    params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
     // Only meaningful with a tinted band — there is nothing to link otherwise.
     if (lShared['tog-vignette-color-bottom'] === true || lShared['tog-vignette-color-bottom'] === 'true')
       params.set('landscape_color_link', vEl('cfg-landscape-color-link') || 'off');
   }
+  // Portrait only (the server ignores it for landscape), and left out at the
+  // default so existing URLs and cache keys are unchanged.
+  const _res = vEl('cfg-resolution');
+  if (_res && _res !== '500' && emitAll) params.set('resolution', _res);
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
   params.set('imdb_rating_source', vEl('cfg-imdb-rating-source') || 'mdblist');
   params.set('tmdb_rating_source', vEl('cfg-tmdb-rating-source') || 'mdblist');
@@ -5290,7 +6203,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
       params.set('bar_frost_saturation', n('cfg-bar-frost-sat').toFixed(2));
-      params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
+    }
+    // Rating badges: the Rating Bar has no printed score to put them on.
+    if (ratingMode !== 1 && vEl('cfg-rating-badges')) {
+      params.set('rating_badges', vEl('cfg-rating-badges'));
+      if (vEl('cfg-rating-badge-scale') === 'normalized') params.set('rating_badge_scale', 'normalized');
+      if (vEl('cfg-rating-badge-style') === 'mono') params.set('rating_badge_style', 'mono');
     }
     const _usesCustomPalette =
       ((ratingMode === 1 || ratingMode === 3) && ni('cfg-score-color-mode') === 3) ||
@@ -5310,15 +6228,16 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll) {
     params.set('use_original_art',    c('tog-original-art') ? 'true' : 'false');
     params.set('original_art_source', vEl('cfg-original-art-source') || 'primary');
+    if (serverCaps.fanart_posters && vEl('cfg-poster-source') !== 'tmdb') params.set('poster_source', vEl('cfg-poster-source'));
+    if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
   }
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
   {
-    // Only emit the secondary language for the priority modes that consult it,
-    // so unrelated URLs stay clean and cache keys don't needlessly diverge.
-    const _lp  = vEl('cfg-logo-priority') || 'native_original';
+    // Only emit the secondary language when the priority lists Custom, so
+    // unrelated URLs stay clean and cache keys don't needlessly diverge.
     const _sec = vEl('cfg-language-secondary') || '';
-    if (_sec && (_lp === 'native_custom_text' || _lp === 'native_custom_original_text')) {
+    if (_sec && logoPrioritySources(vEl('cfg-logo-priority')).includes('custom')) {
       params.set('logo_language_secondary', _sec);
     }
   }
@@ -5356,13 +6275,15 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
       params.set('sash_badge_size_h',        n('cfg-sash-badge-size-h').toFixed(2));
       params.set('sash_badge_pad',           n('cfg-sash-badge-pad').toFixed(2));
-      params.set('sash_badge_inset',         n('cfg-sash-badge-inset').toFixed(3));
       params.set('sash_badge_font_ratio',    n('cfg-sash-badge-font-ratio').toFixed(2));
       if (vEl('cfg-sash-badge-style') === 'frosted') {
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
         params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
         if (c('tog-notch-vignette-color')) params.set('notch_vignette_color', 'true');
       }
+      // Every notch style can float off centre (it was frosted only).
+      const _pos = vEl('cfg-sash-badge-pos') || 'center';
+      if (_pos !== 'center') params.set('sash_badge_pos', _pos);
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -5371,12 +6292,30 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (vEl('cfg-sash-side') === 'left') params.set('sash_side', 'left');
     }
   }
+  // Drawn apart from the sash, so it is emitted whatever the mode.
+  const _trStyle = vEl('cfg-trending-style');
+  if (emitAll && _trStyle !== 'sash') {
+    params.set('trending_style', _trStyle);
+    if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
+    if (vEl('cfg-trending-side') === 'right') params.set('trending_side', 'right');
+    if (vEl('cfg-trending-sash') !== 'keep') params.set('trending_sash', vEl('cfg-trending-sash'));
+    if (_trStyle === 'ribbon') {
+      if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
+      if (vEl('cfg-trending-ribbon-style') === 'frosted') {
+        params.set('trending_frost_opacity',    n('cfg-trending-frost-opacity').toFixed(2));
+        params.set('trending_frost_saturation', n('cfg-trending-frost-sat').toFixed(2));
+      }
+      if (c('tog-trending-label'))  params.set('trending_label', 'true');
+      if (c('tog-trending-corner')) params.set('trending_corner', 'true');
+    }
+  }
   // sash_priority is consumed not just by the diagonal sash but also by:
   //   - Compact rating mode (mode 4) — always pulls a sash label
   //   - Score Bar mode (mode 1) with Label Suffix = Info sash | Year + Info sash
   // Emit it whenever ANY of those is active so the user's drag-to-reorder /
   // disable choices are respected, not silently overridden by server defaults.
   const _sashTextNeeded = (emitAll && showSash) || (emitLandscape && lShowSash)
+    || (emitAll && vEl('cfg-trending-style') !== 'sash')
     || (emitAll && ratingMode === 1 && ni('cfg-bar-append') !== 0)
     || (emitAll && ratingMode === 4 && vEl('cfg-bar4-append') === 'sash');
   if (_sashTextNeeded) {
@@ -5387,8 +6326,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // Landscape never fetches quality (see get_poster), so none of this applies.
   if (emitAll) params.set('badge_display_mode', badgeMode);
   if (emitAll && badgeMode !== 0) {
-    params.set('badge_height', ni('cfg-badge-h'));
-    if (badgeMode !== 6) {
+    if (badgeMode !== 7) params.set('badge_height', ni('cfg-badge-h'));
+    if (badgeMode === 7) {
+      params.set('badge_group1', vEl('cfg-badge-group1'));
+      params.set('badge_group2', vEl('cfg-badge-group2'));
+      params.set('badge_group3', vEl('cfg-badge-group3'));
+    } else if (badgeMode !== 6) {
       params.set('badge_anchor_x', n('cfg-badge-x').toFixed(3));
       params.set('badge_anchor_y', n('cfg-badge-y').toFixed(3));
     }
@@ -5396,14 +6339,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       // badge_gap only applies to Quality Badge Row mode
       params.set('badge_gap', ni('cfg-badge-gap'));
     }
-    if ([1,2,4,5,6].includes(badgeMode)) {
+    if (badgeUsesQuality(badgeMode)) {
       params.set('badge_min_score', ni('cfg-badge-min-score'));
     }
     if (badgeMode === 5) {
       if (c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
     }
   }
-  if (emitAll && c('tog-wait-quality') && [1,2,4,5,6].includes(badgeMode)) {
+  if (emitAll && c('tog-wait-quality') && badgeUsesQuality(badgeMode)) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
@@ -5498,7 +6441,18 @@ function buildPreviewUrl() {
   // When the domain has been rewritten to postersplus:port, the preview image
   // must still load from the actual origin so it resolves in the browser.
   const override = _REWRITE_DOMAIN ? window.location.origin : null;
-  return buildBaseParams({ usePlaceholders: false, domainOverride: override });
+  // 500 wide unless the operator opted in (PREVIEW_AT_RESOLUTION): the
+  // preview is shown far smaller than that, and a large render per settings
+  // change would only cost the server time. Every fixed-pixel setting scales
+  // with the canvas, so the layout is the same either way.
+  const url = buildBaseParams({ usePlaceholders: false, domainOverride: override });
+  if (serverCaps.preview_at_resolution) return url;
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has('resolution')) return url;
+    u.searchParams.delete('resolution');
+    return u.toString();
+  } catch { return url; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5588,6 +6542,36 @@ const COPY_TEMPLATES = [
 const COPY_TEMPLATE_NEUTRAL = { id: '', name: '', ...COPY_SHAPE_REQUIRED };
 const COPY_TEMPLATE_KEY = 'postersplus_copy_template';
 
+// Share settings: the look, for someone else to import into their own
+// configurator — not a URL any client is given. It goes out in the "{shape}"
+// form so the portrait and landscape settings both travel, with every
+// parameter spelled out (full) because the recipient's server may not share
+// this one's defaults. Nothing identifying goes with it: the host is a
+// reserved .invalid name, so a share pasted into a client by mistake fails
+// outright instead of reaching anyone's instance, and keys, the access key
+// and the selected title are dropped. So are the viewer's own choices —
+// language, client and resolution belong to whoever imports it.
+const COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', ...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };
+const SHARE_ORIGIN = 'https://share.postersplus.invalid';
+const _SHARE_DROP  = ['tmdb_id', 'imdb_id', 'stremio_id', 'type', 'access_key', 'tmdb_key',
+                      'mdblist_key', 'logo_language', 'primary_client', 'resolution'];
+
+function buildShareUrl() {
+  const url = buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',
+                                domainOverride: SHARE_ORIGIN });
+  const q = url.indexOf('?');
+  const p = new URLSearchParams(q < 0 ? '' : url.slice(q + 1));
+  _SHARE_DROP.forEach(k => p.delete(k));
+  // The plain list, not the "default,..." diff: the recipient's default order
+  // may not be this server's.
+  if (p.has('sash_priority')) p.set('sash_priority', getSashPriorityParam({ compact: false }));
+  return decodePlaceholders(`${SHARE_ORIGIN}/poster?${p.toString()}`);
+}
+
+function isShareUrl(raw) {
+  try { return new URL(raw).origin === SHARE_ORIGIN; } catch { return false; }
+}
+
 /** The template a plain left-click copies, or null when none is remembered —
  *  the first click opens the menu rather than guessing a client. */
 function rememberedTemplate() {
@@ -5656,6 +6640,19 @@ function renderCopyMenu() {
       item.onclick = () => copyTemplate(t.id);
       menu.appendChild(item);
     }
+    const sep = document.createElement('div');
+    sep.className = 'menu-sep';
+    sep.setAttribute('role', 'separator');
+    menu.appendChild(sep);
+    const share = document.createElement('button');
+    share.type = 'button';
+    share.className = 'menu-item';
+    share.id = 'copy-share';
+    share.setAttribute('role', 'menuitem');
+    share.title = 'Copies these settings for someone else to import — no domain, keys or title.';
+    share.textContent = COPY_TEMPLATE_SHARE.name;
+    share.onclick = copyShare;
+    menu.appendChild(share);
   }
   const current = rememberedTemplate();
   for (const t of COPY_TEMPLATES) {
@@ -5858,6 +6855,28 @@ async function copyTemplate(templateId) {
   setStatus('Clipboard copy failed — check browser permissions.', 'err');
 }
 
+/** Copies the share form of the settings. Never remembered as the left-click
+ *  choice: that is always a client. */
+async function copyShare() {
+  closeCopyMenu();
+  const url = buildShareUrl();
+  const btn = document.getElementById('copy-config-btn');
+  if (await copyText(url)) {
+    setStatus('Settings copied — the recipient pastes them into Import URL.', 'info');
+    flashButton(btn, 'Copied');
+    return;
+  }
+  if (_SHOW_URL_BOX) {
+    const inp = document.getElementById('url-display-input');
+    inp.value = url;
+    inp.focus();
+    inp.select();
+    setStatus('Settings selected — copy them manually and send them on.', 'info');
+    return;
+  }
+  setStatus('Clipboard copy failed — check browser permissions.', 'err');
+}
+
 /** Briefly swaps a button's label to confirm an action, then restores it. */
 function flashButton(btn, text, ms = 1600) {
   if (!btn || btn.dataset.flashing) return;
@@ -5873,7 +6892,7 @@ function flashButton(btn, text, ms = 1600) {
 function resetDefaults() {
   // Core Config is preserved across a Reset: API keys, language and the
   // searched title / selection (domain is server-derived, not user-set here).
-  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query','cfg-language','cfg-primary-client']);
+  const preserve = new Set(['cfg-tmdb-key','cfg-mdblist-key','cfg-access-key','cfg-domain','cfg-search-query','cfg-language','cfg-primary-client','cfg-resolution']);
   // Drop any persisted settings so a later reload starts from the reset state.
   try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
   // Reset both cfg-* (inputs / selects) AND tog-* (toggle checkboxes).  The
@@ -5887,7 +6906,9 @@ function resetDefaults() {
       if (el.type === 'range') el.dispatchEvent(new Event('input', { bubbles: true }));
     }
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
-    if (el.type === 'hidden')   el.value   = el.defaultValue || '';
+    // A hidden input's value *is* its value attribute, so defaultValue follows
+    // every write; one that needs a real default carries it in data-default.
+    if (el.type === 'hidden')   el.value   = el.dataset.default ?? (el.defaultValue || '');
     if (el.tagName === 'SELECT') { for (const opt of el.options) opt.selected = opt.defaultSelected; }
     // Forget "the user chose this themselves" marks, so the mode-driven
     // defaults start seeding again from a clean slate.
@@ -5906,6 +6927,8 @@ function resetDefaults() {
   sashDisabled = new Set(SASH_DEFAULT_DISABLED);
   localStorage.removeItem('postersplus_sash_order');
   buildSashList();
+  buildLogoPriorityList();
+  buildRatingBadgeList();
   // Refresh the mode-conditional field visibility so the blocks for the
   // *previously-selected* rating / badge mode don't linger after the parent
   // dropdown reverts to its default (e.g. resetting from Compact would
@@ -5913,6 +6936,7 @@ function resetDefaults() {
   updateRatingFields();
   updateOriginalArt();
   updateBadgeModeHint();
+  gbRender();
   updateSashBadgeFields();
   updateShapeFields();
   build();
@@ -6011,9 +7035,23 @@ function updateSashBadgeFields() {
   document.getElementById('sash-badge-offsets').style.display    = isNotch ? '' : 'none';
   document.getElementById('sash-size-fields').style.display      = isBand ? '' : 'none';
   if (isNotch) initCustomMobileSliders();
+  updateTrendingStyleFields();
   // Unconditional: the reference toggle is outside #sash-badge-offsets now, so
   // leaving notch mode has to actively hide it rather than rely on its wrapper.
   updateBadgeStyleFields();
+}
+
+function updateTrendingStyleFields() {
+  // Landscape keeps the sash label, so none of this shows there.
+  if (c('tog-landscape')) return;
+  const style = vEl('cfg-trending-style');
+  document.getElementById('sash-trending-mark-fields').style.display = style !== 'sash' ? '' : 'none';
+  document.getElementById('sash-trending-ribbon-style-field').style.display = style === 'ribbon' ? '' : 'none';
+  document.getElementById('sash-trending-frost-fields').style.display =
+    style === 'ribbon' && vEl('cfg-trending-ribbon-style') === 'frosted' ? '' : 'none';
+  document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
+  document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
+  if (style !== 'sash') initCustomMobileSliders();
 }
 
 function _syncSashColorPicker() {
@@ -6051,6 +7089,8 @@ function updateBadgeStyleFields() {
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-badge-pos-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch') ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
@@ -6320,10 +7360,11 @@ function updateShapeFields() {
   // Sash tab: the mode (drawn or not), the release-status filters and the
   // priority list are read; the rest styles the portrait sash / notch.
   for (const id of ['sash-cinema-greyscale-row', 'sash-winner-star-row', 'sash-text-color-field',
+                    'sash-trending-group', 'sash-trending-style-field', 'sash-trending-mark-fields',
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
-                    'sash-badge-saturation-field']) {
+                    'sash-badge-saturation-field', 'sash-badge-pos-field']) {
     const el = document.getElementById(id);
     if (!el) continue;
     // Portrait: show everything again first, then let the mode logic below
@@ -6336,7 +7377,9 @@ function updateShapeFields() {
   // its change handler, so the rows it hides in the Rating tab are re-derived
   // on the way back in — otherwise they would still show landscape's answer.
   if (!landscape) updateRatingFields();
+  _updateLabelRows();
   document.getElementById('landscape-score10-row').style.display = c('tog-hide-rating') ? 'none' : '';
+  document.getElementById('landscape-star-row').style.display    = c('tog-hide-rating') ? 'none' : '';
   // There is no diagonal sash or notch in landscape, only the badge: the mode
   // is drawn-or-not, so the segmented reads Hidden | Shown and the notch
   // button goes away.  "Shown" writes 'sash'; a 'notch' left over from an
@@ -6467,7 +7510,7 @@ function initSegmented() {
     // full-width block, so centring on its box would ignore where the text is.
     let left = Math.max(M, Math.min(r.left, window.innerWidth - tr.width - M));
 
-    // ABOVE by default. The control this label names always sits directly
+    // ABOVE by default. The control this label names sits beside or directly
     // below it, so opening downwards would cover the thing being explained —
     // and, for a select, the dropdown it is about to show.
     let top = r.top - tr.height - 8;
@@ -6497,7 +7540,18 @@ function initSegmented() {
 
   const target = ev => ev.target?.closest?.('[data-tip]') || null;
 
+  // A tap is followed by a synthetic mouseover, which queued the hover
+  // tooltip for a button that was just tapped.  The click handler below
+  // cancels it, but only if the click reaches document: the link button's
+  // menu stops propagation, so its tooltip opened over the menu it had just
+  // shown.  Touch has its own path (touchend), so hover ignores anything
+  // this soon after a touch.
+  let lastTouch = 0;
+  document.addEventListener('touchstart', () => { lastTouch = Date.now(); }, { capture: true, passive: true });
+  const fromTouch = () => Date.now() - lastTouch < 1000;
+
   document.addEventListener('mouseover', ev => {
+    if (fromTouch()) return;
     const a = target(ev);
     if (!a) hide();
     else if (a !== anchor && a !== pending) show(a);
@@ -6600,6 +7654,47 @@ function _updateMinimalistRows() {
   if (rl) rl.textContent = named ? 'Year / Rating' : 'Separator';
 }
 
+// What each portrait mode's label actually carries, so the Labels switches
+// and the score-only controls show only where they change something.  Mirrors
+// the label building in main._build_poster.
+function _ratingLabelParts() {
+  const mode = parseInt(document.getElementById('cfg-rating-mode').value);
+  const minAppend = parseInt(vEl('cfg-min-append') || '0');
+  const barAppend = vEl('cfg-bar4-append') || 'rating_year';
+  const accentAppend = parseInt(vEl('cfg-bar-append') || '0');
+  const barStyle = vEl('cfg-bar-style') || '';
+  return {
+    genre: mode >= 1,
+    // Rating Bar: Year (0) / Year + Sash (2).  Minimalist: every layout but
+    // Rating (1).  Bar: the labels that name the year.  Clean never shows it.
+    year: (mode === 1 && accentAppend !== 1) || (mode === 3 && minAppend !== 1)
+          || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'year')),
+    // A printed score, or the Rating Bar / rating-fill Bar that draws one.
+    score: mode === 1 || mode === 2 || mode === 3
+           || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating'
+                              || barStyle === 'rating_frosted' || barStyle === 'rating_black')),
+    // Where rating badges can stand in for a printed score: Minimalist's Year
+    // layout prints none unless the year is hidden.
+    badges: mode === 2 || (mode === 3 && (minAppend !== 0 || c('tog-hide-year')))
+            || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating')),
+    barScore: mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating'),
+  };
+}
+
+// The Labels switches.  In landscape they are docked into the Landscape group,
+// whose renderer reads all of them, so they all show there.
+function _updateLabelRows() {
+  const landscape = c('tog-landscape');
+  const parts = _ratingLabelParts();
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = (landscape || on) ? '' : 'none'; };
+  show('hide-genre-row', parts.genre);
+  show('hide-year-row', parts.year);
+  show('hide-rating-row', parts.score);
+  show('hide-unreleased-rating-row', parts.score);
+  const group = document.getElementById('rating-labels-group');
+  if (group) group.style.display = parts.genre ? '' : 'none';
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   // Hide Rating takes the score out of whichever mode is drawing it, so every
@@ -6616,14 +7711,20 @@ function updateRatingFields() {
   document.getElementById('rating-alt-colors-toggle').style.display = ((mode === 1 || mode === 3) && !hideRating) ? '' : 'none';
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = (mode === 3 && !hideRating) ? '' : 'none';
-  document.getElementById('bar-score10-row').style.display          = (mode === 4 && !hideRating) ? '' : 'none';
+  const labelParts = _ratingLabelParts();
+  document.getElementById('bar-score10-row').style.display          = (labelParts.barScore && !hideRating) ? '' : 'none';
+  document.getElementById('rating-badges-fields').style.display     = (labelParts.badges && !hideRating) ? '' : 'none';
+  document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
+  document.getElementById('rating-badge-style-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
+  document.getElementById('landscape-star-row').style.display       = hideRating ? 'none' : '';
   _updateMinimalistRows();
   // Hidden mode has no per-mode fields, so the Style group would otherwise be
   // a heading and a rule with nothing under them.
   document.getElementById('rating-style-group').style.display       = mode === 0 ? 'none' : '';
   if (mode === 4) _updateBarRatingRows();
   updateCustomPaletteFields();
+  _updateLabelRows();
 }
 
 function _setAllRtc(val) {
@@ -6660,8 +7761,8 @@ const _INFO_TITLES = {
 // Preset system
 // ---------------------------------------------------------------------------
 // Each preset stores only the URL query params so it works with any server.
-// `loadPreset` preserves Core Config, the current title, and the two
-// client-specific inset sliders while applying the visual preset.
+// `loadPreset` preserves Core Config, the current title, and any client
+// inset an imported URL carried while applying the visual preset.
 
 const PRESETS = [
   {
@@ -6823,7 +7924,8 @@ function _buildPresetCard(grid, preset) {
 // importing it would otherwise reset the rating bar to its defaults.
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
-                                  'cfg-landscape-color-link', 'tog-landscape-score-10'];
+                                  'cfg-landscape-color-link', 'tog-landscape-score-10',
+                                  'tog-landscape-score-star'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
 const _BOTH_SHAPES_CONTROLS = new Set([
@@ -6832,7 +7934,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
   'tog-hide-unreleased-rating',
-  'cfg-primary-client', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
+  'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
 function _snapshotControls(ids) {
@@ -6850,11 +7952,15 @@ function _portraitOnlyControlIds() {
 
 function openPresetModal() {
   _buildPresetGrid();
-  document.getElementById('preset-modal').classList.add('open');
+  const modal = document.getElementById('preset-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('preset-modal');
 }
 
 function closePresetModal() {
   document.getElementById('preset-modal').classList.remove('open');
+  _popModalState('preset-modal');
 }
 
 function loadPreset(id) {
@@ -6880,7 +7986,11 @@ function loadPreset(id) {
 }
 
 function toggleImportBar() {
-  document.getElementById('import-modal').classList.add('open');
+  const modal = document.getElementById('import-modal');
+  if (!modal.classList.contains('open')) {
+    modal.classList.add('open');
+    _pushModalState('import-modal');
+  }
   const input = document.getElementById('import-input');
   // Slight delay so the display:flex transition completes before focus
   setTimeout(() => { input.focus(); input.select(); }, 50);
@@ -6889,12 +7999,15 @@ function toggleImportBar() {
 function closeImportModal() {
   document.getElementById('import-modal').classList.remove('open');
   document.getElementById('import-input').value = '';
+  _popModalState('import-modal');
 }
 
 function applyImport() {
   const raw = document.getElementById('import-input').value.trim();
   if (!raw) return;
-  const result = importUrl(raw);
+  // A share carries settings only; the importer's own client, language and
+  // keys stay as they are.
+  const result = importUrl(raw, isShareUrl(raw) ? { settingsOnly: true, share: true } : {});
   if (result) closeImportModal();
 }
 
@@ -6905,11 +8018,15 @@ function applyImport() {
 const WHATS_NEW_VERSION = '1.2.0';
 
 function openWhatsNew() {
-  document.getElementById('whatsnew-modal').classList.add('open');
+  const modal = document.getElementById('whatsnew-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('whatsnew-modal');
 }
 
 function closeWhatsNew() {
   document.getElementById('whatsnew-modal').classList.remove('open');
+  _popModalState('whatsnew-modal');
   try { localStorage.setItem('postersplus_whatsnew_acked', WHATS_NEW_VERSION); } catch (_) {}
   const ver = document.getElementById('whatsnew-version');
   if (ver) ver.dataset.acked = 'true';
@@ -6939,7 +8056,7 @@ function _setEl(id, value) {
   }
 }
 
-function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClientInsets = false, preserveShape = false, restoring = false } = {}) {
+function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClientInsets = false, preserveShape = false, restoring = false, share = false } = {}) {
   let parsed;
   try { parsed = new URL(urlStr); } catch {
     if (!silent) setStatus('Import failed — not a valid URL.', 'err');
@@ -6998,7 +8115,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // URL on the old one.
   if (!settingsOnly) {
     // ── Client ─────────────────────────────────────────────────────────────
-    if (p.has('primary_client') && CLIENT_INSETS[p.get('primary_client')]) {
+    if (p.has('primary_client') && PRIMARY_CLIENTS.has(p.get('primary_client'))) {
       _setEl('cfg-primary-client', p.get('primary_client'));
       onPrimaryClientChange({ rebuild: false });
     }
@@ -7043,14 +8160,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // Language is Core Config — only restored on an explicit URL import.
   if (!settingsOnly && p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
   if (p.has('logo_priority')) {
-    _setEl('cfg-logo-priority', p.get('logo_priority'));
+    _setEl('cfg-logo-priority', logoPriorityValue(logoPrioritySources(p.get('logo_priority'))));
   } else if (p.has('logo_native_fallback')) {
     // Legacy boolean: true → native then original, false → native only.
     _setEl('cfg-logo-priority',
            (p.get('logo_native_fallback') === 'false') ? 'native_text' : 'native_original');
   }
   if (p.has('logo_language_secondary')) _setEl('cfg-language-secondary', p.get('logo_language_secondary'));
-  syncSecondaryLangVisibility();
+  buildLogoPriorityList();
   if (p.has('fallback_bg_style')) _setEl('cfg-fallback-bg-style', p.get('fallback_bg_style'));
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
@@ -7091,6 +8208,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
   if (p.has('hide_year')) _setEl('tog-hide-year', p.get('hide_year'));
   if (p.has('hide_rating')) _setEl('tog-hide-rating', p.get('hide_rating'));
+  // A device choice like the primary client: a preset or a shared config
+  // (neither carries one) leaves it alone, any other URL without it means the
+  // default.
+  if (p.has('resolution') || !(preserveClientInsets || share)) {
+    const r = (p.get('resolution') || '').trim().toLowerCase();
+    const w = { high: '780', hd: '780' }[r] || r;
+    _setEl('cfg-resolution', ['780', '1000', '1500', '2000'].includes(w) ? w : '500');
+  }
   // shape is seeded from the server defaults above, so an ordinary URL without
   // it lands on portrait.  A preset carries no shape and is not a reason to
   // leave the landscape view, hence preserveShape.
@@ -7102,6 +8227,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
     _setEl('cfg-landscape-info-scale', p.get('landscape_info_scale') || '1.00');
     _setEl('tog-landscape-score-10',   p.get('landscape_score_out_of_10') || 'false');
+    _setEl('tog-landscape-score-star', p.get('landscape_score_star') || 'false');
   }
   // Anime ids carry no setting to restore: which ids a URL may use is decided
   // by the copy template now, so stremio_id / anilist_id / kitsu_id on an
@@ -7115,6 +8241,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // call before /server-caps has answered — it no-ops until then, and
   // fetchServerCaps calls it again on arrival.
   updateImdbSourceAvailability();
+  updateResolutionAvailability();
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));
@@ -7136,16 +8263,26 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   else if (p.has('show_award_sash') && p.get('show_award_sash') !== 'true') _setEl('cfg-sash-mode', 'hidden');
   else if (p.has('sash_badge'))          _setEl('cfg-sash-mode', p.get('sash_badge') === 'true' ? 'notch' : 'sash');
   if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
+  _setEl('cfg-sash-badge-pos', p.get('sash_badge_pos') || 'center');
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
-  if (!preserveClientInsets && p.has('sash_badge_inset')) _setEl('cfg-sash-badge-inset', p.get('sash_badge_inset'));
   if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
   if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
   if (p.has('sash_badge_frost_saturation')) _setEl('cfg-sash-badge-frost-sat', p.get('sash_badge_frost_saturation'));
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   _setEl('cfg-sash-side', p.get('sash_side') === 'left' ? 'left' : 'right');
+  _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
+  _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
+  _setEl('cfg-trending-side', p.get('trending_side') === 'right' ? 'right' : 'left');
+  _setEl('cfg-trending-sash', ['hide', 'opposite'].includes(p.get('trending_sash')) ? p.get('trending_sash') : 'keep');
+  _setEl('tog-trending-label', p.get('trending_label') === 'true');
+  _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
+  _setEl('cfg-trending-frost-opacity', p.get('trending_frost_opacity') || '0.75');
+  _setEl('cfg-trending-frost-sat', p.get('trending_frost_saturation') || '1.20');
+  _setEl('cfg-trending-ribbon-style', ['frosted', 'black', 'silver', 'gold'].includes(p.get('trending_ribbon_style')) ? p.get('trending_ribbon_style') : 'charcoal');
+  updateTrendingStyleFields();
   updateSashBadgeFields();
 
   // A diff can only be expanded against the server's default order.  Settings
@@ -7208,6 +8345,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('minimalist_center'))              _setEl('tog-minimalist-center', p.get('minimalist_center'));
   if (p.has('minimalist_separator'))           _setEl('cfg-min-separator', p.get('minimalist_separator'));
   if (p.has('minimalist_rating_separator'))    _setEl('cfg-min-rating-separator', p.get('minimalist_rating_separator'));
+  // A URL that names its rating mode says which badges it wants by leaving
+  // them out as much as by listing them.
+  if (p.has('rating_badges') || p.has('rating_display_mode')) {
+    _setEl('cfg-rating-badges', ratingBadgeSources(p.get('rating_badges') || '').join(','));
+    _setEl('cfg-rating-badge-scale', p.get('rating_badge_scale') === 'normalized' ? 'normalized' : 'native');
+    _setEl('cfg-rating-badge-style', p.get('rating_badge_style') === 'mono' ? 'mono' : 'color');
+    buildRatingBadgeList();
+  }
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
@@ -7219,7 +8364,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   { const _ref = p.has('frost_reference') ? p.get('frost_reference') : 'false';
     _setEl('tog-bar-frost-reference', _ref); _setEl('tog-sash-frost-reference', _ref);
     updateBadgeStyleFields(); }  // refresh which saturation slider hides
-  if (!preserveClientInsets && p.has('bar_bottom_inset')) _setEl('cfg-bar-inset', p.get('bar_bottom_inset'));
+  if (!preserveClientInsets) {
+    _legacyInsets = {};
+    for (const k of ['bar_bottom_inset', 'sash_badge_inset'])
+      if (p.get(k)) _legacyInsets[k] = p.get(k);
+  }
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));
@@ -7245,9 +8394,15 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
+  _setEl('cfg-poster-source', p.get('poster_source') || 'tmdb');
+  _setEl('cfg-poster-pick', p.get('poster_pick') || 'top');
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
+  if (p.has('badge_group1')) _setEl('cfg-badge-group1', p.get('badge_group1'));
+  if (p.has('badge_group2')) _setEl('cfg-badge-group2', p.get('badge_group2'));
+  if (p.has('badge_group3')) _setEl('cfg-badge-group3', p.get('badge_group3'));
+  gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that
   // suits its mode, and an explicit badge_height below takes precedence.
@@ -7425,7 +8580,8 @@ restoreSettings();
 restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
-syncSecondaryLangVisibility();
+buildLogoPriorityList();
+buildRatingBadgeList();
 updateRatingFields();
 updateOriginalArt();
 updateBadgeModeHint();
@@ -7449,9 +8605,9 @@ function initCustomMobileSliders() {
     const wrap = document.createElement('div');
     wrap.style.cssText = `position:relative;height:28px;display:flex;align-items:center;flex:1;cursor:pointer;touch-action:pan-y;`;
     const track = document.createElement('div');
-    track.style.cssText = `position:absolute;left:0;right:0;height:2px;background:var(--border);pointer-events:none;`;
+    track.style.cssText = `position:absolute;left:0;right:0;height:4px;border-radius:2px;background:var(--black4);pointer-events:none;`;
     const fill = document.createElement('div');
-    fill.style.cssText = `position:absolute;left:0;height:2px;background:var(--gold-dim);pointer-events:none;`;
+    fill.style.cssText = `position:absolute;left:0;height:4px;border-radius:2px;background:var(--gold);pointer-events:none;`;
     const thumb = document.createElement('div');
     thumb.style.cssText = `position:absolute;width:22px;height:22px;border-radius:50%;background:var(--gold);border:3px solid var(--black1);transform:translate(-50%,-50%);top:50%;pointer-events:none;`;
     wrap.appendChild(track); wrap.appendChild(fill); wrap.appendChild(thumb);
