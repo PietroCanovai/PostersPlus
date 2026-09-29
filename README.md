@@ -100,6 +100,8 @@ The **Overview** tab shows how the instance is doing: cache sizes, renders in pr
 
 The **Artwork** tab lets you choose a title's poster or logo for everyone on the instance. Search for the title, then pick from every TMDB, Fanart and TVDB image, for portrait and landscape posters.
 
+The **Presets** tab adds your own looks to the configurator's **Load preset** gallery. Paste a poster URL from the configurator, name it, and give it a picture (render a title or upload an image). Users see them under **Operator**, beside the **Core** presets that ship with Posters+ and **Mine**, the presets each user saves in their own browser. Keys and the title are stripped from the URL when a preset is saved.
+
 Good to know:
 
 - Saved settings live in `settings.json` in the cache volume and take priority over environment variables. Your compose file is never touched.

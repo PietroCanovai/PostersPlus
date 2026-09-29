@@ -62,6 +62,8 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 # Images an operator pasted or uploaded in the dashboard's Artwork view.  Not a
 # cache: nothing prunes it, and a file goes when no override uses it.
 CUSTOM_ART_DIR        = "/app/cache/custom_art"
+# Preview images for the operator's configurator presets (dashboard Presets).
+PRESET_ART_DIR        = "/app/cache/preset_art"
 
 # Environment
 

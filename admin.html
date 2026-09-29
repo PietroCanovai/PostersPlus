@@ -687,6 +687,17 @@
     input[type="text"], input[type="password"], input[type="number"], select { min-height: 44px; font-size: 16px; }
   }
 
+  /* Presets */
+  .pr-editor { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black1); padding: 16px; margin-bottom: 18px; }
+  .pr-form { display: grid; gap: 12px; }
+  .pr-form > label { display: grid; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+  .pr-form textarea { width: 100%; background: var(--black2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--mono); font-size: 12px; padding: 10px 13px; outline: none; resize: vertical; }
+  .pr-form textarea:focus { border-color: var(--gold-dim); }
+  .pr-pics { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .pr-pic-actions { display: flex; flex-direction: column; gap: 8px; min-width: 200px; flex: 1; }
+  .pr-sample { display: grid; grid-template-columns: 100px 1fr; gap: 6px; }
+  .pr-file { position: relative; overflow: hidden; text-align: center; cursor: pointer; }
+  .pr-file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   /* Reports */
   .rp-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
   .rp-limits { font-size: 13px; color: var(--text-secondary); }
@@ -886,7 +897,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || hash === 'presets' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -914,6 +925,7 @@ function renderNav() {
   html += `<a href="#overview" data-view="overview" class="${activeView === 'overview' ? 'active' : ''}"><span>Overview</span>${pending.size ? '<span class="dot" title="Restart required"></span>' : ''}</a>`;
   html += `<a href="#artwork" data-view="artwork" class="${activeView === 'artwork' ? 'active' : ''}"><span>Artwork</span></a>`;
   html += `<a href="#reports" data-view="reports" class="${activeView === 'reports' ? 'active' : ''}"><span>Reports</span>${status && status.reports_open ? `<span class="chip pending">${status.reports_open}</span>` : ''}</a>`;
+  html += `<a href="#presets" data-view="presets" class="${activeView === 'presets' ? 'active' : ''}"><span>Presets</span>${pr.data ? `<span class="count">${pr.data.presets.length}</span>` : ''}</a>`;
   html += `<a href="#sash-lists" data-view="sash-lists" class="${activeView === 'sash-lists' ? 'active' : ''}"><span>Sash lists</span>${slDirtySections().length ? `<span class="chip dirty">${slDirtySections().length}</span>` : ''}</a>`;
   html += `<div class="nav-sep"></div><div class="nav-title">Settings</div>`;
   for (const g of model.groups) {
@@ -1244,6 +1256,7 @@ function renderView() {
   document.querySelector('.shell').classList.toggle('wide', activeView === 'artwork' && !!art.title);
   if (activeView === 'artwork') { main.innerHTML = renderArtwork(); if (!art.list) loadArtList(); return; }
   if (activeView === 'reports') { main.innerHTML = renderReports(); loadReports(); return; }
+  if (activeView === 'presets') { main.innerHTML = renderPresets(); if (!pr.data) loadPresets(); return; }
   if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
   main.innerHTML = g ? renderGroup(g) : '';
@@ -1358,6 +1371,179 @@ function renderReports() {
     html += d.blocks.map(b => `<div class="rp-block"><span><span class="who">${esc(b.reporter.slice(0, 8))}</span> · ${esc(b.reason)} · ${b.removed} report${b.removed === 1 ? '' : 's'} deleted · ${fmtAgo(b.blocked_at)}</span><button type="button" class="art-btn" onclick="rpUnblock(${jsArg(b.reporter)})">Unblock</button></div>`).join('');
     html += `</div>`;
   }
+  return html + `</div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presets.  The operator's own looks, listed under "Operator" in the
+// configurator's Load preset gallery beside the shipped (Core) ones and each
+// user's own (Mine).  Everyone who can open the configurator sees them; the
+// server keeps only settings, dropping keys and title ids from the URL.
+const pr = { data: null, edit: null, busy: false, sample: { id: '27205', type: 'movie' }, render: '' };
+
+async function loadPresets() {
+  const r = await api('/admin/api/presets');
+  if (!r.ok) { toast((r.body && r.body.detail) || 'Could not load the presets'); return; }
+  pr.data = r.body;
+  renderNav();
+  if (activeView === 'presets') document.getElementById('main').innerHTML = renderPresets();
+}
+
+// A pasted URL's settings, as the server will keep them: no keys, no title.
+function prParams(raw) {
+  const text = String(raw || '').trim();
+  let q = text;
+  if (text.includes('?') || text.includes('://')) { const i = text.indexOf('?'); q = i < 0 ? '' : text.slice(i + 1).split('#')[0]; }
+  const p = new URLSearchParams(q);
+  for (const k of [...p.keys()]) {
+    const n = k.toLowerCase();
+    if (['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', '_ts'].includes(n) || /key|token|secret|password|auth/.test(n)) p.delete(k);
+  }
+  return p;
+}
+
+function prRenderSrc() {
+  const e = pr.edit;
+  if (!e) return '';
+  const p = prParams(e.params);
+  if (![...p.keys()].length) return '';
+  p.set('tmdb_id', pr.sample.id);
+  p.set('type', pr.sample.type);
+  if (pr.data.access_key) p.set('access_key', pr.data.access_key);
+  return '/poster?' + p.toString();
+}
+
+function prNew() { pr.edit = { id: '', name: '', description: '', params: '', image: null, imageUrl: null }; pr.render = ''; renderView(); }
+function prEditOpen(id) {
+  const p = pr.data.presets.find(x => x.id === id);
+  if (!p) return;
+  pr.edit = { id: p.id, name: p.name, description: p.description, params: p.params, image: p.screenshot ? p.screenshot.split('/').pop() : null, imageUrl: p.screenshot };
+  pr.render = '';
+  renderView();
+}
+function prCancel() { pr.edit = null; pr.render = ''; renderView(); }
+function prField(k, el) { pr.edit[k] = el.value; }
+
+async function prUploadBlob(blob) {
+  if (pr.busy) return;
+  pr.busy = true;
+  const r = await api('/admin/api/presets/image', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob });
+  pr.busy = false;
+  if (!r.ok) { toast((r.body && r.body.detail) || `Upload failed (HTTP ${r.status})`); return; }
+  pr.edit.image = r.body.image;
+  pr.edit.imageUrl = r.body.url;
+  renderView();
+}
+function prUploadFile(input) { const f = input.files && input.files[0]; if (f) prUploadBlob(f); }
+
+function prRender() {
+  const id = document.getElementById('pr-sample-id').value.trim();
+  if (!/^\d{1,9}$/.test(id)) { toast('A TMDB id is a number'); return; }
+  pr.sample = { id, type: document.getElementById('pr-sample-type').value === 'tv' ? 'tv' : 'movie' };
+  pr.render = prRenderSrc();
+  if (!pr.render) { toast('Paste a poster URL first'); return; }
+  renderView();
+}
+async function prUseRender() {
+  if (!pr.render) return;
+  let blob;
+  try {
+    const resp = await fetch(pr.render);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    blob = await resp.blob();
+  } catch (err) { toast(`The render failed (${err.message})`); return; }
+  await prUploadBlob(blob);
+}
+
+async function prSave() {
+  const e = pr.edit;
+  if (!e.name.trim()) { toast('Give the preset a name'); return; }
+  if (pr.busy) return;
+  pr.busy = true;
+  const r = await api('/admin/api/presets', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: e.id || undefined, name: e.name, description: e.description, params: e.params, image: e.image }) });
+  pr.busy = false;
+  if (!r.ok) { toast((r.body && r.body.detail) || `Save failed (HTTP ${r.status})`); return; }
+  pr.data = r.body; pr.edit = null; pr.render = '';
+  toast('Preset saved');
+  renderNav(); renderView();
+}
+
+async function prDelete(id) {
+  const p = pr.data.presets.find(x => x.id === id);
+  if (!p || !confirm(`Delete the preset "${p.name}"?\n\nUsers who loaded it keep their settings.`)) return;
+  const r = await api('/admin/api/presets?id=' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!r.ok) { toast((r.body && r.body.detail) || `Delete failed (HTTP ${r.status})`); return; }
+  pr.data = r.body;
+  if (pr.edit && pr.edit.id === id) pr.edit = null;
+  renderNav(); renderView();
+}
+
+async function prMove(id, delta) {
+  const ids = pr.data.presets.map(p => p.id);
+  const i = ids.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  const r = await api('/admin/api/presets/order', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+  if (!r.ok) { toast((r.body && r.body.detail) || `Reorder failed (HTTP ${r.status})`); return; }
+  pr.data = r.body;
+  renderView();
+}
+
+function prThumb(src, landscape) {
+  return `<span class="rp-thumb ${landscape ? 'landscape' : ''}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'rp-noimg',textContent:'No preview'}))">` : '<span class="rp-noimg">No preview</span>'}</span>`;
+}
+
+function prEditorHtml() {
+  const e = pr.edit;
+  const kept = prParams(e.params);
+  const landscape = (kept.get('shape') || '').toLowerCase() === 'landscape';
+  const dropped = String(e.params).trim() && /(^|[?&])[^=&]*(key|token|secret|password|auth)[^=&]*=/i.test(e.params);
+  return `<div class="pr-editor">
+    <div class="field-head"><span class="field-label">${e.id ? 'Edit preset' : 'New preset'}</span></div>
+    <div class="pr-form">
+      <label>Name<input type="text" maxlength="60" value="${esc(e.name)}" oninput="prField('name', this)"></label>
+      <label>Description<textarea rows="2" maxlength="300" oninput="prField('description', this)">${esc(e.description)}</textarea></label>
+      <label>Poster URL<textarea rows="4" placeholder="Copy a poster URL from the configurator and paste it here" oninput="prField('params', this)" onchange="renderView()">${esc(e.params)}</textarea></label>
+      <div class="field-hint">Only the look is kept: the title, the access key and any API keys are taken out when it's saved${dropped ? ' — this URL carries a key, which won\'t be stored' : ''}. ${landscape ? 'This is a landscape URL, so it lists under Landscape.' : 'A URL with <code>shape=landscape</code> lists under Landscape; anything else under Portrait.'}</div>
+      <div class="field-head" style="margin-top:14px"><span class="field-label">Picture</span></div>
+      <div class="pr-pics">
+        <div>${prThumb(e.imageUrl, landscape)}<div class="field-hint">On the card</div></div>
+        <div>${pr.render ? prThumb(pr.render, landscape) : prThumb(null, landscape)}<div class="field-hint">Render</div></div>
+        <div class="pr-pic-actions">
+          <div class="pr-sample"><select id="pr-sample-type"><option value="movie" ${pr.sample.type === 'movie' ? 'selected' : ''}>Movie</option><option value="tv" ${pr.sample.type === 'tv' ? 'selected' : ''}>Series</option></select><input type="text" id="pr-sample-id" value="${esc(pr.sample.id)}" placeholder="TMDB id" inputmode="numeric"></div>
+          <button type="button" class="art-btn" onclick="prRender()">Render this title</button>
+          <button type="button" class="art-btn primary" onclick="prUseRender()" ${pr.render ? '' : 'disabled'}>Use the render</button>
+          <label class="art-btn pr-file">Upload an image<input type="file" accept="image/*" onchange="prUploadFile(this)"></label>
+          ${e.imageUrl ? `<button type="button" class="art-btn danger" onclick="pr.edit.image=null;pr.edit.imageUrl=null;renderView()">No picture</button>` : ''}
+          ${pr.data.tmdb ? '' : '<div class="field-hint">This instance has no server TMDB key, so a render may fail; upload an image instead.</div>'}
+        </div>
+      </div>
+    </div>
+    <div class="rp-actions"><button type="button" class="art-btn primary" onclick="prSave()">Save</button><button type="button" class="art-btn" onclick="prCancel()">Cancel</button></div>
+  </div>`;
+}
+
+function renderPresets() {
+  let html = `<div class="panel"><div class="panel-header"><span class="panel-title">Presets</span><span class="panel-index">this instance's looks in Load preset</span></div><div class="panel-body">`;
+  const d = pr.data;
+  if (!d) return html + `<div class="art-empty">Loading…</div></div></div>`;
+  html += `<div class="field-hint" style="margin:0 0 var(--gap-field)">Load preset in the configurator has three tabs: <strong>Core</strong> (shipped with Posters+), <strong>Operator</strong> (these; the tab shows once there is one) and <strong>Mine</strong> (each user's own, kept in their browser). Everyone who can open the configurator sees these presets.</div>`;
+  if (pr.edit) html += prEditorHtml();
+  else html += `<div class="rp-actions" style="margin:0 0 12px"><button type="button" class="art-btn primary" onclick="prNew()" ${d.presets.length >= d.max ? 'disabled' : ''}>Add a preset</button>${d.presets.length >= d.max ? `<span class="field-hint" style="margin:0">That's the limit of ${d.max}.</span>` : ''}</div>`;
+  if (!d.presets.length && !pr.edit) html += `<div class="art-empty">No presets yet.</div>`;
+  d.presets.forEach((p, i) => {
+    html += `<div class="rp-title">${prThumb(p.screenshot, p.shape === 'landscape')}<div>
+      <div class="rp-head"><h3>${esc(p.name)}</h3><span class="rp-meta">${p.shape === 'landscape' ? 'Landscape' : 'Portrait'}</span></div>
+      ${p.description ? `<div class="rp-note">${esc(p.description)}</div>` : ''}
+      <div class="rp-actions">
+        <button type="button" class="art-btn" onclick="prEditOpen(${jsArg(p.id)})">Edit</button>
+        <button type="button" class="art-btn" onclick="prMove(${jsArg(p.id)}, -1)" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+        <button type="button" class="art-btn" onclick="prMove(${jsArg(p.id)}, 1)" ${i === d.presets.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+        <button type="button" class="art-btn danger" onclick="prDelete(${jsArg(p.id)})">Delete</button>
+      </div>
+    </div></div>`;
+  });
   return html + `</div></div>`;
 }
 

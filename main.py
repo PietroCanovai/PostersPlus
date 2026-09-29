@@ -960,6 +960,7 @@ import tvdb
 import anime
 import art_overrides
 import reports
+import presets
 import fanart
 import cinemeta
 
@@ -6657,6 +6658,8 @@ async def server_caps(request: Request, access_key: str = ""):
         # per-address limits can't tell visitors apart.
         "reports":               _reports_open(request),
         "report_categories":     reports.CATEGORIES,
+        # The operator's own presets, shown beside the shipped ones.
+        "operator_presets":      presets.public_list(),
     }
 
 
@@ -7473,6 +7476,115 @@ async def admin_art_clear(request: Request, media_type: str, tmdb_id: str,
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _admin._json({"removed": removed})
+
+
+# ---------------------------------------------------------------------------
+# Operator presets: the instance's own looks in the configurator's Load preset
+# gallery.  Everyone who can open the configurator reads them (/server-caps),
+# so presets.py keeps only settings: keys and title ids never get stored.
+
+_PRESET_MAX_BODY = 32_768
+
+
+async def _preset_body(request: Request) -> dict:
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > _PRESET_MAX_BODY:
+            raise HTTPException(status_code=413, detail="Body too large")
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    return body
+
+
+def _presets_payload() -> dict:
+    return {
+        "presets": presets.public_list(),
+        "max": presets.MAX_PRESETS,
+        # For the dashboard's render previews (<img> can't send the admin
+        # header); it is in every poster URL the instance hands out.
+        "access_key": _cfg.ACCESS_KEY or "",
+        "tmdb": bool(_cfg.SERVER_TMDB_KEY),
+    }
+
+
+@app.get("/admin/api/presets")
+async def admin_presets(request: Request, x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    return _admin._json(_presets_payload())
+
+
+@app.put("/admin/api/presets")
+async def admin_presets_save(request: Request, x_admin_key: str = Header(default="")):
+    """Body: {id?, name, description, params, image?}.  No id adds one;
+    params is a poster URL or its query string."""
+    await _admin._authorise(request, x_admin_key)
+    body = await _preset_body(request)
+    try:
+        await asyncio.to_thread(presets.save, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save the preset: {exc}")
+    logger.info(f"Admin: preset saved ({presets.clean_text(body.get('name'), 60)!r})")
+    return _admin._json(_presets_payload())
+
+
+@app.put("/admin/api/presets/order")
+async def admin_presets_order(request: Request, x_admin_key: str = Header(default="")):
+    """Body: {"ids": [...]}."""
+    await _admin._authorise(request, x_admin_key)
+    ids = (await _preset_body(request)).get("ids")
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="ids must be a list")
+    await asyncio.to_thread(presets.reorder, ids[:presets.MAX_PRESETS])
+    return _admin._json(_presets_payload())
+
+
+@app.delete("/admin/api/presets")
+async def admin_presets_delete(request: Request, id: str, x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    await asyncio.to_thread(presets.delete, id)
+    return _admin._json(_presets_payload())
+
+
+@app.post("/admin/api/presets/image")
+async def admin_presets_image(request: Request, x_admin_key: str = Header(default="")):
+    """The image file itself as the body.  Returns {"image": name} to save
+    with the preset."""
+    await _admin._authorise(request, x_admin_key)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > presets.MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="The image is too large")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > presets.MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="The image is too large")
+        chunks.append(chunk)
+    try:
+        name = await asyncio.to_thread(presets.store_image, b"".join(chunks))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not store the image: {exc}")
+    return _admin._json({"image": name, "url": f"/preset-art/{name}"})
+
+
+@app.get("/preset-art/{name}")
+async def preset_art(name: str):
+    data = await asyncio.to_thread(presets.image_bytes, name)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=data, media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable",
+                 "X-Content-Type-Options": "nosniff"},
+    )
 
 
 # ---------------------------------------------------------------------------

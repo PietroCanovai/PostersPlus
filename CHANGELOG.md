@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Presets in three kinds
+
+- **Load preset** now has three tabs. **Core** holds the presets that ship
+  with Posters+. **Operator** holds the instance's own, added in the
+  dashboard's new **Presets** view from a pasted poster URL, with a picture
+  rendered or uploaded there. **Mine** holds each user's own: *Save current
+  settings* keeps the settings on screen, with the preview as its picture,
+  in that browser only.
+- The last URL a user imports (Import URL or a share link) is kept at the
+  top of **Mine** as *Last imported URL*, replaced by the next import. While
+  it matches the shape on screen, the right-click reset menu on a tab or
+  heading also offers *Reset … to imported URL*, which puts just that
+  section back to what the URL set.
+- A preset is only settings. Access keys, API keys and the title are taken
+  out of the URL before any preset is kept or loaded.
+
 ### Users can report a poster
 
 - With **Poster reports** on (`REPORTS_ENABLED`, off by default), the

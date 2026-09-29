@@ -1869,6 +1869,40 @@
     overflow: hidden;
   }
   .preset-card { cursor: pointer; }
+  .preset-tabs { margin-top: -6px; }
+  .preset-card.is-auto { border-style: dashed; }
+  .preset-empty {
+    font-size: 10px;
+    color: var(--silver-dim);
+    line-height: 1.65;
+    padding: 18px 4px;
+    text-align: center;
+  }
+  .preset-save {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+    padding-bottom: 4px;
+  }
+  .preset-save > .btn { align-self: flex-start; }
+  .preset-save .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .preset-save-note { font-size: 9.5px; color: var(--silver-dim); line-height: 1.6; }
+  .preset-card-delete {
+    align-self: flex-start;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--silver-dim);
+    font-family: var(--mono);
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 5px 9px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .preset-card-delete:hover { color: #c8635c; border-color: #5c2824; }
   /* ── IMPORT MODAL ── */
   .import-modal {
     display: none;
@@ -4006,6 +4040,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 <div class="menu" id="copy-menu" role="menu" aria-label="Copy the poster URL for" hidden></div>
 <div class="menu" id="reset-menu" role="menu" aria-label="Reset" hidden>
   <button type="button" class="menu-item" role="menuitem" onclick="runResetMenu()">Reset to defaults</button>
+  <button type="button" class="menu-item" id="reset-menu-import" role="menuitem" onclick="runResetMenu('import')" hidden>Reset to imported URL</button>
 </div>
 
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
@@ -4016,6 +4051,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <button class="preset-modal-close" onclick="closePresetModal()">✕</button>
       </div>
     </div>
+    <div class="segmented preset-tabs" id="preset-tabs" role="tablist"></div>
     <div class="preset-grid" id="preset-grid"></div>
   </div>
 </div>
@@ -7397,6 +7433,78 @@ function resetScope(roots, name) {
   setStatus(`${name} reset to defaults.`, 'info');
 }
 
+/** A section back to what the last imported URL set, the way resetScope puts
+ *  it back to defaults: the whole URL is imported, then everything outside
+ *  the section (and the other shape's stash) is put back as it was. */
+function resetScopeToImport(roots, name) {
+  const landscape = c('tog-landscape');
+  const imp = _lastImportFor(landscape);
+  if (!imp) return;
+  const otherShape = landscape ? '.portrait-only' : '.landscape-only';
+  const inScope = el => roots.some(r => r === el || r.contains(el)) && !el.closest(otherShape);
+  const controls = [...document.querySelectorAll('[id^="cfg-"],[id^="tog-"]')];
+  const inIds = controls.filter(el => !_SECTION_RESET_KEEP.has(el.id) && el.id !== 'tog-landscape' && inScope(el)).map(el => el.id);
+  const inSet = new Set(inIds);
+  const keep = _snapshotControls(controls.map(el => el.id).filter(id => !inSet.has(id)));
+  const weights = {};
+  for (const id of ['movie-weights', 'tv-weights', 'anime-movie-weights', 'anime-tv-weights']) {
+    const grid = document.getElementById(id);
+    if (grid && !inScope(grid)) weights[id] = [...grid.querySelectorAll('input[data-src]')].map(i => [i.dataset.src, i.value]);
+  }
+  const sashList = document.getElementById('sash-priority-list');
+  const sash = sashList && inScope(sashList) ? null : { order: [...sashOrder], disabled: new Set(sashDisabled) };
+  const stash = JSON.parse(JSON.stringify(_shapeStash));
+
+  // A "{shape}" URL imports as portrait; its landscape values land in the
+  // stash, which is where the landscape view takes them from below.
+  importUrl(`${window.location.origin}/poster?${imp.params}`,
+            { silent: true, settingsOnly: true, preserveClientInsets: true });
+  const importedLandscape = _shapeStash.landscape ? { ..._shapeStash.landscape } : null;
+
+  for (const [id, v] of Object.entries(keep)) _setEl(id, typeof v === 'boolean' ? String(v) : v);
+  if (landscape && imp.dual && importedLandscape) {
+    _updateBadgeModeOptions();
+    for (const id of _SHAPE_SHARED) {
+      if (inSet.has(id) && id in importedLandscape) {
+        const v = importedLandscape[id];
+        _setEl(id, typeof v === 'boolean' ? String(v) : v);
+      }
+    }
+  }
+  for (const [id, values] of Object.entries(weights)) {
+    const grid = document.getElementById(id);
+    for (const [src, v] of values) {
+      const input = grid.querySelector(`input[data-src="${src}"]`);
+      if (input) { input.value = v; updateWeightRange(input, `rv-${id}-${src}`); }
+    }
+    updateWeightSum(id);
+  }
+  if (sash) {
+    sashOrder = sash.order; sashDisabled = sash.disabled;
+    try { saveSashOrder(); } catch (e) {}
+  }
+  _shapeStash = stash;
+  _saveShapeStash();
+
+  onPrimaryClientChange({ rebuild: false });
+  updateGradientFields();
+  updateAnimeWeightFields();
+  buildSashList();
+  buildLogoPriorityList();
+  buildRatingBadgeList();
+  syncSecondaryLangVisibility();
+  updateRatingFields();
+  updateOriginalArt();
+  updateBadgeModeHint();
+  gbRender();
+  updateSashBadgeFields();
+  updateShapeFields();
+  syncSegmented();
+  build();
+  queuePreviewReload();
+  setStatus(`${name} reset to the imported URL.`, 'info');
+}
+
 let _resetTarget = null, _resetMenuOpenedAt = 0, _resetPressTimer = null, _resetPressOrigin = null;
 
 function _resetTargetOf(node) {
@@ -7419,6 +7527,9 @@ function openResetMenu(node, x, y) {
   _resetTarget = target;
   const item = menu.querySelector('.menu-item');
   item.textContent = `Reset ${target.name} to defaults`;
+  const fromImport = document.getElementById('reset-menu-import');
+  fromImport.hidden = !_lastImportFor(c('tog-landscape'));
+  fromImport.textContent = `Reset ${target.name} to imported URL`;
   menu.hidden = false;
   _resetMenuOpenedAt = Date.now();
   // At the pointer, kept on screen; a little above a finger so it isn't under it.
@@ -7431,12 +7542,14 @@ function closeResetMenu() {
   const menu = document.getElementById('reset-menu');
   if (menu) menu.hidden = true;
 }
-function runResetMenu() {
+function runResetMenu(to) {
   // The finger that opened it by holding can lift over the item: not a choice.
   if (Date.now() - _resetMenuOpenedAt < 400) return;
   const target = _resetTarget;
   closeResetMenu();
-  if (target) resetScope(target.roots, target.name);
+  if (!target) return;
+  if (to === 'import') resetScopeToImport(target.roots, target.name);
+  else resetScope(target.roots, target.name);
 }
 
 document.addEventListener('contextmenu', ev => {
@@ -7504,12 +7617,14 @@ async function loadPreview() {
       setStatus('');   // success: clear any previous failure
       document.getElementById('preview-status').textContent = 'OK';
       previewLoading = false;
+      _previewLoaded();
     };
     img.onerror = () => {
       existingImg.style.opacity = '1';
       setStatus('Error: poster endpoint returned an error — check access key / instance URL', 'err');
       document.getElementById('preview-status').textContent = 'ERROR';
       previewLoading = false;
+      _importThumbPending = false;
     };
     img.src = previewUrl;
   } else {
@@ -7519,12 +7634,14 @@ async function loadPreview() {
       setStatus('');   // success: clear any previous failure
       document.getElementById('preview-status').textContent = 'OK';
       previewLoading = false;
+      _previewLoaded();
     };
     img.onerror = () => {
       frame.innerHTML = `<div class="preview-empty"><span class="preview-empty-icon" style="font-size:28px">✕</span>Poster fetch failed<br><span style="margin-top:8px;display:block;font-size:9px;">check access key / instance URL</span></div>`;
       setStatus('Error: check access key / instance URL', 'err');
       document.getElementById('preview-status').textContent = 'ERROR';
       previewLoading = false;
+      _importThumbPending = false;
     };
     img.src = previewUrl;
   }
@@ -8396,14 +8513,166 @@ const PRESETS = [
   },
 ];
 
+// ── Three kinds of preset ───────────────────────────────────────────────────
+// Core:     PRESETS above, shipped with Posters+.
+// Operator: this instance's own, added in the dashboard (/server-caps).
+// Mine:     the user's, saved from the current settings into this browser.
+// All of them are only settings: whatever carries them, a key or title id in
+// the params is dropped (_presetParams) before a preset is kept or loaded.
+const USER_PRESETS_KEY = 'postersplus_user_presets';
+const USER_PRESETS_MAX = 30;
+const PRESET_TAB_KEY   = 'postersplus_preset_tab';
+const _PRESET_DROPPED  = new Set(['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', '_ts']);
+let _presetTab = null;
+let _presetSaving = false;
+
+function _presetParams(raw) {
+  const p = new URLSearchParams(String(raw || ''));
+  for (const k of [...p.keys()]) {
+    const n = k.toLowerCase();
+    if (_PRESET_DROPPED.has(n) || _CORE_PARAMS.includes(n) || /key|token|secret|password|auth/.test(n)
+        || !/^[a-z][a-z0-9_]{0,63}$/.test(n)) p.delete(k);
+  }
+  return p.toString();
+}
+
+function _presetEntry(p, source, screenshot) {
+  return {
+    id: `${source}:${p.id}`, source,
+    name: String(p.name || '').slice(0, 60),
+    description: String(p.description || '').slice(0, 300),
+    shape: p.shape === 'landscape' ? 'landscape' : 'portrait',
+    params: _presetParams(p.params),
+    screenshot,
+  };
+}
+
+function _operatorPresets() {
+  const list = Array.isArray(serverCaps.operator_presets) ? serverCaps.operator_presets : [];
+  return list.filter(p => p && typeof p.id === 'string' && typeof p.params === 'string')
+    .map(p => _presetEntry(p, 'operator',
+      /^\/preset-art\/[0-9a-f]{16}\.jpg$/.test(p.screenshot || '') ? p.screenshot : null));
+}
+
+function _readUserPresets() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(USER_PRESETS_KEY) || '[]'); } catch (_) {}
+  return Array.isArray(list) ? list.filter(p => p && typeof p.id === 'string' && typeof p.params === 'string') : [];
+}
+function _writeUserPresets(list) {
+  localStorage.setItem(USER_PRESETS_KEY, JSON.stringify(list));
+}
+function _userPresets() {
+  return _readUserPresets().map(p => ({ ..._presetEntry(p, 'user',
+    /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.thumb || '') ? p.thumb : null), auto: p.id === LAST_IMPORT_ID }));
+}
+// Saved presets toward the limit; the last import rides free.
+function _savedUserPresetCount() {
+  return _readUserPresets().filter(p => p.id !== LAST_IMPORT_ID).length;
+}
+
+// ── Last imported URL ───────────────────────────────────────────────────────
+// Every URL the user imports (Import URL, a share link) is kept as a preset
+// at the top of Mine, replacing the one before, so they can always get back
+// to it.  It also backs "Reset … to imported URL" in the section reset menu.
+const LAST_IMPORT_ID = 'last-import';
+let _importThumbPending = false;
+
+function _rememberImport(raw) {
+  let q;
+  try { q = new URL(raw).searchParams; } catch (_) { return; }
+  const params = _presetParams(q.toString());
+  if (!params) return;
+  const shape = (q.get('shape') || '').toLowerCase() === 'landscape' ? 'landscape' : 'portrait';
+  const when = new Date().toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const entry = { id: LAST_IMPORT_ID, name: 'Last imported URL',
+                  description: `Imported ${when}. Saved automatically; the next import replaces it.`,
+                  shape, params, thumb: null };
+  const rest = _readUserPresets().filter(p => p.id !== LAST_IMPORT_ID);
+  try { _writeUserPresets([entry, ...rest]); _importThumbPending = true; } catch (_) {}
+}
+
+// The first preview after an import is the imported look: it becomes the
+// card's picture.
+function _previewLoaded() {
+  if (!_importThumbPending) return;
+  _importThumbPending = false;
+  const thumb = _capturePreviewThumb();
+  if (!thumb) return;
+  const list = _readUserPresets();
+  const entry = list.find(p => p.id === LAST_IMPORT_ID);
+  if (!entry) return;
+  entry.thumb = thumb;
+  try { _writeUserPresets(list); } catch (_) {}
+}
+
+/** The last import, when it can reset a section in the view on screen: a
+ *  URL for one shape only fits that shape's view; a "{shape}" URL fits both. */
+function _lastImportFor(landscape) {
+  const entry = _readUserPresets().find(p => p.id === LAST_IMPORT_ID);
+  if (!entry || typeof entry.params !== 'string') return null;
+  const params = _presetParams(entry.params);
+  const dual = new URLSearchParams(params).get('shape') === '{shape}';
+  if (!dual && (entry.shape === 'landscape') !== landscape) return null;
+  return { params, dual };
+}
+
+function _presetTabs() {
+  const tabs = [['core', 'Core']];
+  if (_operatorPresets().length) tabs.push(['operator', 'Operator']);
+  tabs.push(['user', 'Mine']);
+  return tabs;
+}
+
+function _buildPresetTabs() {
+  const tabs = _presetTabs();
+  if (!_presetTab) {
+    try { _presetTab = localStorage.getItem(PRESET_TAB_KEY); } catch (_) {}
+  }
+  if (!tabs.some(([k]) => k === _presetTab)) _presetTab = 'core';
+  const host = document.getElementById('preset-tabs');
+  host.innerHTML = '';
+  for (const [key, label] of tabs) {
+    const b = document.createElement('div');
+    b.className = 'segmented-opt' + (key === _presetTab ? ' active' : '');
+    b.textContent = label;
+    b.setAttribute('role', 'tab');
+    b.tabIndex = 0;
+    b.onclick = () => _setPresetTab(key);
+    b.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _setPresetTab(key); } };
+    host.appendChild(b);
+  }
+}
+
+function _setPresetTab(key) {
+  _presetTab = key;
+  _presetSaving = false;
+  try { localStorage.setItem(PRESET_TAB_KEY, key); } catch (_) {}
+  _buildPresetGrid();
+}
+
 function _buildPresetGrid() {
+  _buildPresetTabs();
   const grid = document.getElementById('preset-grid');
   grid.innerHTML = '';
+  const list = _presetTab === 'operator' ? _operatorPresets()
+             : _presetTab === 'user'     ? _userPresets()
+             : PRESETS.map(p => ({ ...p, id: `core:${p.id}`, source: 'core', shape: p.shape || 'portrait' }));
+  if (_presetTab === 'user') _buildUserPresetBar(grid, _savedUserPresetCount());
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'preset-empty';
+    empty.textContent = _presetTab === 'user'
+      ? 'Nothing saved yet. Save the settings you have now, and they stay in this browser to come back to.'
+      : 'No presets here yet.';
+    grid.appendChild(empty);
+    return;
+  }
   // Grouped by shape, the one being previewed first.
   const current = c('tog-landscape') ? 'landscape' : 'portrait';
   const order = current === 'landscape' ? ['landscape', 'portrait'] : ['portrait', 'landscape'];
   for (const shape of order) {
-    const group = PRESETS.filter(p => (p.shape || 'portrait') === shape);
+    const group = list.filter(p => p.shape === shape);
     if (!group.length) continue;
     const title = document.createElement('div');
     title.className = 'preset-group-title';
@@ -8413,42 +8682,145 @@ function _buildPresetGrid() {
   }
 }
 
-function _buildPresetCard(grid, preset) {
-  {
-    const card = document.createElement('div');
-    card.className = 'preset-card' + ((preset.shape || 'portrait') === 'landscape' ? ' is-landscape' : '');
-    // Desktop: single click. Touch devices: double tap, so a stray tap while
-    // scrolling the preset list doesn't load a preset by accident.
-    if (window.matchMedia('(pointer: coarse)').matches) {
-      card.ondblclick = () => loadPreset(preset.id);
-    } else {
-      card.onclick = () => loadPreset(preset.id);
-    }
-
-    const imgWrap = document.createElement('div');
-    if (preset.screenshot) {
-      const img = document.createElement('img');
-      img.className = 'preset-card-img';
-      img.alt = preset.name;
-      img.src = preset.screenshot;
-      img.onerror = () => {
-        imgWrap.innerHTML = `<div class="preset-card-img-placeholder">NO PREVIEW</div>`;
-      };
-      imgWrap.appendChild(img);
-    } else {
-      imgWrap.innerHTML = `<div class="preset-card-img-placeholder">NO PREVIEW</div>`;
-    }
-    card.appendChild(imgWrap);
-
-    const body = document.createElement('div');
-    body.className = 'preset-card-body';
-    body.innerHTML = `
-      <div class="preset-card-name">${preset.name}</div>
-      <div class="preset-card-desc">${preset.description}</div>
-    `;
-    card.appendChild(body);
-    grid.appendChild(card);
+function _buildUserPresetBar(grid, count) {
+  const bar = document.createElement('div');
+  bar.className = 'preset-save';
+  if (!_presetSaving) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = 'Save current settings';
+    btn.disabled = count >= USER_PRESETS_MAX;
+    btn.onclick = () => { _presetSaving = true; _buildPresetGrid(); document.getElementById('preset-save-name')?.focus(); };
+    bar.appendChild(btn);
+    const note = document.createElement('div');
+    note.className = 'preset-save-note';
+    note.textContent = count >= USER_PRESETS_MAX
+      ? `That's the limit of ${USER_PRESETS_MAX}. Delete one to save another.`
+      : 'Kept in this browser only. Your API keys and the selected title are never part of a preset.';
+    bar.appendChild(note);
+  } else {
+    bar.innerHTML = `
+      <input class="import-input" id="preset-save-name" type="text" maxlength="60" placeholder="Name">
+      <input class="import-input" id="preset-save-desc" type="text" maxlength="300" placeholder="Description (optional)">
+      <div class="preset-save-note">Saved from the ${c('tog-landscape') ? 'landscape' : 'portrait'} settings on screen, with the current preview as its picture.</div>
+      <div class="import-modal-btns">
+        <button class="btn btn-reset" type="button" id="preset-save-cancel">Cancel</button>
+        <button class="btn btn-primary" type="button" id="preset-save-ok">Save preset</button>
+      </div>`;
+    bar.querySelector('#preset-save-cancel').onclick = () => { _presetSaving = false; _buildPresetGrid(); };
+    bar.querySelector('#preset-save-ok').onclick = saveUserPreset;
+    bar.querySelectorAll('input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') saveUserPreset(); });
   }
+  grid.appendChild(bar);
+}
+
+// The preview as it stands, shrunk to a card picture.  Null when there isn't
+// one, or it came from another origin (a canvas it taints can't be read).
+function _capturePreviewThumb() {
+  const img = document.querySelector('#preview-frame .preview-poster');
+  if (!img || !img.complete || !img.naturalWidth
+      || document.getElementById('preview-status').textContent !== 'OK') return null;
+  try {
+    const w = img.naturalWidth > img.naturalHeight ? 400 : 220;
+    const h = Math.round(w * img.naturalHeight / img.naturalWidth);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } catch (_) { return null; }
+}
+
+function saveUserPreset() {
+  const name = (vEl('preset-save-name') || '').trim().slice(0, 60);
+  if (!name) { document.getElementById('preset-save-name').focus(); return; }
+  const description = (vEl('preset-save-desc') || '').trim().slice(0, 300);
+  const full = buildBaseParams({ usePlaceholders: true });
+  const p = new URLSearchParams(_presetParams(full.slice(full.indexOf('?') + 1)));
+  // The plain list, as saveSettings keeps it: a "default,..." diff means
+  // whatever the server's default is on the day it's loaded.
+  if (p.has('sash_priority')) p.set('sash_priority', getSashPriorityParam({ compact: false }));
+  const list = _readUserPresets();
+  if (_savedUserPresetCount() >= USER_PRESETS_MAX) { setStatus(`You can keep ${USER_PRESETS_MAX} presets.`, 'err'); return; }
+  const entry = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name, description,
+    shape: c('tog-landscape') ? 'landscape' : 'portrait',
+    params: p.toString(),
+    thumb: _capturePreviewThumb(),
+  };
+  // Under the last import, which stays on top.
+  const auto = list.filter(p => p.id === LAST_IMPORT_ID);
+  const saved = list.filter(p => p.id !== LAST_IMPORT_ID);
+  try {
+    _writeUserPresets([...auto, entry, ...saved]);
+  } catch (_) {
+    // Full storage: the picture is most of it.
+    try { entry.thumb = null; _writeUserPresets([...auto, entry, ...saved]); }
+    catch (_) { setStatus("Couldn't save: this browser's storage is full or turned off.", 'err'); return; }
+  }
+  _presetSaving = false;
+  _buildPresetGrid();
+  setStatus(`Preset "${name}" saved.`, 'ok');
+}
+
+function deleteUserPreset(preset) {
+  if (!confirm(`Delete the preset "${preset.name}"?`)) return;
+  const id = preset.id.slice('user:'.length);
+  try { _writeUserPresets(_readUserPresets().filter(p => p.id !== id)); } catch (_) {}
+  _buildPresetGrid();
+}
+
+function _buildPresetCard(grid, preset) {
+  const card = document.createElement('div');
+  card.className = 'preset-card' + (preset.shape === 'landscape' ? ' is-landscape' : '') + (preset.auto ? ' is-auto' : '');
+  // Desktop: single click. Touch devices: double tap, so a stray tap while
+  // scrolling the preset list doesn't load a preset by accident.
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    card.ondblclick = () => loadPreset(preset);
+  } else {
+    card.onclick = () => loadPreset(preset);
+  }
+
+  const placeholder = () => {
+    const ph = document.createElement('div');
+    ph.className = 'preset-card-img-placeholder';
+    ph.textContent = 'NO PREVIEW';
+    return ph;
+  };
+  const imgWrap = document.createElement('div');
+  if (preset.screenshot) {
+    const img = document.createElement('img');
+    img.className = 'preset-card-img';
+    img.alt = preset.name;
+    img.src = preset.screenshot;
+    img.onerror = () => imgWrap.replaceChildren(placeholder());
+    imgWrap.appendChild(img);
+  } else {
+    imgWrap.appendChild(placeholder());
+  }
+  card.appendChild(imgWrap);
+
+  // Operator and user presets are other people's text: textContent only.
+  const body = document.createElement('div');
+  body.className = 'preset-card-body';
+  const name = document.createElement('div');
+  name.className = 'preset-card-name';
+  name.textContent = preset.name;
+  const desc = document.createElement('div');
+  desc.className = 'preset-card-desc';
+  desc.textContent = preset.description;
+  body.append(name, desc);
+  if (preset.source === 'user') {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'preset-card-delete';
+    del.textContent = 'Delete';
+    del.onclick = e => { e.stopPropagation(); deleteUserPreset(preset); };
+    del.ondblclick = e => e.stopPropagation();
+    body.appendChild(del);
+  }
+  card.appendChild(body);
+  grid.appendChild(card);
 }
 
 // Controls only one shape reads.  A preset for the other shape must not
@@ -8485,6 +8857,7 @@ function _portraitOnlyControlIds() {
 }
 
 function openPresetModal() {
+  _presetSaving = false;
   _buildPresetGrid();
   const modal = document.getElementById('preset-modal');
   if (modal.classList.contains('open')) return;
@@ -8497,11 +8870,10 @@ function closePresetModal() {
   _popModalState('preset-modal');
 }
 
-function loadPreset(id) {
-  const preset = PRESETS.find(p => p.id === id);
+function loadPreset(preset) {
   if (!preset) return;
   const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
-  const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&type=%7Btype%7D&${preset.params}`;
+  const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&type=%7Btype%7D&${_presetParams(preset.params)}`;
   // The preview follows the preset's shape (shape=landscape in its params,
   // absent for portrait), and the preset touches only the controls that
   // shape reads: the other shape's own controls are put back afterwards.
@@ -8613,7 +8985,7 @@ function applyImport() {
   // A share carries settings only; the importer's own client, language and
   // keys stay as they are.
   const result = importUrl(raw, isShareUrl(raw) ? { settingsOnly: true, share: true } : {});
-  if (result) closeImportModal();
+  if (result) { _rememberImport(raw); closeImportModal(); }
 }
 
 // ─── What's new ────────────────────────────────────────────────────────────
