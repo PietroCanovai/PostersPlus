@@ -115,3 +115,49 @@ async def _fetch_pools(client, is_movie, media_type, tmdb_id, imdb_id) -> dict |
         if len(urls) < _RANDOM_POOL:
             urls.append(p["url"])
     return pools
+
+
+async def artwork_candidates(
+    client, *, media_type: str, tmdb_id: str, imdb_id: str | None = None,
+) -> dict[str, list[dict]]:
+    """Every fanart.tv poster and logo for a title, most liked first, for the
+    dashboard's picker.  Needs only the key: an operator can choose fanart.tv
+    art for a title without offering fanart.tv as a user poster source.  Not
+    cached — it runs when the operator opens a title."""
+    out: dict[str, list[dict]] = {"posters": [], "logos": [], "backdrops": []}
+    if not _cfg.FANART_API_KEY or not tmdb_id:
+        return out
+    is_movie = media_type == "movie"
+    remote_id = tmdb_id if is_movie else await tvdb.resolve_tvdb_id(
+        client, media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id,
+    )
+    if not remote_id:
+        return out
+    try:
+        resp = await client.get(
+            f"{_API}/{'movies' if is_movie else 'tv'}/{remote_id}",
+            params={"api_key": _cfg.FANART_API_KEY},
+        )
+        data = resp.json() if resp.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(f"fanart.tv candidates failed for {media_type} {tmdb_id}: {exc}")
+        return out
+    kinds = {
+        "posters": ("movieposter",) if is_movie else ("tvposter",),
+        "logos": ("hdmovielogo", "movielogo") if is_movie else ("hdtvlogo", "clearlogo"),
+        # Backgrounds are textless; thumbs are landscape art with the title on.
+        "backdrops": ("moviebackground", "moviethumb") if is_movie else ("showbackground", "tvthumb"),
+    }
+    for kind, keys in kinds.items():
+        items = [a for key in keys for a in (data.get(key) or []) if a.get("url")]
+        items.sort(key=lambda a: -int(a.get("likes") or 0))
+        for a in items:
+            code = (a.get("lang") or "").lower()
+            out[kind].append({
+                "path": a["url"],
+                # fanart.tv serves a small copy of every image under /preview/.
+                "thumb": a["url"].replace("/fanart/", "/preview/", 1),
+                "language": None if code in ("", "00") else _LANG_FIXUPS.get(code, code),
+                "score": int(a.get("likes") or 0),
+            })
+    return out

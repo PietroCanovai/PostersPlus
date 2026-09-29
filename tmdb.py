@@ -755,6 +755,12 @@ async def fetch_poster_metadata(
             p["file_path"] for p in _rank_textless_posters(textless)[:POSTER_POOL_SIZE]
         ],
         "langs": _lang_pools,
+        # Languages with a text-bearing backdrop, so an operator's per-language
+        # landscape choice (art_overrides) knows where TMDB already has one.
+        # Rows cached before this was kept lack it; see main's landscape hook.
+        "backdrop_langs": sorted({
+            key for b in _text_backdrops for key in _image_language_keys(b)
+        }),
     }
 
     await asyncio.to_thread(
@@ -832,7 +838,8 @@ def is_absolute_art(path: str | None) -> bool:
 
 
 def _art_token(path: str) -> str:
-    if is_absolute_art(path):
+    # An operator's stored image ("custom:<hash>.jpg") is hashed like a url.
+    if is_absolute_art(path) or path.startswith("custom:"):
         return hashlib.sha256(path.encode()).hexdigest()[:16]
     return path.strip("/")
 
@@ -916,6 +923,18 @@ async def fetch_poster_image(
         logger.info(f"Poster cache hit for {tmdb_id}")
         return image
 
+    def _decode_and_store(content: bytes) -> Image.Image:
+        image = normalise_poster(Image.open(io.BytesIO(content)).convert("RGBA"))
+        _store_art(poster_cache_key, image)
+        return image
+
+    if poster_path.startswith("custom:"):
+        # An operator's pasted or uploaded image, already on disk.
+        from art_overrides import custom_art_bytes
+        content = await asyncio.to_thread(custom_art_bytes, poster_path)
+        if content is None:
+            raise FileNotFoundError(f"custom art {poster_path} is missing")
+        return await asyncio.to_thread(_decode_and_store, content)
     if _is_absolute:
         logger.info(f"External API Call: Requested poster art for {tmdb_id}")
         img_resp = await client.get(poster_path, follow_redirects=True)
@@ -924,11 +943,6 @@ async def fetch_poster_image(
         _tmdb_size = POSTER_WIDTHS.get(poster_canvas()[0], "w500")
         img_resp = await client.get(f"https://image.tmdb.org/t/p/{_tmdb_size}{poster_path}")
     img_resp.raise_for_status()
-
-    def _decode_and_store(content: bytes) -> Image.Image:
-        image = normalise_poster(Image.open(io.BytesIO(content)).convert("RGBA"))
-        _store_art(poster_cache_key, image)
-        return image
 
     return await asyncio.to_thread(_decode_and_store, img_resp.content)
 
@@ -1169,6 +1183,50 @@ async def fetch_backdrop_image(
     return await asyncio.to_thread(_decode_crop_store, img_resp.content)
 
 
+async def fetch_cropped_art(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    path: str,
+    crop,
+) -> Image.Image:
+    """An operator's hand-placed 2:3 crop (art_overrides.Crop) of *path* — a
+    TMDB image path, an absolute url or a stored custom image — as a poster.
+    No face or saliency detection: the operator has already framed it.
+    Cached per image, crop and canvas."""
+    size = poster_canvas()
+    cache_key = (f"crop_{_id_token(tmdb_id)}_{_art_token(path)}_"
+                 f"{hashlib.sha256(crop.token().encode()).hexdigest()[:10]}{_canvas_suffix(size)}")
+    image = await asyncio.to_thread(_cached_art, cache_key, size, normalise_poster)
+    if image is not None:
+        logger.info(f"Cropped art cache hit for {tmdb_id}")
+        return image
+
+    if path.startswith("custom:"):
+        from art_overrides import custom_art_bytes
+        content = await asyncio.to_thread(custom_art_bytes, path)
+        if content is None:
+            raise FileNotFoundError(f"custom art {path} is missing")
+    else:
+        if is_absolute_art(path):
+            url = path
+        else:
+            # A zoomed or large-canvas crop needs the pixels; w1280 (720 px
+            # tall) is plenty for a full-height crop at the default canvas.
+            url = f"https://image.tmdb.org/t/p/{'original' if (crop.zoom > 1 or size[1] > 720) else 'w1280'}{path}"
+        logger.info(f"External API Call: Requested art to crop for {tmdb_id}")
+        resp = await client.get(url, follow_redirects=True)
+        resp.raise_for_status()
+        content = resp.content
+
+    def _decode_crop_store(data: bytes) -> Image.Image:
+        source = Image.open(io.BytesIO(data)).convert("RGBA")
+        image = normalise_poster(source.crop(crop.box(*source.size)), size)
+        _store_art(cache_key, image)
+        return image
+
+    return await asyncio.to_thread(_decode_crop_store, content)
+
+
 def normalise_landscape(image: Image.Image) -> Image.Image:
     """Fit-cover an image to the landscape canvas.
 
@@ -1208,6 +1266,18 @@ async def fetch_landscape_image(
         logger.info(f"TMDB landscape cache hit for {tmdb_id}")
         return image
 
+    def _decode_and_store(content: bytes) -> Image.Image:
+        image = normalise_landscape(Image.open(io.BytesIO(content)).convert("RGBA"))
+        _store_art(cache_key, image)
+        return image
+
+    if backdrop_path.startswith("custom:"):
+        # An operator's pasted or uploaded image, already on disk.
+        from art_overrides import custom_art_bytes
+        content = await asyncio.to_thread(custom_art_bytes, backdrop_path)
+        if content is None:
+            raise FileNotFoundError(f"custom art {backdrop_path} is missing")
+        return await asyncio.to_thread(_decode_and_store, content)
     if is_absolute_art(backdrop_path):
         logger.info(f"External API Call: Requested landscape backdrop art for {tmdb_id}")
         img_resp = await client.get(backdrop_path, follow_redirects=True)
@@ -1215,11 +1285,6 @@ async def fetch_landscape_image(
         logger.info(f"External API Call: Requested landscape backdrop from TMDB for {tmdb_id}")
         img_resp = await client.get(f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
     img_resp.raise_for_status()
-
-    def _decode_and_store(content: bytes) -> Image.Image:
-        image = normalise_landscape(Image.open(io.BytesIO(content)).convert("RGBA"))
-        _store_art(cache_key, image)
-        return image
 
     return await asyncio.to_thread(_decode_and_store, img_resp.content)
 
@@ -1524,6 +1589,19 @@ def _logo_rank_key(prefer_wide: bool):
     return key
 
 
+def logo_step_available(logos: list[dict], step: str) -> bool:
+    """Whether fetch_logo would find a TMDB logo at *step* (a language code
+    or "null"), for deciding where an operator's logo override comes in."""
+    _exts = (".png", ".svg") if _HAS_CAIROSVG else (".png",)
+    for lg in logos:
+        if not lg.get("file_path", "").lower().endswith(_exts):
+            continue
+        if (lg.get("iso_639_1") in (None, "")) if step == "null" \
+                else _image_matches_language(lg, step):
+            return True
+    return False
+
+
 async def fetch_logo(
     client: httpx.AsyncClient,
     logos: list[dict],
@@ -1581,26 +1659,53 @@ async def fetch_logo(
     if not candidates:
         return None
 
-    logo_path = candidates[0]["file_path"]
-    is_svg    = logo_path.lower().endswith(".svg")
+    logo = await fetch_logo_image(client, candidates[0]["file_path"])
+    if logo is None:
+        # Rasterise failed — fall back to Metahub, then None.
+        logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
+        return await _fetch_metahub_logo(client, imdb_id) if (use_metahub and imdb_id) else None
+    return logo
+
+
+async def fetch_logo_image(client: httpx.AsyncClient, logo_path: str) -> Image.Image | None:
+    """One logo, alpha-trimmed and cached: a TMDB image path, or an absolute
+    url (an operator's fanart.tv / TVDB pick).  None when an SVG can't be
+    rasterised; an HTTP failure raises, as TMDB's always has."""
+    is_svg = urlsplit(logo_path).path.lower().endswith(".svg")
+    _absolute = is_absolute_art(logo_path)
 
     # A larger canvas draws the logo up to 0.75 of a wider poster, past w500's
     # 500 px, so it takes the original — shrunk to the canvas before it is
     # cached, so no render ever decodes a multi-thousand-pixel logo.
     _canvas = poster_canvas()
     _large = _canvas[0] > POSTER_WIDTH
-    logo_cache_key = logo_path.strip('/').replace('/', '_') + _canvas_suffix(_canvas)
+    _custom = logo_path.startswith("custom:")
+    logo_cache_key = (
+        f"abs_{_art_token(logo_path)}" if (_absolute or _custom)
+        else logo_path.strip('/').replace('/', '_')
+    ) + _canvas_suffix(_canvas)
     cached = await asyncio.to_thread(_cached_logo, logo_cache_key)
     if cached is not None:
         logger.info("TMDB logo cache hit")
         return cached
 
-    # SVGs are served at "original" (the sized w500 path doesn't apply to vector);
-    # rasters use w500 which is plenty for our ≤~440px rendered width.
-    _size = "original" if (is_svg or _large) else "w500"
-    resp = await client.get(f"https://image.tmdb.org/t/p/{_size}{logo_path}")
-    logger.info(f"External API Call: Requested logo from TMDB")
-    resp.raise_for_status()
+    if _custom:
+        from art_overrides import custom_art_bytes
+        content = await asyncio.to_thread(custom_art_bytes, logo_path)
+        if content is None:
+            raise FileNotFoundError(f"custom logo {logo_path} is missing")
+    elif _absolute:
+        resp = await client.get(logo_path, follow_redirects=True)
+        logger.info("External API Call: Requested chosen logo art")
+    else:
+        # SVGs are served at "original" (the sized w500 path doesn't apply to vector);
+        # rasters use w500 which is plenty for our ≤~440px rendered width.
+        _size = "original" if (is_svg or _large) else "w500"
+        resp = await client.get(f"https://image.tmdb.org/t/p/{_size}{logo_path}")
+        logger.info(f"External API Call: Requested logo from TMDB")
+    if not _custom:
+        resp.raise_for_status()
+        content = resp.content
 
     # Rasterising, decoding, trimming and the PNG encode run off the loop.
     def _decode_and_store(content: bytes) -> Image.Image | None:
@@ -1618,12 +1723,7 @@ async def fetch_logo(
         _store_logo(logo_cache_key, logo)
         return logo
 
-    logo = await asyncio.to_thread(_decode_and_store, resp.content)
-    if logo is None:
-        # Rasterise failed — fall back to Metahub, then None.
-        logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
-        return await _fetch_metahub_logo(client, imdb_id) if (use_metahub and imdb_id) else None
-    return logo
+    return await asyncio.to_thread(_decode_and_store, content)
 
 
 _trending_inflight: dict[str, asyncio.Event] = {}

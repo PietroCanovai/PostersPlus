@@ -349,6 +349,31 @@ def init_db() -> None:
         )
     """)
 
+    # Operator-chosen art per title (the dashboard's Artwork view).  Not a
+    # cache: nothing prunes it, and it outlives every metadata refresh.
+    #   slot     "textless" | "original" | "logo"
+    #   language "" for textless; a request language ("en", "pt-br") for
+    #            original and logo, or "null" for a language-neutral logo
+    #   path     a TMDB image path or an absolute fanart.tv / TVDB url
+    #   sources  the poster sources (tmdb,fanart,tvdb) a poster applies to
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS art_overrides (
+            media_type TEXT NOT NULL,
+            tmdb_id    TEXT NOT NULL,
+            slot       TEXT NOT NULL,
+            language   TEXT NOT NULL DEFAULT '',
+            path       TEXT NOT NULL,
+            provider   TEXT NOT NULL,
+            sources    TEXT NOT NULL DEFAULT '',
+            title      TEXT NOT NULL DEFAULT '',
+            updated_at REAL NOT NULL,
+            crop       TEXT,
+            PRIMARY KEY (media_type, tmdb_id, slot, language)
+        )
+    """)
+    # A textless pick's manual crop, "x,y,zoom" (see art_overrides.parse_crop).
+    _add_column_if_missing(conn, "art_overrides", "crop", "TEXT")
+
     # Migrate existing tmdb_metadata_cache rows.
     for col, definition in (
         ("credits_json",        "TEXT"),
@@ -720,10 +745,15 @@ def invalidate_anime_posters(anime_key: str) -> None:
         logger.error(f"Anime poster invalidation error: {exc}")
 
 
-def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> None:
+def invalidate_final_posters(
+    tmdb_id: str, media_type: str | None = None, *, l1_only: bool = False,
+) -> None:
     """Invalidate all composited posters for a specific TMDB ID.
     Used when underlying dynamic data (like trending rank or release status)
     changes so the next request renders a fresh poster with updated badges.
+
+    ``l1_only`` clears just this worker's in-memory copies: for a worker
+    catching up on a change another worker already deleted from SQLite.
     """
     # TV posters are cached under either "tv" or "series" (Stremio requests use
     # "series"), so treat the two as equivalent when filtering by media type —
@@ -748,6 +778,8 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
                         keys_to_delete.append(k)
             for k in keys_to_delete:
                 _composite_l1.pop(k, None)
+    if l1_only:
+        return
 
     try:
         with _db_lock:

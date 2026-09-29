@@ -98,6 +98,8 @@ Every setting has its help text next to it, and a chip showing whether its value
 
 The **Overview** tab shows how the instance is doing: cache sizes, renders in progress, remaining MDBList quota, cache warming and the watchlist.
 
+The **Artwork** tab lets you choose a title's poster or logo for everyone on the instance. Search for the title, then pick from every TMDB, Fanart and TVDB image, for portrait and landscape posters.
+
 Good to know:
 
 - Saved settings live in `settings.json` in the cache volume and take priority over environment variables. Your compose file is never touched.

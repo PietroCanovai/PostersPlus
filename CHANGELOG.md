@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Choose a title's art for everyone; TVDB as a poster source
+
+- The admin dashboard has an **Artwork** tab. Search for a title and pick its
+  textless poster, its Original Art poster, its logo and its landscape art
+  from every TMDB, Fanart and TVDB image. The choice applies to everyone on the instance.
+  Posters and logos are chosen per language, following each user's language
+  order. A poster choice replaces the poster sources you tick (TMDB,
+  Fanart, TVDB), and users on other sources get their usual pick. Only the
+  images you choose are downloaded, once, however many users there are.
+- You can also paste a link to any image, such as a ThePosterDB download
+  link, or upload one. The server keeps its own copy.
+- For titles with no textless poster, a backdrop can be cropped by hand into
+  the textless poster: drag a poster-shaped frame over it and zoom as needed.
+- An optional configurator shortcut (off by default, switched on in the
+  editor) opens the previewed title's artwork in the dashboard.
+- TVDB can be offered as a poster source (`TVDB_POSTER_SOURCE`,
+  `poster_source=tvdb`). It uses TVDB's best no-language poster, which on
+  TVDB means textless, or under Original Art its best poster in the user's
+  language. Titles TVDB has nothing for keep their TMDB poster.
+- The TVDB poster fallback (`TVDB_USE_POSTERS`) now only uses a no-language
+  TVDB poster to replace a poster with text. It used to try one in the
+  user's language first, and nearly all of those carry the title, often in a
+  style the text scan misses.
+
 ### Landscape logo position, top band and graphic badges; per-type rating badges
 
 - Landscape: the logo can sit left, centre or right, in the bottom row or at

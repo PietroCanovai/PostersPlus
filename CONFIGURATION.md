@@ -30,6 +30,22 @@ Every setting is optional: API keys can be omitted from the server and passed pe
 
 - **Overview**- live instance state: rendered-poster and cache counts, DB size, renders in flight against the concurrency cap, each MDBList key's remaining daily quota and cooldown, the watchlist snapshot, cache warming, the IMDb dataset, and which trending sources are in use. The same data as `GET /stats`, laid out. A **Restart server** button lives here too.
 - **Settings**- every setting in the [reference](#settings-reference) below, grouped the same way, with its help text, validation (ranges, choices, URLs) and a chip saying where the current value comes from: **saved** (this dashboard), **env** (`.env` / compose) or **default**. Advanced settings sit behind a fold in each group. The **Watchlist** group also holds the [SIMKL account](#watchlist-marker) panel: link the account by code, see whether it is linked, unlink it.
+- **Artwork**- choose the art every user gets for a title. Search for it, and the page shows what a default request gets today next to every poster, logo and backdrop TMDB, Fanart (with `FANART_API_KEY`) and TVDB (with `TVDB_API_KEY`) have. There are five things to choose:
+  - **Textless poster**: the art our logo goes on, in every mode except Original Art. The burned-in-text scan is skipped for it, so choose art with no title on it. For a title with no textless poster, switch the grid to **Backdrops**, pick one and frame it: drag a poster-shaped window over it and zoom in if you like. *Adjust crop* reframes any textless choice, including your own images.
+  - **Original-art poster**, per language: served as-is to users with Original Art on.
+  - **Logo**, per language, or *No language* for a neutral one. It applies whatever the user's poster source.
+  - **Landscape**: the landscape layout's art, with our logo on top.
+  - **Landscape original art**, per language: served as-is to landscape users with Original Art on.
+
+  A poster choice says which poster sources it replaces (TMDB, Fanart, TVDB). A user whose source isn't ticked gets that source's usual pick. A per-language choice follows the user's language order: it is used when the order reaches its language before a language TMDB already has art in. So a German user keeps TMDB's German poster when you've only chosen an English one. Logos and landscape art apply whatever the user's poster source (landscape always draws from TMDB). Anime covers from AniList or Kitsu aren't affected.
+
+  You can also use your own image: paste a link to any image, or upload a file. For [ThePosterDB](https://theposterdb.com), which has no API, copy a poster's download link (`https://theposterdb.com/api/assets/<id>`). The server downloads a link once, when you choose it, checks that it's an image (up to 25 MB, from a public address only), and keeps its own copy in `custom_art/` in the cache volume. A kept image is deleted when no choice uses it any more.
+
+  The rendered previews use the instance defaults unless you give them your own settings: under *Rendered preview*, choose *Use your settings* and paste a poster URL from the configurator's *Copy config*. Only its settings are kept, in your browser. The title, language and any API keys in it are replaced or dropped.
+
+  **Link from the configurator** (a switch in the editor, off by default) adds an icon to the configurator's live preview that opens the selected title in this editor. It's handy on your own instance. On a public one, leave it off: it would only point visitors at the admin login.
+
+  Thumbnails load in your browser straight from the providers, so browsing downloads nothing to the server. A chosen image is downloaded once, when a poster first needs it, and cached like any other art. Choices are stored in the cache database, apply straight away (no restart), and clear that title's rendered posters. Clients that already hold the old poster keep it until their cache revalidates it.
 
 **What saving does.** Saved values go to `settings.json` in the cache volume; the dashboard never edits your `compose.yaml` or `.env` (it cannot see them). At startup the file is read alongside the environment and takes precedence per key, so a change made here always takes effect, and an env line you already have keeps working until you save over it. *Reset* on a field drops the saved value and the env or default shows through again.
 
@@ -52,7 +68,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `MDBLIST_API_KEY_2` | - | Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset. |
 | `TVDB_API_KEY` | - | Optional TheTVDB v4 key. When set, TVDB is a fallback art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable, reducing fallbacks to text titles and genre canvases. Blank disables it entirely. |
 | `TVDB_SUBSCRIBER_PIN` | - | Only for user-supported (subscriber) TVDB keys; leave blank for company keys. |
-| `FANART_API_KEY` | - | Optional fanart.tv project key, needed for the fanart.tv poster source (see FANART_POSTERS). |
+| `FANART_API_KEY` | - | Optional Fanart project key, needed for the Fanart poster source (see FANART_POSTERS). |
 
 #### Access & serving
 
@@ -144,15 +160,16 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 |---|---|---|
 | `TVDB_USE_LOGOS` | `true` | Use TVDB clearlogos when TMDB and Metahub have none. `true` or `false`. |
 | `TVDB_USE_BACKDROPS` | `true` | Use TVDB backgrounds when no textless TMDB poster or backdrop exists. `true` or `false`. |
-| `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. Off by default because they often carry burned-in title text; only used when text detection confirms a clean image. `true` or `false`. |
+| `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. To replace a poster with text, only a no-language TVDB poster is used (these are textless), and only when text detection also finds it clean. For a title with no art at all, a TVDB poster in the user's language comes after those. `true` or `false`. |
+| `TVDB_POSTER_SOURCE` | `false` | Let users pick TVDB as their poster source: its best no-language poster (TVDB's no-language posters are textless), or under Original Art its best poster in their language. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
 | `TVDB_LOGO_PRIORITY` | `3` | Where a TVDB clearlogo sits in the logo chain: 1 before TMDB and Metahub, 2 after TMDB but before Metahub, 3 last resort (only when both have nothing). TVDB logos are often higher quality, so 1 or 2 improve results but change logos currently sourced from TMDB or Metahub. One of `1`, `2`, `3`. |
 | `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker. |
 
-#### fanart.tv
+#### Fanart
 
 | Variable | Default | Description |
 |---|---|---|
-| `FANART_POSTERS` | `false` | Let users pick fanart.tv as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
+| `FANART_POSTERS` | `false` | Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
 
 #### Cinemeta fallback
 
@@ -172,7 +189,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `RANDOM_POSTERS` | `false` | Let users pick a random one of the top five posters (TMDB or fanart.tv) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders. `true` or `false`. |
+| `RANDOM_POSTERS` | `false` | Let users pick a random one of the top five posters (TMDB, Fanart or TVDB) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders. `true` or `false`. |
 
 #### Text detection
 

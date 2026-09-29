@@ -22,6 +22,7 @@ in main.py and is added in later phases.
 import asyncio
 import io
 import logging
+import random
 import time
 
 import httpx
@@ -380,10 +381,15 @@ async def fetch_tvdb_artworks(
             if not image:
                 continue
             url = image if image.startswith("http") else f"{_ARTWORK_BASE}/{image.lstrip('/')}"
+            thumb = art.get("thumbnail") or ""
             out[cat].append({
                 "url": url,
                 "language": art.get("language"),
                 "score": float(art.get("score") or 0),
+                # Only the dashboard's picker shows it; rows cached before it
+                # was kept fall back to the full image.
+                "thumb": thumb if thumb.startswith("http") or not thumb
+                else f"{_ARTWORK_BASE}/{thumb.lstrip('/')}",
             })
         for cat in out:
             out[cat].sort(key=lambda a: a["score"], reverse=True)
@@ -653,12 +659,23 @@ async def fetch_tvdb_poster(
     artworks: dict[str, list[dict]],
     tvdb_id: int,
     language: str | None = None,
+    *,
+    textless_only: bool = False,
 ) -> Image.Image | None:
-    """Best TVDB poster, normalised to poster dimensions. NOTE: TVDB posters
-    frequently carry burned-in title text — callers must vet with text detection
-    before compositing a logo over one."""
-    _lang = _to_tvdb_lang(language)
-    chosen = _select_by_language(artworks.get("posters", []), [_lang] if _lang else None)
+    """Best TVDB poster, normalised to poster dimensions.
+
+    A language-neutral poster first: TVDB's no-language posters are textless
+    in practice, whatever their includesText flag says, while language-tagged
+    ones nearly all carry the title — and often in a style our text detection
+    misses.  ``textless_only`` stops there; otherwise a poster in *language*
+    comes next (a real poster, title and all, beats a genre canvas).  Callers
+    still vet the result before compositing a logo over it."""
+    posters = artworks.get("posters", [])
+    if textless_only:
+        chosen = _select_by_language(posters, ["null"], strict=True)
+    else:
+        _lang = _to_tvdb_lang(language)
+        chosen = _select_by_language(posters, ["null"] + ([_lang] if _lang else []))
     if not chosen:
         return None
     url = chosen["url"]
@@ -695,6 +712,7 @@ async def tvdb_poster(
     imdb_id: str | None = None,
     tmdb_id: str | None = None,
     tvdb_id_hint: int | str | None = None,
+    textless_only: bool = False,
 ) -> tuple[Image.Image | None, int | None]:
     """One-call poster rescue: resolve id, pull artwork index, return the best
     poster normalised to poster dimensions, plus the resolved id for the caller's
@@ -712,8 +730,93 @@ async def tvdb_poster(
         if not tvdb_id:
             return None, None
         artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
-        image = await fetch_tvdb_poster(client, artworks, tvdb_id, language)
+        image = await fetch_tvdb_poster(
+            client, artworks, tvdb_id, language, textless_only=textless_only)
         return image, tvdb_id
     except Exception as exc:
         logger.warning(f"TVDB poster rescue failed: {exc}")
         return None, None
+
+
+# ---------------------------------------------------------------------------
+# Poster source (poster_source=tvdb) and the dashboard's candidate list
+# ---------------------------------------------------------------------------
+
+_RANDOM_POOL = 5
+_LANG_3_TO_2 = {three: two for two, three in _LANG_2_TO_3.items()}
+
+
+def poster_source_enabled() -> bool:
+    from config import TVDB_POSTER_SOURCE
+    return bool(TVDB_POSTER_SOURCE and tvdb_enabled())
+
+
+async def tvdb_poster_url(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    tmdb_id: str | None = None,
+    imdb_id: str | None = None,
+    languages: list[str] | None = None,
+    random_top: bool = False,
+) -> str | None:
+    """A TVDB poster url for the tvdb poster source, or None.
+
+    Without *languages*: the best language-neutral poster, which on TVDB means
+    textless.  With *languages* (original-art mode): the best poster in the
+    first of those languages that has one.  *random_top* picks one of the
+    top five instead.  Neither mode trusts includesText."""
+    if not poster_source_enabled():
+        return None
+    try:
+        tvdb_id = await resolve_tvdb_id(
+            client, media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id,
+        )
+        if not tvdb_id:
+            return None
+        posters = (await fetch_tvdb_artworks(client, tvdb_id, media_type)).get("posters", [])
+    except Exception as exc:
+        logger.warning(f"TVDB poster source failed for {media_type} {tmdb_id}: {exc}")
+        return None
+    if languages is None:
+        pool = [p for p in posters if p.get("language") in (None, "")]
+    else:
+        pool = []
+        for code in dict.fromkeys(_to_tvdb_lang(c) for c in languages if c):
+            pool = [p for p in posters if p.get("language") == code]
+            if pool:
+                break
+    if not pool:
+        return None
+    return (random.choice(pool[:_RANDOM_POOL]) if random_top else pool[0])["url"]
+
+
+async def artwork_candidates(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    tmdb_id: str | None = None,
+    imdb_id: str | None = None,
+) -> dict[str, list[dict]]:
+    """Every TVDB poster, logo and background for a title, best first, for
+    the dashboard.  Languages come back as the app's 2-letter codes (None =
+    neutral)."""
+    out: dict[str, list[dict]] = {"posters": [], "logos": [], "backdrops": []}
+    if not tvdb_enabled():
+        return out
+    tvdb_id = await resolve_tvdb_id(
+        client, media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id,
+    )
+    if not tvdb_id:
+        return out
+    artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
+    for kind, source in (("posters", "posters"), ("logos", "logos"), ("backdrops", "backgrounds")):
+        for art in artworks.get(source, []):
+            code = art.get("language") or None
+            out[kind].append({
+                "path": art["url"],
+                "thumb": art.get("thumb") or art["url"],
+                "language": _LANG_3_TO_2.get(code, code) if code else None,
+                "score": art.get("score", 0),
+            })
+    return out

@@ -33,6 +33,38 @@ class AdminLinkCapsTests(unittest.TestCase):
         self.assertFalse(self._caps(True, "")["admin_link"])
 
 
+class ArtworkEditLinkTests(unittest.TestCase):
+    """The preview's edit-artwork shortcut: off until the operator turns it
+    on in the Artwork editor, and hidden while the dashboard is disabled."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+
+    def _caps(self, stored, key="a-long-admin-key"):
+        with mock.patch.object(_cfg, "ACCESS_KEY", None), \
+             mock.patch.object(admin, "ADMIN_KEY", key), \
+             mock.patch.object(main, "get_app_state", lambda k: stored):
+            return self.client.get("/server-caps").json()["artwork_edit_link"]
+
+    def test_off_by_default(self):
+        self.assertFalse(self._caps(None))
+
+    def test_on_when_the_operator_turns_it_on(self):
+        self.assertTrue(self._caps("1"))
+        self.assertFalse(self._caps("0"))
+
+    def test_hidden_while_the_dashboard_is_disabled(self):
+        self.assertFalse(self._caps("1", key=""))
+
+    def test_toggle_needs_the_admin_key(self):
+        with mock.patch.object(admin, "ADMIN_KEY", "a-long-admin-key"), \
+             mock.patch.object(admin, "_FAIL_DELAY", 0):
+            r = self.client.put("/admin/api/art/edit-link", json={"enabled": True},
+                                headers={"X-Admin-Key": "wrong-key-here"})
+        self.assertEqual(r.status_code, 401)
+
+
 class AdminLinkConfiguratorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
