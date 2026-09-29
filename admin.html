@@ -856,6 +856,10 @@ let activeView = 'overview';
 let openAdvanced = new Set();
 let statusTimer = null;
 
+// A value as a JS string literal inside an HTML attribute (onclick="f(${jsArg(v)})").
+// esc alone is not enough there: the browser decodes &#39; back into a quote
+// before the handler runs.
+function jsArg(v) { return esc(JSON.stringify(String(v ?? ''))); }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
 
@@ -1322,14 +1326,14 @@ function renderReports() {
   const groups = rpGroups(d.reports || []);
   if (!groups.length) html += `<div class="art-empty">${rp.status === 'open' ? 'No open reports.' : 'Nothing here.'}</div>`;
   for (const t of groups) {
-    const ids = t.items.map(r => r.id);
-    const openIds = t.items.filter(r => r.status === 'open').map(r => r.id);
+    const ids = t.items.map(r => Number(r.id));
+    const openIds = t.items.filter(r => r.status === 'open').map(r => Number(r.id));
     const tmdb = t.tmdb_id ? `https://www.themoviedb.org/${t.media_type}/${encodeURIComponent(t.tmdb_id)}` : '';
     html += `<div class="rp-title">${rpThumb(t)}<div>
       <div class="rp-head"><h3>${esc(t.title || (t.tmdb_id ? 'TMDB ' + t.tmdb_id : t.imdb_id))}</h3>
         <span class="rp-meta">${t.media_type === 'tv' ? 'Series' : 'Movie'}${t.tmdb_id ? ` · <a href="${esc(tmdb)}" target="_blank" rel="noopener noreferrer">tmdb:${esc(t.tmdb_id)}</a>` : ''}${t.imdb_id ? ` · <a href="https://www.imdb.com/title/${esc(t.imdb_id)}/" target="_blank" rel="noopener noreferrer">${esc(t.imdb_id)}</a>` : ''} · ${t.items.length} report${t.items.length === 1 ? '' : 's'}</span></div>
       <div class="rp-actions">
-        ${t.tmdb_id ? `<button type="button" class="art-btn primary" onclick="setView('artwork');artOpen('${t.media_type}','${esc(t.tmdb_id)}')">Edit artwork</button>` : ''}
+        ${t.tmdb_id ? `<button type="button" class="art-btn primary" onclick="setView('artwork');artOpen(${jsArg(t.media_type)},${jsArg(t.tmdb_id)})">Edit artwork</button>` : ''}
         ${openIds.length ? `<button type="button" class="art-btn" onclick="rpMark([${openIds}],'resolved')">Resolve all</button><button type="button" class="art-btn" onclick="rpMark([${openIds}],'dismissed')">Dismiss all</button>` : ''}
         <button type="button" class="art-btn danger" onclick="rpDelete([${ids}])">Delete all</button>
       </div>`;
@@ -1340,10 +1344,10 @@ function renderReports() {
         <div class="rp-sub">${fmtAgo(r.created_at)} · reporter <span class="who" title="A keyed hash of the reporter's address; the address itself isn't stored">${esc(r.reporter.slice(0, 8))}</span>${r.reporter_total > 1 ? ` (${r.reporter_total} reports)` : ''}</div>
       </div><div class="rp-item-actions">
         ${r.status === 'open'
-          ? `<button type="button" class="art-btn" onclick="rpMark([${r.id}],'resolved')">Resolve</button><button type="button" class="art-btn" onclick="rpMark([${r.id}],'dismissed')">Dismiss</button>`
-          : `<button type="button" class="art-btn" onclick="rpMark([${r.id}],'open')">Reopen</button>`}
-        <button type="button" class="art-btn danger" onclick="rpDelete([${r.id}])">Delete</button>
-        <button type="button" class="art-btn danger" onclick="rpBlock('${esc(r.reporter)}')">Block reporter</button>
+          ? `<button type="button" class="art-btn" onclick="rpMark([${Number(r.id)}],'resolved')">Resolve</button><button type="button" class="art-btn" onclick="rpMark([${Number(r.id)}],'dismissed')">Dismiss</button>`
+          : `<button type="button" class="art-btn" onclick="rpMark([${Number(r.id)}],'open')">Reopen</button>`}
+        <button type="button" class="art-btn danger" onclick="rpDelete([${Number(r.id)}])">Delete</button>
+        <button type="button" class="art-btn danger" onclick="rpBlock(${jsArg(r.reporter)})">Block reporter</button>
       </div></div>`;
     }
     html += `</div></div>`;
@@ -1351,7 +1355,7 @@ function renderReports() {
 
   if ((d.blocks || []).length) {
     html += `<div class="rp-blocks"><div class="field-head"><span class="field-label">Blocked reporters</span></div>`;
-    html += d.blocks.map(b => `<div class="rp-block"><span><span class="who">${esc(b.reporter.slice(0, 8))}</span> · ${esc(b.reason)} · ${b.removed} report${b.removed === 1 ? '' : 's'} deleted · ${fmtAgo(b.blocked_at)}</span><button type="button" class="art-btn" onclick="rpUnblock('${esc(b.reporter)}')">Unblock</button></div>`).join('');
+    html += d.blocks.map(b => `<div class="rp-block"><span><span class="who">${esc(b.reporter.slice(0, 8))}</span> · ${esc(b.reason)} · ${b.removed} report${b.removed === 1 ? '' : 's'} deleted · ${fmtAgo(b.blocked_at)}</span><button type="button" class="art-btn" onclick="rpUnblock(${jsArg(b.reporter)})">Unblock</button></div>`).join('');
     html += `</div>`;
   }
   return html + `</div></div>`;

@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import ipaddress
 import logging
+import re
 import secrets
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -59,6 +60,14 @@ _DAY = 86_400.0
 _PURGE_WINDOW = 7 * _DAY
 _SALT_KEY = "report_salt"
 _FORWARDING_KEY = "report_forwarding"
+
+# Each id on its own terms, ASCII only (str.isdigit also takes "²" and
+# other scripts' digits): both end up in the dashboard's markup.
+_TMDB_ID_RE = re.compile(r"^[0-9]{1,10}$")
+_IMDB_ID_RE = re.compile(r"^tt[0-9]{1,10}$")
+# Control characters, zero-width characters and bidi overrides: they can
+# make a note or title display as something other than what it says.
+_UNSAFE_TEXT_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
 
 # Query parameters the stored preview URL keeps out: anything that is a key.
 _SECRET_PARAMS = {"access_key", "tmdb_key", "mdblist_key", "fanart_key", "tvdb_key",
@@ -146,6 +155,17 @@ def reporter_id(client_host: str | None) -> str:
 
 # ── Filing ───────────────────────────────────────────────────────────────────
 
+def clean_text(text: str, limit: int, keep_newlines: bool = False) -> str:
+    """User text as the dashboard may show it: no control, zero-width or
+    bidi-override characters, and (unless keep_newlines) one line."""
+    text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not keep_newlines:
+        text = text.replace("\n", " ").replace("\t", " ")
+    text = _UNSAFE_TEXT_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:limit]
+
+
 def clean_params(url_or_query: str) -> str:
     """The reported poster's query string with every key taken out."""
     text = (url_or_query or "").strip()
@@ -166,16 +186,16 @@ def submit(*, reporter: str, media_type: str, tmdb_id: str, imdb_id: str, title:
         raise ReportError(400, "Unknown media type")
     tmdb_id = (tmdb_id or "").strip()
     imdb_id = (imdb_id or "").strip()
-    if not (tmdb_id.isdigit() or (imdb_id.startswith("tt") and imdb_id[2:].isdigit())):
+    if not (tmdb_id or imdb_id):
         raise ReportError(400, "Pick a title first")
-    if len(tmdb_id) > 12 or len(imdb_id) > 16:
+    if (tmdb_id and not _TMDB_ID_RE.match(tmdb_id)) or (imdb_id and not _IMDB_ID_RE.match(imdb_id)):
         raise ReportError(400, "Bad title id")
     if category not in CATEGORIES:
         raise ReportError(400, "Pick what is wrong")
-    note = (note or "").strip()[:MAX_NOTE]
+    note = clean_text(note, MAX_NOTE, keep_newlines=True)
     if category == "other" and not note:
         raise ReportError(400, "Say what is wrong")
-    title = (title or "").strip()[:MAX_TITLE]
+    title = clean_text(title, MAX_TITLE)
 
     per_ip, purge_at = _limits()
     now = time.time()

@@ -6666,6 +6666,9 @@ def _reports_open(request: Request) -> bool:
     return state != "untrusted"
 
 
+_REPORT_MAX_BODY = 16_384
+
+
 @app.post("/report")
 async def report_poster(request: Request, access_key: str = ""):
     """A user's report on the poster in their live preview.  Body: {media_type,
@@ -6677,10 +6680,19 @@ async def report_poster(request: Request, access_key: str = ""):
         raise HTTPException(status_code=403, detail="Unauthorized")
     if not _reports_open(request):
         raise HTTPException(status_code=503, detail="Reports are paused on this instance")
-    if int(request.headers.get("content-length") or 0) > 16_384:
-        raise HTTPException(status_code=413, detail="Report too large")
+    # application/json only: another site can make a visitor's browser send
+    # a text/plain or form POST without asking, but not a JSON one (that
+    # needs a CORS preflight, which this server never grants).
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise HTTPException(status_code=415, detail="Body must be application/json")
+    # Counted as it arrives: a chunked body has no Content-Length to check.
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > _REPORT_MAX_BODY:
+            raise HTTPException(status_code=413, detail="Report too large")
     try:
-        body = await request.json()
+        body = json.loads(raw)
     except ValueError:
         raise HTTPException(status_code=400, detail="Body must be JSON")
     if not isinstance(body, dict):

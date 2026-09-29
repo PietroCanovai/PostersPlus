@@ -63,6 +63,26 @@ class SubmitTests(_DbCase):
             self.assertEqual(err.exception.status, status)
         self.file(category="other", note="The logo is upside down")
 
+    def test_each_id_is_checked_on_its_own(self):
+        # A valid IMDb id used to let any tmdb_id through, and the dashboard
+        # puts tmdb_id in an onclick handler.
+        for tmdb_id, imdb_id in (("'+alert()+'", "tt0133093"), ("603", "tt'+x+'"),
+                                 ("６０３", ""), ("²", ""), ("", "tt６０"), ("12345678901", "")):
+            with self.subTest(tmdb_id=tmdb_id, imdb_id=imdb_id), \
+                    self.assertRaises(reports.ReportError) as err:
+                reports.submit(reporter="a" * 24, media_type="movie", tmdb_id=tmdb_id,
+                               imdb_id=imdb_id, title="", category="wrong_poster", note="", params="")
+            self.assertEqual(err.exception.status, 400)
+        self.assertEqual(self.count(), 0)
+        reports.submit(reporter="a" * 24, media_type="movie", tmdb_id="", imdb_id="tt0133093",
+                       title="", category="wrong_poster", note="", params="")
+
+    def test_note_and_title_lose_control_and_bidi_characters(self):
+        self.file(category="other", note="fine‮txt.exe\x00\r\n\n\n\nnext​line")
+        note, = self.db.execute("SELECT note FROM poster_reports").fetchone()
+        self.assertEqual(note, "finetxt.exe\n\nnextline")
+        self.assertEqual(reports.clean_text("a\nb⁦c", 200), "a bc")
+
     def test_duplicate_is_refused(self):
         self.file()
         with self.assertRaises(reports.ReportError) as err:
@@ -248,6 +268,35 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         params = db.execute("SELECT params FROM poster_reports").fetchone()[0]
         self.assertEqual(params, "tmdb_id=603&type=movie")
+
+    def _open_patches(self):
+        db = _memory_db()
+        return db, self._patches() + [mock.patch.object(reports, "get_db", lambda: db),
+                                      mock.patch.object(reports, "get_app_state", {}.get)]
+
+    def test_cross_site_simple_posts_are_refused(self):
+        # text/plain and form bodies need no CORS preflight, so another site
+        # could send them from a visitor's browser.
+        db, patches = self._open_patches()
+        body = '{"media_type":"movie","tmdb_id":"603","category":"wrong_poster"}'
+        for ctype in ("text/plain", "application/x-www-form-urlencoded", ""):
+            with self.subTest(ctype=ctype):
+                r = self._with(patches, lambda: self.client.post(
+                    "/report", content=body, headers={"Content-Type": ctype} if ctype else {}))
+                self.assertEqual(r.status_code, 415)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM poster_reports").fetchone()[0], 0)
+
+    def test_chunked_body_is_capped(self):
+        db, patches = self._open_patches()
+
+        def chunks():
+            yield b'{"media_type":"movie","tmdb_id":"603","category":"other","note":"'
+            for _ in range(50):
+                yield b"A" * 10_000
+            yield b'"}'
+        r = self._with(patches, lambda: self.client.post(
+            "/report", content=chunks(), headers={"Content-Type": "application/json"}))
+        self.assertEqual(r.status_code, 413)
 
     def test_admin_api_needs_the_key(self):
         r = self._with(self._patches(), lambda: self.client.get("/admin/api/reports"))
