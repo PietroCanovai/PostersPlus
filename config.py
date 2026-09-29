@@ -624,7 +624,7 @@ YUNET_MODEL_PATH           = _env("YUNET_MODEL_PATH", "", group='Rendering', kin
     help='Where the YuNet face-detection model is read from; blank uses the bundled copy. Face detection soft-disables if it is missing, falling back to the saliency crop.',
     placeholder='auto', advanced=True).strip()
 DISCOVERY_OVERRIDES_PATH   = _env("DISCOVERY_OVERRIDES_PATH", "/app/cache/discovery_overrides.json", group='Rendering', kind='text',
-    label='Discovery overrides path', help='JSON file overriding the notable studio, director and cast lists behind those sashes. See discovery_overrides.example.json.',
+    label='Discovery overrides path', help='JSON file holding the notable studio, director and cast lists behind those sashes. The dashboard\'s Sash lists view writes it; see discovery_overrides.example.json to write it by hand.',
     advanced=True).strip() or "/app/cache/discovery_overrides.json"
 
 # Prefer textless posters with enough votes to be meaningful, but never allow

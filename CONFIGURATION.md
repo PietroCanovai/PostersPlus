@@ -325,7 +325,9 @@ The anime catalog gives its titles AniList ids, and with the addon enabled a pos
 
 **Source editors** can modify the lists directly in `discovery.py`.
 
-**Docker operators** can override them without editing source by placing a JSON file at `/app/cache/discovery_overrides.json` inside the cache volume. See `discovery_overrides.example.json` for the format.
+**Operators** can edit them in the admin dashboard's **Sash lists** view: search TMDB for a studio or person to add, change the label the sash shows, remove entries, or go back to the built-in list. Changes apply without a restart, and posters re-render as they are next requested.
+
+The dashboard stores the lists in `/app/cache/discovery_overrides.json` inside the cache volume, which can also be written by hand. See `discovery_overrides.example.json` for the format.
 
 ---
 

@@ -911,6 +911,7 @@ import watchlist
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
 import config as _cfg
+import discovery
 from discovery import (
     ALL_PRIORITY_SLOTS,
     RELEASE_STATUS_SLOTS,
@@ -6864,7 +6865,7 @@ def _compute_render_assets_signature() -> str:
                     continue
                 digest.update(os.path.relpath(path, BASE_DIR).encode())
                 digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
-    override_path = _cfg.DISCOVERY_OVERRIDES_PATH
+    override_path = discovery.override_path()
     try:
         with open(override_path, "rb") as override_file:
             digest.update(override_file.read())
@@ -6874,6 +6875,11 @@ def _compute_render_assets_signature() -> str:
 
 
 def _server_render_signature() -> str:
+    global _render_assets_signature
+    # The dashboard's sash-list editor rewrites the overrides file on one
+    # worker; the others notice here and re-render under the new lists.
+    if discovery.refresh_overrides():
+        _render_assets_signature = _compute_render_assets_signature()
     return "|".join((
         f"render={_RENDER_CACHE_VERSION}",
         f"format={_cfg.IMAGE_FORMAT}",
@@ -7388,6 +7394,159 @@ async def admin_art_clear(request: Request, media_type: str, tmdb_id: str,
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _admin._json({"removed": removed})
+
+
+# ---------------------------------------------------------------------------
+# Sash lists: the notable studios, directors and cast behind those sashes,
+# edited from the dashboard instead of by hand in discovery_overrides.json.
+# ---------------------------------------------------------------------------
+
+_SASH_SECTIONS = discovery.SECTIONS
+# (section, name) -> the TMDB entity the editor shows beside a list entry.
+# Per process and unbounded in principle, but it only ever holds names that
+# were on a list or looked up by the operator.
+_sash_lookup_cache: dict[tuple[str, str], dict] = {}
+_SASH_LOOKUP_MAX = 150
+
+
+def _sash_section(value: str) -> str:
+    if value not in _SASH_SECTIONS:
+        raise HTTPException(status_code=400, detail="section must be studios, directors or cast")
+    return value
+
+
+def _sash_person_item(r: dict) -> dict:
+    known = [k.get("title") or k.get("name") or "" for k in (r.get("known_for") or [])]
+    return {
+        "id": r.get("id"),
+        "name": r.get("name") or "",
+        "thumb": f"{_TMDB_IMG}/w185{r['profile_path']}" if r.get("profile_path") else None,
+        "department": r.get("known_for_department") or "",
+        "known_for": [k for k in known if k][:3],
+        "popularity": round(float(r.get("popularity") or 0), 1),
+    }
+
+
+def _sash_company_item(r: dict) -> dict:
+    return {
+        "id": r.get("id"),
+        "name": r.get("name") or "",
+        "thumb": f"{_TMDB_IMG}/w185{r['logo_path']}" if r.get("logo_path") else None,
+        "country": r.get("origin_country") or "",
+    }
+
+
+async def _sash_tmdb_search(section: str, q: str) -> list[dict]:
+    _, key = _art_client_and_key()
+    kind = "company" if section == "studios" else "person"
+    resp = await _proxy_tmdb_get(
+        f"https://api.themoviedb.org/3/search/{kind}",
+        {"api_key": key, "query": q, "include_adult": "false", "page": "1"},
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"TMDB search returned {resp.status_code}")
+    results = resp.json().get("results") or []
+    if kind == "company":
+        # Logo'd companies first: TMDB keeps many stub entries under a
+        # famous name, and the one with a logo is nearly always the one
+        # credited.  Otherwise TMDB's order.
+        items = [_sash_company_item(r) for r in results]
+        return sorted(items, key=lambda i: i["thumb"] is None)
+    items = [_sash_person_item(r) for r in results]
+    want = "Directing" if section == "directors" else "Acting"
+    return sorted(items, key=lambda i: i["department"] != want)
+
+
+@app.get("/admin/api/sash-lists")
+async def admin_sash_lists(request: Request, x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    return _admin._json({
+        "sections": discovery.current_lists(),
+        "path": discovery.override_path(),
+        "writable": discovery.override_writable(),
+        "max_label": discovery.MAX_LABEL_LENGTH,
+        "tmdb": bool(_cfg.SERVER_TMDB_KEY),
+    })
+
+
+@app.put("/admin/api/sash-lists")
+async def admin_sash_lists_save(request: Request, x_admin_key: str = Header(default="")):
+    """Body: {"changes": {section: [{"name", "label"}, ...] | null}}.  A list
+    replaces that section; null returns it to the built-in list."""
+    global _render_assets_signature
+    await _admin._authorise(request, x_admin_key)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    changes = body.get("changes") if isinstance(body, dict) else None
+    if not isinstance(changes, dict) or not changes:
+        raise HTTPException(status_code=400, detail="No changes supplied")
+    parsed: dict[str, dict[str, str] | None] = {}
+    for section, entries in changes.items():
+        _sash_section(section)
+        try:
+            parsed[section] = None if entries is None else discovery.validate_entries(entries)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{section}: {exc}")
+    if not discovery.override_writable():
+        raise HTTPException(status_code=500, detail=f"{discovery.override_path()} is not writable")
+    try:
+        discovery.save_sections(parsed)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write the lists: {exc}")
+    _render_assets_signature = _compute_render_assets_signature()
+    logger.info(f"Admin: sash lists saved ({', '.join(sorted(parsed))})")
+    return _admin._json({"sections": discovery.current_lists()})
+
+
+@app.get("/admin/api/sash-lists/search")
+async def admin_sash_search(request: Request, section: str, q: str = "",
+                            x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    section = _sash_section(section)
+    q = q.strip()
+    if not q or len(q) > 200:
+        raise HTTPException(status_code=400, detail="Query missing or too long")
+    return _admin._json({"results": await _sash_tmdb_search(section, q)})
+
+
+@app.post("/admin/api/sash-lists/lookup")
+async def admin_sash_lookup(request: Request, x_admin_key: str = Header(default="")):
+    """Body: {"section", "names": [...]}.  The TMDB entity each name matches,
+    for the list's thumbnails — and, since the lists match credits by exact
+    name, whether TMDB has anyone by that exact name at all."""
+    await _admin._authorise(request, x_admin_key)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    section = _sash_section(str((body or {}).get("section") or ""))
+    names = (body or {}).get("names")
+    if not isinstance(names, list) or len(names) > _SASH_LOOKUP_MAX:
+        raise HTTPException(status_code=400, detail=f"names must be a list of at most {_SASH_LOOKUP_MAX}")
+    names = [str(n)[:discovery.MAX_NAME_LENGTH] for n in names if str(n).strip()]
+    sem = asyncio.Semaphore(6)
+
+    async def one(name: str) -> None:
+        if (section, name) in _sash_lookup_cache:
+            return
+        async with sem:
+            try:
+                results = await _sash_tmdb_search(section, name)
+            except HTTPException:
+                return
+        exact = [r for r in results if r["name"] == name]
+        pick = (exact or results or [None])[0]
+        _sash_lookup_cache[(section, name)] = {
+            "exact": bool(exact),
+            "match": pick,
+        }
+
+    await asyncio.gather(*(one(n) for n in dict.fromkeys(names)))
+    return _admin._json({
+        "found": {n: _sash_lookup_cache[(section, n)] for n in names if (section, n) in _sash_lookup_cache},
+    })
 
 
 # TMDB genre name → id, used only by the debug canvas preview below.

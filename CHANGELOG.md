@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Edit the studio, director and cast lists in the dashboard
+
+- The admin dashboard has a **Sash lists** view for the notable studios,
+  directors and cast behind the Studio, Director and Cast sashes. It shows
+  each list with TMDB pictures, lets you remove entries, change the label a
+  sash shows, and search TMDB to add a studio or person, so names match
+  TMDB's credits exactly. Entries TMDB has no exact credit for are flagged,
+  since they can never match. Each list can go back to the built-in one.
+- Four built-in entries never matched because TMDB spells them differently:
+  BBC Film, LAIKA, Bong Joon Ho and Wong Kar-Wai. They now do, so films
+  such as Aftersun, Coraline and Parasite get their sash.
+- Changes apply without a restart. `discovery_overrides.json` is still where
+  the lists live and can still be written by hand; it is now re-read within
+  a few seconds of changing.
+
 ### Choose a title's art for everyone; TVDB as a poster source
 
 - The admin dashboard has an **Artwork** tab. Search for a title and pick its

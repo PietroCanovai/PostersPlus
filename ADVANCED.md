@@ -365,10 +365,12 @@ Default: `10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,1
 
 ### `DISCOVERY_OVERRIDES_PATH`
 
-JSON file that overrides the notable studio, director and cast lists behind
+JSON file that holds the notable studio, director and cast lists behind
 those sashes, so Docker operators can customise them without editing
-`discovery.py`. See `discovery_overrides.example.json` for the format. The
-default sits inside the cache volume, so no extra mount is needed.
+`discovery.py`. The admin dashboard's Sash lists view writes it; see
+`discovery_overrides.example.json` to write it by hand. The default sits
+inside the cache volume, so no extra mount is needed. The file is re-read
+within a few seconds of changing, no restart needed.
 
 Default: `/app/cache/discovery_overrides.json`
 

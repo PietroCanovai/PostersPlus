@@ -606,6 +606,59 @@
   .crop-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
   .art-empty { font-size: 11px; color: var(--text-secondary); padding: 8px 0 var(--gap-field); }
 
+  /* ── SASH LISTS ── */
+  .sl-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: var(--gap-field); }
+  .sl-tabs .art-seg { font-family: 'DM Sans', system-ui, sans-serif; }
+  .sl-state { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 10px; color: var(--text-secondary); }
+  .sl-add { margin-bottom: var(--gap-field); }
+  .sl-add .box { position: relative; }
+  .sl-add input { padding-left: 34px; }
+  .sl-add .ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+  .sl-results {
+    margin-top: 6px; max-height: 380px; overflow-y: auto; padding: 6px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black2);
+  }
+  .sl-result { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 4px; }
+  .sl-result:hover { background: var(--black3); }
+  .sl-result .meta { flex: 1; min-width: 0; }
+  .sl-result .n { font-size: 12px; color: var(--cream); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-result .m { font-size: 9.5px; color: var(--silver-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-result .none, .sl-none { padding: 8px; font-size: 11px; color: var(--text-secondary); }
+  .sl-thumb { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: var(--black4); flex-shrink: 0; display: block; }
+  .sl-thumb.co { border-radius: 4px; width: 58px; object-fit: contain; padding: 5px; background: #e9e6df; }
+  span.sl-thumb { display: flex; align-items: center; justify-content: center; font-family: var(--serif); font-size: 16px; color: var(--silver-dim); }
+  span.sl-thumb.co { background: var(--black4); font-size: 13px; }
+  .sl-listhead { display: flex; align-items: center; gap: 12px; margin: 6px 0 10px; }
+  .sl-listhead .field-label { flex: 1; }
+  .sl-listhead input { width: 220px; padding: 7px 11px; font-size: 11px; }
+  .sl-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 8px; }
+  .sl-item {
+    display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black2);
+  }
+  .sl-item.new { border-color: var(--ok); }
+  .sl-item.warn { border-color: rgba(232,150,58,0.55); }
+  .sl-item .body { flex: 1; min-width: 0; }
+  .sl-item .name { font-size: 11.5px; color: var(--cream); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-item .name .w { color: var(--warn); margin-left: 6px; font-size: 9.5px; cursor: help; }
+  .sl-label { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+  .sl-label span.pre { font-size: 9px; color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; }
+  .sl-label input { padding: 4px 8px; font-size: 11px; flex: 1; min-width: 0; min-height: 0; }
+  .sl-label .cnt { font-size: 9px; color: var(--text-muted); width: 22px; text-align: right; }
+  .sl-label .cnt.long { color: var(--warn); }
+  .sl-remove {
+    align-self: flex-start; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+    color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 4px 7px;
+  }
+  .sl-remove:hover { color: var(--danger); border-color: rgba(224,85,85,0.45); }
+  @media (max-width: 860px) {
+    .sl-state { margin-left: 0; width: 100%; }
+    .sl-listhead { flex-wrap: wrap; }
+    .sl-listhead input { width: 100%; }
+    .sl-list { grid-template-columns: 1fr; }
+    .sl-label input { font-size: 16px; }
+  }
+
   @media (max-width: 860px) {
     .art-head h2 { font-size: 32px; }
     .art-head-right { margin-left: 0; width: 100%; align-items: stretch; }
@@ -700,6 +753,11 @@
   <button type="button" class="btn btn-secondary" onclick="discardChanges()">Discard</button>
   <button type="button" class="btn btn-primary" id="save-btn" onclick="saveChanges()">Save</button>
 </div>
+<div class="savebar" id="sl-savebar">
+  <span class="count" id="sl-dirty"></span>
+  <button type="button" class="btn btn-secondary" onclick="slDiscard()">Discard</button>
+  <button type="button" class="btn btn-primary" id="sl-save-btn" onclick="slSave()">Save lists</button>
+</div>
 <div class="toast" id="toast"></div>
 <div class="veil" id="veil"><div class="card"><h2><span class="pulse"></span>Restarting</h2><p id="veil-text">Waiting for the server to come back…</p></div></div>
 
@@ -792,7 +850,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'sash-lists' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -818,6 +876,7 @@ function renderNav() {
   let html = `<div class="nav-title">Instance</div>`;
   html += `<a href="#overview" data-view="overview" class="${activeView === 'overview' ? 'active' : ''}"><span>Overview</span>${pending.size ? '<span class="dot" title="Restart required"></span>' : ''}</a>`;
   html += `<a href="#artwork" data-view="artwork" class="${activeView === 'artwork' ? 'active' : ''}"><span>Artwork</span></a>`;
+  html += `<a href="#sash-lists" data-view="sash-lists" class="${activeView === 'sash-lists' ? 'active' : ''}"><span>Sash lists</span>${slDirtySections().length ? `<span class="chip dirty">${slDirtySections().length}</span>` : ''}</a>`;
   html += `<div class="nav-sep"></div><div class="nav-title">Settings</div>`;
   for (const g of model.groups) {
     const id = slug(g.name);
@@ -1146,8 +1205,259 @@ function renderView() {
   // Artwork search page keeps the dashboard's width.
   document.querySelector('.shell').classList.toggle('wide', activeView === 'artwork' && !!art.title);
   if (activeView === 'artwork') { main.innerHTML = renderArtwork(); if (!art.list) loadArtList(); return; }
+  if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
   main.innerHTML = g ? renderGroup(g) : '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sash lists.  The notable studios, directors and cast behind the Studio,
+// Director and Cast sashes (discovery_overrides.json).  A title matches when a
+// TMDB credit carries the exact name on the left; the sash shows the label.
+// Edits are held here until saved: a save changes the render signature, so
+// every poster re-renders when next requested.
+const SL_SECTIONS = {
+  studios:   { label: 'Studios',   one: 'studio',   where: 'a production company' },
+  directors: { label: 'Directors', one: 'director', where: 'the director' },
+  cast:      { label: 'Cast',      one: 'actor',    where: 'one of the top 10 billed cast' },
+};
+const SL_SHORT = 15;   // what fits the sash comfortably
+const sl = { data: null, section: 'studios', edits: {}, added: {}, lookup: { studios: {}, directors: {}, cast: {} }, q: '', results: null, filter: '' };
+
+async function loadSashLists() {
+  const r = await api('/admin/api/sash-lists');
+  if (!r.ok) { toast((r.body && r.body.detail) || 'Could not load the sash lists'); return; }
+  sl.data = r.body;
+  if (activeView === 'sash-lists') renderView();
+}
+// The list as edited, else as saved.
+function slEntries(section = sl.section) {
+  const e = sl.edits[section];
+  if (e === null) return sl.data.sections[section].builtin.map(x => ({ ...x }));
+  return e || sl.data.sections[section].entries;
+}
+function slIsCustom(section = sl.section) {
+  const e = sl.edits[section];
+  return e === undefined ? sl.data.sections[section].custom : e !== null;
+}
+function slDirtySections() { return Object.keys(sl.edits); }
+function slEdit(section, entries) {
+  sl.edits[section] = entries;
+  // Back to exactly what's saved: nothing to save.
+  const saved = sl.data.sections[section];
+  if (entries && JSON.stringify(entries) === JSON.stringify(saved.entries)) delete sl.edits[section];
+  slUpdateBar();
+}
+function slUpdateBar() {
+  const dirty = slDirtySections();
+  document.getElementById('sl-savebar').classList.toggle('show', dirty.length > 0);
+  document.getElementById('sl-dirty').innerHTML = dirty.length ? `Unsaved changes to <strong>${dirty.map(d => SL_SECTIONS[d].label).join(', ')}</strong>` : '';
+  renderNav();
+}
+
+// Short sash label for a person: "Philip Seymour Hoffman" → "P. Hoffman".
+function slDefaultLabel(name) {
+  if (name.length <= SL_SHORT || sl.section === 'studios') return name;
+  const parts = name.split(/\s+/);
+  const short = parts[0][0] + '. ' + parts[parts.length - 1];
+  return short.length <= SL_SHORT ? short : parts[parts.length - 1];
+}
+
+function slThumb(section, match, name) {
+  const co = section === 'studios' ? ' co' : '';
+  if (match && match.thumb) return `<img class="sl-thumb${co}" src="${esc(match.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`;
+  return `<span class="sl-thumb${co}">${esc((name || '?')[0])}</span>`;
+}
+
+function renderSashLists() {
+  let html = `<div class="panel"><div class="panel-header"><span class="panel-title">Sash lists</span><span class="panel-index">notable studios, directors &amp; cast</span></div><div class="panel-body">`;
+  if (!sl.data) return html + `<div class="sl-none">Loading…</div></div></div>`;
+  const sec = SL_SECTIONS[sl.section];
+  html += `<div class="field-hint" style="margin:0 0 var(--gap-field)">A poster can carry a Studio, Director or Cast sash when ${esc(sec.where)} is on the ${esc(sec.label.toLowerCase())} list. The name must match TMDB's credit exactly, so add from the search; the label is what the sash shows. Users only see these sashes when <code>studio</code>, <code>director</code> or <code>cast</code> is in their sash priority. Saving re-renders posters as they're next requested.</div>`;
+  if (!sl.data.writable) html += `<div class="notice bad"><div class="notice-body"><p><strong>${esc(sl.data.path)} is not writable.</strong> Saves will fail; check the cache volume's mount and ownership.</p></div></div>`;
+  html += slTabsHtml();
+  html += `<div class="sl-add"><div class="box"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="text" id="sl-q" placeholder="${sl.data.tmdb ? `Search TMDB to add a ${sec.one}` : `Type a ${sec.one}'s exact TMDB name to add`}" value="${esc(sl.q)}" autocomplete="off" oninput="slSearchInput()" onkeydown="if(event.key==='Enter')slSearch();if(event.key==='Escape')slSearchClose()"></div><div id="sl-results">${slResultsHtml()}</div></div>`;
+  html += `<div class="sl-listhead"><span class="field-label">On the list</span><input type="text" id="sl-filter" placeholder="Filter" value="${esc(sl.filter)}" autocomplete="off" oninput="slFilter(this.value)"></div>`;
+  html += `<div id="sl-list">${slListHtml()}</div>`;
+  return html + `</div></div>`;
+}
+
+const slCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+function slCompare(a, b) { return slCollator.compare(a, b); }
+
+function slTabsHtml() {
+  const custom = slIsCustom();
+  const merged = sl.edits[sl.section] === undefined && sl.data.sections[sl.section].merged;
+  return `<div class="sl-tabs"><div class="art-seg">${Object.entries(SL_SECTIONS).map(([k, v]) => `<button type="button" class="${k === sl.section ? 'on' : ''}" onclick="slSetSection('${k}')">${v.label}<span class="n">${slEntries(k).length}</span></button>`).join('')}</div>`
+    + `<span class="sl-state"><span class="chip ${custom ? 'file' : ''}">${custom ? (merged ? 'built-in + yours' : 'your list') : 'built-in list'}</span>${custom ? `<button type="button" class="btn btn-secondary btn-small" onclick="slRestore()">Restore built-in</button>` : ''}</span></div>`;
+}
+
+function slListHtml() {
+  const section = sl.section;
+  const f = sl.filter.trim().toLowerCase();
+  const entries = slEntries(section);
+  // A–Z (the order means nothing to matching), except entries added since
+  // the last save, which stay on top so an Add doesn't vanish down the list.
+  const added = sl.added[section] || new Set();
+  const shown = entries.map((e, i) => [e, i])
+    .filter(([e]) => !f || e.name.toLowerCase().includes(f) || e.label.toLowerCase().includes(f))
+    .sort(([a, ai], [b, bi]) => (added.has(b.name) - added.has(a.name)) || (added.has(a.name) ? ai - bi : slCompare(a.name, b.name)));
+  if (!entries.length) return `<div class="sl-none">The list is empty, so no ${SL_SECTIONS[section].label.toLowerCase()} sash will show. Add some above, or restore the built-in list.</div>`;
+  if (!shown.length) return `<div class="sl-none">Nothing on the list matches “${esc(sl.filter)}”.</div>`;
+  return `<div class="sl-list">${shown.map(([e, i]) => {
+    const look = sl.lookup[section][e.name];
+    const miss = look && !look.exact;
+    const tip = miss ? (look.match ? `TMDB has no credit named exactly “${e.name}” (closest: “${look.match.name}”), so this entry may never match.` : `TMDB has no credit named “${e.name}”, so this entry may never match.`) : '';
+    const sub = look && look.match ? (section === 'studios' ? look.match.country : look.match.department) : '';
+    return `<div class="sl-item ${added.has(e.name) ? 'new' : ''} ${miss ? 'warn' : ''}">
+      ${slThumb(section, look && look.exact ? look.match : null, e.name)}
+      <div class="body">
+        <div class="name" title="${esc(e.name)}">${esc(e.name)}${sub ? ` <span style="color:var(--text-muted);font-size:9.5px">· ${esc(sub)}</span>` : ''}${miss ? `<span class="w" title="${esc(tip)}">⚠ no exact match</span>` : ''}</div>
+        <label class="sl-label"><span class="pre">Sash</span><input type="text" value="${esc(e.label)}" maxlength="${sl.data.max_label}" oninput="slSetLabel(${i}, this)" aria-label="Sash label for ${esc(e.name)}"><span class="cnt ${e.label.length > SL_SHORT ? 'long' : ''}" title="Labels over ${SL_SHORT} characters may be squeezed on the sash">${e.label.length}</span></label>
+      </div>
+      <button type="button" class="sl-remove" title="Remove ${esc(e.name)}" aria-label="Remove ${esc(e.name)}" onclick="slRemove(${i})">×</button>
+    </div>`;
+  }).join('')}</div>`;
+}
+function slRenderList() { const el = document.getElementById('sl-list'); if (el) el.innerHTML = slListHtml(); }
+
+function slResultsHtml() {
+  if (!sl.results) return '';
+  const names = new Set(slEntries().map(e => e.name));
+  const q = sl.q.trim();
+  let rows = sl.results.map((r, i) => {
+    const on = names.has(r.name);
+    const sub = sl.section === 'studios'
+      ? [r.country, 'TMDB ' + r.id].filter(Boolean).join(' · ')
+      : [r.department, r.known_for.join(', ')].filter(Boolean).join(' · ');
+    return `<div class="sl-result">${slThumb(sl.section, r, r.name)}<span class="meta"><div class="n">${esc(r.name)}</div><div class="m">${esc(sub)}</div></span>${on ? '<span class="chip file">on the list</span>' : `<button type="button" class="btn btn-primary btn-small" onclick="slAddResult(${i})">Add</button>`}</div>`;
+  }).join('');
+  if (!sl.results.length) rows = `<div class="none">TMDB has nothing for “${esc(q)}”.</div>`;
+  // Adding a name TMDB didn't return is allowed (no key, or a credit its
+  // search misses), but it has to match a credit exactly to ever fire.
+  if (q && !names.has(q) && !sl.results.some(r => r.name === q)) {
+    rows += `<div class="sl-result"><span class="meta"><div class="n">Add “${esc(q)}” as typed</div><div class="m">Only matches a credit with exactly this name</div></span><button type="button" class="btn btn-secondary btn-small" onclick="slAddTyped()">Add</button></div>`;
+  }
+  return `<div class="sl-results">${rows}</div>`;
+}
+function slRenderResults() { const el = document.getElementById('sl-results'); if (el) el.innerHTML = slResultsHtml(); }
+
+function slSetSection(k) {
+  sl.section = k; sl.results = null; sl.q = ''; sl.filter = '';
+  renderView();
+}
+let slTypeTimer = null;
+function slSearchInput() {
+  clearTimeout(slTypeTimer);
+  const q = document.getElementById('sl-q').value.trim();
+  if (!q) { slSearchClose(); return; }
+  slTypeTimer = setTimeout(slSearch, sl.data.tmdb ? 450 : 0);
+}
+function slSearchClose() {
+  sl.q = ''; sl.results = null; slRenderResults();
+  const q = document.getElementById('sl-q'); if (q) q.value = '';
+}
+async function slSearch() {
+  clearTimeout(slTypeTimer);
+  const input = document.getElementById('sl-q');
+  const q = input ? input.value.trim() : '';
+  if (!q) return;
+  const section = sl.section;
+  if (!sl.data.tmdb) { sl.q = q; sl.results = []; slRenderResults(); return; }
+  const r = await api(`/admin/api/sash-lists/search?section=${section}&q=${encodeURIComponent(q)}`);
+  const now = document.getElementById('sl-q');
+  if (!now || now.value.trim() !== q || sl.section !== section) return;   // typed on, or switched tab
+  sl.q = q;
+  sl.results = r.ok ? r.body.results : [];
+  if (!r.ok) toast((r.body && r.body.detail) || 'Search failed');
+  slRenderResults();
+}
+function slAdd(name, match) {
+  const section = sl.section;
+  const entries = slEntries(section).slice();
+  if (entries.some(e => e.name === name)) return;
+  entries.unshift({ name, label: slDefaultLabel(name) });
+  if (match) sl.lookup[section][name] = { exact: match.name === name, match };
+  (sl.added[section] = sl.added[section] || new Set()).add(name);
+  slEdit(section, entries);
+  sl.filter = ''; sl.q = ''; sl.results = null;
+  const f = document.getElementById('sl-filter'); if (f) f.value = '';
+  const q = document.getElementById('sl-q'); if (q) { q.value = ''; q.focus(); }
+  slRenderResults(); slRenderList(); slRenderTabs();
+  if (!match) slLookup(section);
+  toast(`Added ${name}`);
+}
+function slAddResult(i) { const r = sl.results[i]; if (r) slAdd(r.name, r); }
+function slAddTyped() { if (sl.q.trim()) slAdd(sl.q.trim(), null); }
+function slRemove(i) {
+  const entries = slEntries().slice();
+  const [gone] = entries.splice(i, 1);
+  slEdit(sl.section, entries);
+  slRenderList(); slRenderResults(); slRenderTabs();
+  if (gone) toast(`Removed ${gone.name}`);
+}
+function slSetLabel(i, input) {
+  const entries = slEntries().map(e => ({ ...e }));
+  entries[i].label = input.value;
+  slEdit(sl.section, entries);
+  const cnt = input.parentElement.querySelector('.cnt');
+  cnt.textContent = input.value.length;
+  cnt.classList.toggle('long', input.value.length > SL_SHORT);
+}
+function slFilter(v) { sl.filter = v; slRenderList(); }
+// The tab counts and the built-in / yours chip, without touching the inputs.
+function slRenderTabs() {
+  const tabs = document.querySelector('.sl-tabs');
+  if (!tabs) return;
+  tabs.outerHTML = slTabsHtml();
+}
+function slRestore() {
+  const n = SL_SECTIONS[sl.section].label.toLowerCase();
+  if (!confirm(`Replace your ${n} list with the built-in one?\n\nNothing is saved until you press Save lists.`)) return;
+  if (!sl.data.sections[sl.section].custom) delete sl.edits[sl.section];
+  else sl.edits[sl.section] = null;
+  delete sl.added[sl.section];
+  slUpdateBar();
+  renderView();
+}
+function slDiscard() {
+  sl.edits = {}; sl.added = {};
+  slUpdateBar();
+  if (activeView === 'sash-lists') renderView();
+}
+async function slSave() {
+  const dirty = slDirtySections();
+  if (!dirty.length) return;
+  // An empty label means "same as the name".
+  const body = {};
+  for (const k of dirty) body[k] = sl.edits[k] === null ? null : sl.edits[k].map(e => ({ name: e.name, label: e.label.trim() || e.name }));
+  const btn = document.getElementById('sl-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const r = await api('/admin/api/sash-lists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes: body }) });
+  btn.disabled = false; btn.textContent = 'Save lists';
+  if (!r.ok) { toast((r.body && r.body.detail) || `Save failed (HTTP ${r.status})`); return; }
+  sl.data.sections = r.body.sections;
+  sl.edits = {}; sl.added = {};
+  slUpdateBar();
+  if (activeView === 'sash-lists') renderView();
+  toast('Sash lists saved — posters pick them up as they re-render');
+}
+
+// Thumbnails, and a warning for names TMDB has no exact credit for.  Looked
+// up once per name per page load (and cached server-side per process).
+const slLooking = new Set();
+async function slLookup(section) {
+  if (!sl.data || !sl.data.tmdb) return;
+  const todo = slEntries(section).map(e => e.name).filter(n => !(n in sl.lookup[section]) && !slLooking.has(section + '\u0000' + n));
+  for (let i = 0; i < todo.length; i += 150) {
+    const names = todo.slice(i, i + 150);
+    names.forEach(n => slLooking.add(section + '\u0000' + n));
+    const r = await api('/admin/api/sash-lists/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ section, names }) });
+    names.forEach(n => slLooking.delete(section + '\u0000' + n));
+    if (!r.ok) return;
+    Object.assign(sl.lookup[section], r.body.found);
+    if (activeView === 'sash-lists' && sl.section === section) slRenderList();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1882,7 +2192,7 @@ function toast(msg) {
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3200);
 }
-window.addEventListener('beforeunload', e => { if (Object.keys(changes).length) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (Object.keys(changes).length || slDirtySections().length) { e.preventDefault(); e.returnValue = ''; } });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A key in the URL (?admin_key=…) is accepted once and then scrubbed from the

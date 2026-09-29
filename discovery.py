@@ -38,7 +38,9 @@ and can be re-prioritised at render time without re-fetching.
 Operator customisation
 ----------------------
 Self-hosters can supply their own director / studio / cast lists without
-editing this file.  Place a JSON file at:
+editing this file.  The admin dashboard's Sash lists view edits them (it
+writes the file below, and every worker reloads it within seconds), or place
+a JSON file by hand at:
 
     /app/cache/discovery_overrides.json
 
@@ -67,6 +69,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -95,10 +99,10 @@ NOTABLE_STUDIOS: dict[str, str] = {
     "Blumhouse Productions":  "Blumhouse",
     "Neon":                   "NEON Rated",
     "Searchlight Pictures":   "SL Pictures",
-    "BBC Films":              "BBC Films",
+    "BBC Film":               "BBC Films",
     "Bad Robot":              "Bad Robot",
     "HBO":                    "HBO Original",
-    "Laika Entertainment":    "Laika",
+    "LAIKA":                  "Laika",
 }
 
 # Keys are the exact TMDB credit name to match against.
@@ -111,7 +115,7 @@ NOTABLE_DIRECTORS: dict[str, str] = {
     "Martin Scorsese":     "M. Scorsese",
     "Wes Anderson":        "Wes Anderson",
     "Sofia Coppola":       "S. Coppola",
-    "Bong Joon-ho":        "B. Joon-ho",
+    "Bong Joon Ho":        "B. Joon-ho",
     "Hayao Miyazaki":      "H. Miyazaki",
     "David Fincher":       "D. Fincher",
     "Paul Thomas Anderson":"P.T. Anderson",
@@ -131,7 +135,7 @@ NOTABLE_DIRECTORS: dict[str, str] = {
     "Robert Eggers":       "R. Eggers",
     "Céline Sciamma":      "C. Sciamma",
     "Park Chan-wook":      "P. Chan-wook",
-    "Wong Kar-wai":        "Wong Kar-wai",
+    "Wong Kar-Wai":        "Wong Kar-wai",
     "Hirokazu Kore-eda":   "H. Kore-eda",
     "Luca Guadagnino":     "L. Guadagnino",
     "Sean Baker":          "Sean Baker",
@@ -1037,69 +1041,203 @@ ALL_PRIORITY_SLOTS: list[str] = [
 
 _OVERRIDE_PATH = _cfg.DISCOVERY_OVERRIDES_PATH
 
+# The file's sections and the module lists they feed.
+SECTIONS = ("studios", "directors", "cast")
+BUILTIN_LISTS: dict[str, dict[str, str]] = {
+    "studios":   dict(NOTABLE_STUDIOS),
+    "directors": dict(NOTABLE_DIRECTORS),
+    "cast":      dict(NOTABLE_CAST),
+}
+# The sash is narrow; the dashboard refuses labels longer than this and
+# names no TMDB credit comes near.
+MAX_LABEL_LENGTH = 40
+MAX_NAME_LENGTH = 200
+MAX_SECTION_ENTRIES = 2000
 
-def _load_discovery_overrides() -> None:
-    """
-    Apply operator-supplied director / studio / cast lists from a JSON file.
+# (mtime_ns, size) of the file the lists were last built from, None when absent.
+_loaded_stamp: tuple[int, int] | None = None
+_checked_at = 0.0
+_CHECK_INTERVAL = 3.0
 
-    Called once at module import time.  Silently skips when the file is
-    absent so the built-in defaults in this file are used unchanged.  Logs
-    a warning (and falls back to built-ins) if the file exists but is invalid.
 
-    See the module docstring at the top of this file for the full format.
-    """
+def _file_stamp() -> tuple[int, int] | None:
+    try:
+        st = os.stat(_OVERRIDE_PATH)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _read_override_file() -> dict | None:
+    """The file's JSON object, or None when absent or unusable (logged)."""
     try:
         with open(_OVERRIDE_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        return                        # normal — no overrides configured
+        return None                   # normal — no overrides configured
     except Exception as exc:
         logger.warning(
             f"discovery_overrides.json: failed to parse ({exc}) — using built-in lists"
         )
-        return
-
+        return None
     if not isinstance(data, dict):
         logger.warning("discovery_overrides.json: root must be a JSON object — ignoring")
-        return
+        return None
+    return data
 
-    mode         = data.get("mode", "replace")
-    studios_raw  = data.get("studios")
-    dirs_raw     = data.get("directors")
-    cast_raw     = data.get("cast")
 
-    counts: list[str] = []
+def _clean_section(raw) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(k): str(v) for k, v in raw.items() if str(k).strip() and str(v).strip()}
 
-    if mode == "merge":
-        # Add / overwrite individual entries; entries absent from the file
-        # remain from the built-in lists.
-        if isinstance(studios_raw, dict):
-            NOTABLE_STUDIOS.update(studios_raw)
-            counts.append(f"+{len(studios_raw)} studios")
-        if isinstance(dirs_raw, dict):
-            NOTABLE_DIRECTORS.update(dirs_raw)
-            counts.append(f"+{len(dirs_raw)} directors")
-        if isinstance(cast_raw, dict):
-            NOTABLE_CAST.update(cast_raw)
-            counts.append(f"+{len(cast_raw)} cast")
-        logger.info(f"discovery_overrides.json loaded (merge): {', '.join(counts) or 'no sections'}")
 
-    else:
-        # "replace" — each supplied section fully replaces its built-in list.
-        # Omitted sections keep their defaults.
-        if isinstance(studios_raw, dict):
-            NOTABLE_STUDIOS.clear()
-            NOTABLE_STUDIOS.update(studios_raw)
-            counts.append(f"{len(studios_raw)} studios")
-        if isinstance(dirs_raw, dict):
-            NOTABLE_DIRECTORS.clear()
-            NOTABLE_DIRECTORS.update(dirs_raw)
-            counts.append(f"{len(dirs_raw)} directors")
-        if isinstance(cast_raw, dict):
-            NOTABLE_CAST.clear()
-            NOTABLE_CAST.update(cast_raw)
-            counts.append(f"{len(cast_raw)} cast")
-        logger.info(f"discovery_overrides.json loaded (replace): {', '.join(counts) or 'no sections'}")
+def effective_lists(data: dict | None) -> dict[str, dict[str, str]]:
+    """The three lists *data* (the file's contents) produces on top of the
+    built-in ones.  "replace" (the default mode): a section present replaces
+    its built-in list.  "merge": its entries are added to the built-in list."""
+    lists = {name: dict(BUILTIN_LISTS[name]) for name in SECTIONS}
+    if not data:
+        return lists
+    merge = data.get("mode", "replace") == "merge"
+    for name in SECTIONS:
+        section = _clean_section(data.get(name))
+        if section is None:
+            continue
+        if merge:
+            lists[name].update(section)
+        else:
+            lists[name] = section
+    return lists
+
+
+def _load_discovery_overrides() -> None:
+    """
+    (Re)build the director / studio / cast lists from the built-in ones and
+    the operator's JSON file.  The lists are swapped in whole, never edited in
+    place, so a render reading them mid-reload sees one version or the other.
+
+    See the module docstring at the top of this file for the full format.
+    """
+    global NOTABLE_STUDIOS, NOTABLE_DIRECTORS, NOTABLE_CAST, _loaded_stamp
+    _loaded_stamp = _file_stamp()
+    data = _read_override_file()
+    lists = effective_lists(data)
+    NOTABLE_STUDIOS, NOTABLE_DIRECTORS, NOTABLE_CAST = (
+        lists["studios"], lists["directors"], lists["cast"]
+    )
+    if data is not None:
+        mode = "merge" if data.get("mode", "replace") == "merge" else "replace"
+        counts = [
+            f"{len(lists[name])} {name}" for name in SECTIONS
+            if isinstance(data.get(name), dict)
+        ]
+        logger.info(f"discovery_overrides.json loaded ({mode}): {', '.join(counts) or 'no sections'}")
+
+
+def refresh_overrides() -> bool:
+    """Reload the lists if the file changed since they were built — the
+    dashboard's editor writes it from whichever worker served the save.  A
+    clock read on most calls, one stat every few seconds.  True when the
+    lists were rebuilt."""
+    global _checked_at
+    now = time.monotonic()
+    if now - _checked_at < _CHECK_INTERVAL:
+        return False
+    _checked_at = now
+    if _file_stamp() == _loaded_stamp:
+        return False
+    _load_discovery_overrides()
+    return True
+
+
+def current_lists() -> dict:
+    """What the dashboard's editor shows: each list as it applies now, and
+    whether it is the built-in one or the operator's."""
+    data = _read_override_file()
+    lists = effective_lists(data)
+    merge = bool(data) and data.get("mode", "replace") == "merge"
+    out = {}
+    for name in SECTIONS:
+        custom = bool(data) and isinstance(data.get(name), dict)
+        out[name] = {
+            "entries": [{"name": k, "label": v} for k, v in lists[name].items()],
+            "custom":  custom,
+            "merged":  custom and merge,
+            "builtin": [{"name": k, "label": v} for k, v in BUILTIN_LISTS[name].items()],
+        }
+    return out
+
+
+def validate_entries(entries) -> dict[str, str]:
+    """An editor-sent list ([{"name", "label"}, ...]) as a section dict.
+    Raises ValueError on anything malformed."""
+    if not isinstance(entries, list):
+        raise ValueError("entries must be a list")
+    if len(entries) > MAX_SECTION_ENTRIES:
+        raise ValueError(f"more than {MAX_SECTION_ENTRIES} entries")
+    out: dict[str, str] = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            raise ValueError("each entry must be an object")
+        name = str(item.get("name") or "").strip()
+        label = str(item.get("label") or "").strip() or name
+        if not name:
+            raise ValueError("an entry has no name")
+        if len(name) > MAX_NAME_LENGTH:
+            raise ValueError(f"name longer than {MAX_NAME_LENGTH} characters: {name[:40]}…")
+        if len(label) > MAX_LABEL_LENGTH:
+            raise ValueError(f"label for {name} is longer than {MAX_LABEL_LENGTH} characters")
+        out[name] = label
+    return out
+
+
+def _sort_key(name: str) -> tuple[str, str]:
+    """A–Z ignoring case and accents, so "Cuarón" sorts with "Cuaron"."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
+    return (plain.casefold(), name)
+
+
+def sorted_section(section: dict[str, str]) -> dict[str, str]:
+    return {k: section[k] for k in sorted(section, key=_sort_key)}
+
+
+def override_path() -> str:
+    return _OVERRIDE_PATH
+
+
+def override_writable() -> bool:
+    if os.path.exists(_OVERRIDE_PATH):
+        return os.access(_OVERRIDE_PATH, os.W_OK)
+    return os.access(os.path.dirname(_OVERRIDE_PATH) or ".", os.W_OK)
+
+
+def save_sections(changes: dict[str, dict[str, str] | None]) -> None:
+    """Write the editor's lists to the file: a dict becomes that section's
+    full list, None drops the section so the built-in list applies again.
+
+    The file is rewritten in "replace" mode.  A hand-written "merge" file has
+    its other sections expanded to the lists they produced, so nothing the
+    operator sees changes except what they edited.  Written atomically, then
+    reloaded here; other workers pick it up in refresh_overrides().
+    """
+    data = _read_override_file() or {}
+    was_merge = data.get("mode", "replace") == "merge"
+    applied = effective_lists(data)
+    out: dict = {"mode": "replace"}
+    for name in SECTIONS:
+        if name in changes:
+            if changes[name] is not None:
+                out[name] = sorted_section(changes[name])
+        elif isinstance(data.get(name), dict):
+            out[name] = applied[name] if was_merge else _clean_section(data[name])
+    directory = os.path.dirname(_OVERRIDE_PATH) or "."
+    tmp = os.path.join(directory, f".{os.path.basename(_OVERRIDE_PATH)}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, _OVERRIDE_PATH)
+    _load_discovery_overrides()
 
 
 _load_discovery_overrides()
