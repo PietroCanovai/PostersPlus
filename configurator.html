@@ -1922,6 +1922,22 @@
     gap: 8px;
     justify-content: flex-end;
   }
+  .report-subject { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+  .report-cats { display: flex; flex-direction: column; gap: 6px; }
+  .report-cats label {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--black2); font-size: 13px; color: var(--text-primary);
+  }
+  .report-cats label:has(input:checked) { border-color: var(--gold-dim); }
+  .report-cats input { accent-color: var(--gold); margin: 0; }
+  .report-note { font-family: inherit; font-size: 13px; resize: vertical; min-height: 64px; }
+  .report-warning {
+    font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+    border-left: 2px solid var(--warn, #e8963a); padding-left: 10px;
+  }
+  .report-msg { font-size: 12.5px; color: var(--text-primary); }
+  .report-msg.err { color: var(--danger, #e05555); }
 
 
   /* The preview is height-matched to the configurator. Treat its lower area as
@@ -3213,7 +3229,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <div class="field portrait-only" id="sash-badge-pos-field" style="display:none;">
               <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
-              <select id="cfg-sash-badge-pos" onchange="build(); queuePreviewReload()">
+              <select id="cfg-sash-badge-pos" onchange="updateBadgeStyleFields(); build(); queuePreviewReload()">
                 <option value="center" selected>Centre</option>
                 <option value="left">Left</option>
                 <option value="right">Right</option>
@@ -3355,7 +3371,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <!-- Frosted-notch only. Its dependent slider (Colour Saturation)
-                   stays in the Notch Size group with the other sliders. -->
+                   stays in the Notch Settings group with the other sliders. -->
               <div class="toggle-row portrait-only" id="sash-vignette-color-row" style="display:none;">
                 <span class="toggle-label" data-tip="Takes the notch's colour from whatever a tinted vignette landed on, so the two agree. Keeps its usual colour when neither vignette is tinted, or when the tinted one came out too near black to have a colour of its own. Frosted notch only.">Match Tinted Vignette</span>
                 <label class="toggle-switch">
@@ -3374,7 +3390,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <!-- Notch sizing/offset options — only shown in Notch mode -->
             <div class="cfg-sep portrait-only" id="sash-badge-offsets" style="display:none;">
-              <span class="group-title">Notch Size</span>
+              <span class="group-title">Notch Settings</span>
               <div class="field">
                 <label class="field-label">Width</label>
                 <div class="range-row">
@@ -3422,6 +3438,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-sbsat'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbsat">1.20</span>
+                </div>
+              </div>
+              <div class="field" id="sash-chip-y-field" style="display:none;">
+                <label class="field-label" data-tip="Moves the side chip down from the top corner, as a share of the poster's height. Top badge groups beside it follow. On Auto it only applies to posters where the notch moves to the side; a centred notch stays on the top edge.">Vertical Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-chip-y" min="-0.020" max="0.150" step="0.005" value="0.000" oninput="updateRange(this,'rng-scy'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-scy">0.000</span>
                 </div>
               </div>
             </div>
@@ -3891,6 +3914,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <input type="checkbox" id="tog-landscape" hidden>
             <!-- Into the admin dashboard's artwork editor for this title.  Only
                  when the operator turned it on there (off by default). -->
+            <!-- Report this poster to the operator (REPORTS_ENABLED). -->
+            <button type="button" class="icon-btn" id="report-poster" hidden
+                    aria-label="Report a problem with this poster"
+                    data-tip="Report a problem with this poster to whoever runs this instance: text on a textless poster, the wrong art or logo, wrong details."
+                    onclick="openReportModal()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>
+            </button>
             <a class="icon-btn" id="artwork-edit-link" hidden
                aria-label="Edit this title's artwork in the admin dashboard"
                data-tip="Choose this title's poster, logo and landscape art for everyone, in the admin dashboard.">
@@ -3989,6 +4019,22 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
     <div class="import-modal-btns">
       <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" onclick="applyImport()">Import</button>
+    </div>
+  </div>
+</div>
+<div class="import-modal" id="report-modal" onclick="if(event.target===this)closeReportModal()">
+  <div class="import-modal-box">
+    <div>
+      <div class="import-modal-title">Report this poster</div>
+      <div class="report-subject" id="report-subject"></div>
+    </div>
+    <div class="report-cats" id="report-cats" role="radiogroup" aria-label="What is wrong"></div>
+    <textarea class="import-input report-note" id="report-note" maxlength="500" rows="3" placeholder="Anything that helps (optional)"></textarea>
+    <div class="report-warning">Reports go straight to whoever runs this instance, who fixes posters by hand. Only report a real problem with this poster. Addresses that send lots of reports are blocked, and everything they sent is deleted.</div>
+    <div class="report-msg" id="report-msg" hidden></div>
+    <div class="import-modal-btns">
+      <button class="btn btn-reset" onclick="closeReportModal()">Cancel</button>
+      <button class="btn btn-primary" id="report-send" onclick="sendReport()" disabled>Send report</button>
     </div>
   </div>
 </div>
@@ -4255,6 +4301,7 @@ const _BACK_MODALS = {
   'preset-modal':   () => closePresetModal(),
   'import-modal':   () => closeImportModal(),
   'whatsnew-modal': () => closeWhatsNew(),
+  'report-modal':   () => closeReportModal(),
 };
 
 // Back gesture / button: close the topmost layer instead of leaving the page.
@@ -4469,6 +4516,9 @@ function updateResolutionAvailability() {
   const field = document.getElementById('resolution-field');
   const sel   = document.getElementById('cfg-resolution');
   if (!field || !sel) return;
+  // A restore runs before /server-caps answers; clamping to the 500 fallback
+  // then would throw away the saved size.  fetchServerCaps calls this again.
+  if (!serverCapsLoaded) return;
   const max = Number(serverCaps.max_poster_resolution) || 500;
   field.hidden = max <= 500;
   document.getElementById('resolution-label')?.setAttribute('data-tip',
@@ -6064,6 +6114,9 @@ function updateExternalLink() {
   btn.hidden = !(imdb || tmdb);
   if (btn.hidden) closeExternalMenu();
 
+  const report = document.getElementById('report-poster');
+  if (report) report.hidden = !(serverCaps.reports && (tmdb || imdb));
+
   const edit = document.getElementById('artwork-edit-link');
   if (edit) {
     edit.hidden = !(serverCaps.artwork_edit_link && tmdb);
@@ -6545,6 +6598,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       // Every notch style can float off centre (it was frosted only).
       const _pos = vEl('cfg-sash-badge-pos') || 'center';
       if (_pos !== 'center') params.set('sash_badge_pos', _pos);
+      if (_pos !== 'center' && n('cfg-sash-chip-y') !== 0) params.set('sash_chip_y', n('cfg-sash-chip-y').toFixed(3));
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -7521,6 +7575,9 @@ function updateBadgeStyleFields() {
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-pos-field').style.display =
     (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch') ? '' : 'none';
+  document.getElementById('sash-chip-y-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch'
+     && (vEl('cfg-sash-badge-pos') || 'center') !== 'center') ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
@@ -7811,7 +7868,7 @@ function updateShapeFields() {
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
-                    'sash-badge-saturation-field', 'sash-badge-pos-field']) {
+                    'sash-badge-saturation-field', 'sash-badge-pos-field', 'sash-chip-y-field']) {
     const el = document.getElementById(id);
     if (!el) continue;
     // Portrait: show everything again first, then let the mode logic below
@@ -8438,6 +8495,76 @@ function toggleImportBar() {
   setTimeout(() => { input.focus(); input.select(); }, 50);
 }
 
+// ── Poster reports ───────────────────────────────────────────────────────────
+// The operator reads them in the dashboard's Reports view.  The poster URL
+// goes along (the server strips every key from it) so they see what the user
+// saw.
+function openReportModal() {
+  const cats = serverCaps.report_categories || {};
+  document.getElementById('report-subject').textContent =
+    document.getElementById('selected-title')?.textContent || '';
+  document.getElementById('report-cats').innerHTML = Object.entries(cats).map(([k, label]) =>
+    `<label><input type="radio" name="report-cat" value="${k}" onchange="_reportValidate()">${label}</label>`).join('');
+  document.getElementById('report-note').value = '';
+  document.getElementById('report-note').oninput = _reportValidate;
+  const msg = document.getElementById('report-msg');
+  msg.hidden = true; msg.className = 'report-msg';
+  _reportValidate();
+  const modal = document.getElementById('report-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('report-modal');
+}
+
+function closeReportModal() {
+  document.getElementById('report-modal').classList.remove('open');
+  _popModalState('report-modal');
+}
+
+function _reportValidate() {
+  const cat = document.querySelector('input[name="report-cat"]:checked')?.value;
+  const note = document.getElementById('report-note').value.trim();
+  document.getElementById('report-note').placeholder = cat === 'other'
+    ? 'What is wrong with it?' : 'Anything that helps (optional)';
+  document.getElementById('report-send').disabled = !cat || (cat === 'other' && !note);
+}
+
+async function sendReport() {
+  const cat = document.querySelector('input[name="report-cat"]:checked')?.value;
+  if (!cat) return;
+  const send = document.getElementById('report-send');
+  const msg = document.getElementById('report-msg');
+  send.disabled = true;
+  const ak = vEl('cfg-access-key');
+  let ok = false, text;
+  try {
+    const resp = await fetch('/report' + (ak ? `?access_key=${encodeURIComponent(ak)}` : ''), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        media_type: vEl('cfg-media-type') === 'tv' ? 'tv' : 'movie',
+        tmdb_id: vEl('cfg-tmdb-resolved') || '',
+        imdb_id: vEl('cfg-imdb') || '',
+        title: document.getElementById('selected-title')?.textContent || '',
+        category: cat,
+        note: document.getElementById('report-note').value.trim(),
+        url: buildPreviewUrl(),
+      }),
+    });
+    ok = resp.ok;
+    let body = null;
+    try { body = await resp.json(); } catch (_) {}
+    text = ok ? 'Thanks, your report was sent.' : (body && body.detail) || `The report could not be sent (HTTP ${resp.status}).`;
+  } catch (_) {
+    text = 'The report could not be sent. Check your connection.';
+  }
+  msg.textContent = text;
+  msg.className = 'report-msg' + (ok ? '' : ' err');
+  msg.hidden = false;
+  if (ok) setTimeout(closeReportModal, 1400);
+  else _reportValidate();
+}
+
 function closeImportModal() {
   document.getElementById('import-modal').classList.remove('open');
   document.getElementById('import-input').value = '';
@@ -8728,6 +8855,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   else if (p.has('sash_badge'))          _setEl('cfg-sash-mode', p.get('sash_badge') === 'true' ? 'notch' : 'sash');
   if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
   _setEl('cfg-sash-badge-pos', p.get('sash_badge_pos') || 'center');
+  _setEl('cfg-sash-chip-y', p.get('sash_chip_y') || '0.000');
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));

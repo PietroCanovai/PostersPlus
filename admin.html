@@ -686,6 +686,38 @@
     .header-link span { display: none; }
     input[type="text"], input[type="password"], input[type="number"], select { min-height: 44px; font-size: 16px; }
   }
+
+  /* Reports */
+  .rp-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .rp-limits { font-size: 13px; color: var(--text-secondary); }
+  .rp-title { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 18px; padding: 16px 0; border-top: 1px solid var(--border); }
+  .rp-title:first-of-type { border-top: 0; }
+  .rp-thumb { width: 120px; aspect-ratio: 2 / 3; border-radius: 6px; background: var(--black4); overflow: hidden; display: block; }
+  .rp-thumb.landscape { aspect-ratio: 16 / 9; }
+  .rp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .rp-noimg { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 12px; color: var(--text-secondary); text-align: center; padding: 8px; }
+  .rp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .rp-head h3 { font-family: var(--serif); font-size: 22px; font-weight: 500; color: var(--cream); margin: 0; }
+  .rp-meta { font-size: 12.5px; color: var(--text-secondary); }
+  .rp-meta a { color: inherit; }
+  .rp-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .rp-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black1); }
+  .rp-cat { font-size: 14px; color: var(--cream); font-weight: 500; }
+  .rp-note { font-size: 13.5px; color: var(--text-primary); margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rp-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+  .rp-sub .who { font-family: var(--mono); }
+  .rp-item-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .rp-status { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-secondary); }
+  .rp-status.resolved { color: var(--ok); }
+  .rp-blocks { margin-top: 26px; }
+  .rp-block { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); }
+  .rp-block .who { font-family: var(--mono); color: var(--text-primary); }
+  @media (max-width: 640px) {
+    .rp-title { grid-template-columns: 1fr; }
+    .rp-thumb { width: 120px; }
+    .rp-item { grid-template-columns: 1fr; }
+    .rp-item-actions { justify-content: flex-start; }
+  }
 </style>
 <script>try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElement.classList.add('light-mode')}catch(e){}</script>
 </head>
@@ -850,7 +882,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'sash-lists' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -866,6 +898,7 @@ async function loadStatus() {
   status = r.body;
   if (activeView === 'overview') renderView();
   else refreshSimklPanel();
+  if (model) renderNav();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -876,6 +909,7 @@ function renderNav() {
   let html = `<div class="nav-title">Instance</div>`;
   html += `<a href="#overview" data-view="overview" class="${activeView === 'overview' ? 'active' : ''}"><span>Overview</span>${pending.size ? '<span class="dot" title="Restart required"></span>' : ''}</a>`;
   html += `<a href="#artwork" data-view="artwork" class="${activeView === 'artwork' ? 'active' : ''}"><span>Artwork</span></a>`;
+  html += `<a href="#reports" data-view="reports" class="${activeView === 'reports' ? 'active' : ''}"><span>Reports</span>${status && status.reports_open ? `<span class="chip pending">${status.reports_open}</span>` : ''}</a>`;
   html += `<a href="#sash-lists" data-view="sash-lists" class="${activeView === 'sash-lists' ? 'active' : ''}"><span>Sash lists</span>${slDirtySections().length ? `<span class="chip dirty">${slDirtySections().length}</span>` : ''}</a>`;
   html += `<div class="nav-sep"></div><div class="nav-title">Settings</div>`;
   for (const g of model.groups) {
@@ -1205,9 +1239,122 @@ function renderView() {
   // Artwork search page keeps the dashboard's width.
   document.querySelector('.shell').classList.toggle('wide', activeView === 'artwork' && !!art.title);
   if (activeView === 'artwork') { main.innerHTML = renderArtwork(); if (!art.list) loadArtList(); return; }
+  if (activeView === 'reports') { main.innerHTML = renderReports(); loadReports(); return; }
   if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
   main.innerHTML = g ? renderGroup(g) : '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reports.  What users flagged from the configurator's live preview
+// (REPORTS_ENABLED), grouped by title.  Each carries the poster URL the user
+// was looking at, keys stripped, so the thumbnail is what they saw.
+const rp = { status: 'open', data: null, busy: false };
+
+async function loadReports() {
+  const r = await api('/admin/api/reports?status=' + encodeURIComponent(rp.status));
+  if (!r.ok) { toast(r.body && r.body.detail ? r.body.detail : `Loading reports failed (HTTP ${r.status})`); return; }
+  rp.data = r.body;
+  if (status) status.reports_open = r.body.enabled ? r.body.counts.open : null;
+  renderNav();
+  if (activeView === 'reports') document.getElementById('main').innerHTML = renderReports();
+}
+
+function rpSetStatus(s) { rp.status = s; rp.data = null; renderView(); }
+
+async function rpPost(path, body, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  if (rp.busy) return;
+  rp.busy = true;
+  const r = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  rp.busy = false;
+  if (!r.ok) { toast(r.body && r.body.detail ? r.body.detail : `Failed (HTTP ${r.status})`); return; }
+  if (r.body && r.body.deleted != null && path.endsWith('/block')) toast(`Blocked; ${r.body.deleted} report${r.body.deleted === 1 ? '' : 's'} deleted`);
+  await loadReports();
+}
+const rpMark    = (ids, s) => rpPost('/admin/api/reports/status', { ids, status: s });
+const rpDelete  = ids => rpPost('/admin/api/reports/delete', { ids }, ids.length > 1 ? `Delete these ${ids.length} reports?` : null);
+const rpBlock   = who => rpPost('/admin/api/reports/block', { reporter: who }, 'Block this reporter?\n\nIts unresolved reports are deleted, and it can\'t send more until you unblock it here.');
+const rpUnblock = who => rpPost('/admin/api/reports/unblock', { reporter: who });
+
+function rpThumb(t) {
+  const d = rp.data;
+  const q = new URLSearchParams(t.params || '');
+  if (!q.has('tmdb_id') && t.tmdb_id) q.set('tmdb_id', t.tmdb_id);
+  // Without a server TMDB key an IMDb id still renders (Cinemeta); the
+  // reporter's own key is never kept.
+  if (!q.has('imdb_id') && t.imdb_id) q.set('imdb_id', t.imdb_id);
+  if (!q.has('type')) q.set('type', t.media_type);
+  if (d.access_key) q.set('access_key', d.access_key);
+  const landscape = (q.get('shape') || '') === 'landscape';
+  const src = '/poster?' + q.toString();
+  return `<a class="rp-thumb ${landscape ? 'landscape' : ''}" href="${esc(src)}" target="_blank" rel="noopener" title="Open the poster as the reporter saw it"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'rp-noimg',textContent:'No preview'}))"></a>`;
+}
+
+function rpGroups(list) {
+  const groups = new Map();
+  for (const r of list) {
+    const key = `${r.media_type}:${r.tmdb_id || r.imdb_id}`;
+    if (!groups.has(key)) groups.set(key, { ...r, items: [] });
+    groups.get(key).items.push(r);
+  }
+  return [...groups.values()];
+}
+
+function renderReports() {
+  const d = rp.data;
+  let html = `<div class="panel"><div class="panel-header"><span class="panel-title">Reports</span><span class="panel-index">posters users flagged from the configurator</span></div><div class="panel-body">`;
+  if (!d) return html + `<div class="art-empty">Loading…</div></div></div>`;
+  const fw = d.forwarding || {};
+  if (!d.enabled) {
+    html += `<div class="notice"><div class="notice-body"><p><strong>Reports are off.</strong> Turn on <em>Poster reports</em> in the <a href="#poster-reports" onclick="event.preventDefault();setView('poster-reports')">Poster reports</a> settings to add a Report button to the configurator's live preview. Reports already filed stay listed here.</p></div></div>`;
+  }
+  if (fw.state === 'untrusted') {
+    html += `<div class="notice bad"><div class="notice-body"><p><strong>Reports are paused: client addresses aren't forwarded.</strong> ${esc(fw.help)}</p><p>In compose: <code>FORWARDED_ALLOW_IPS=172.18.0.0/16</code> (your proxy's network), or <code>*</code> if nothing but the proxy can reach port 8000.</p></div></div>`;
+  } else if (d.enabled && fw.state === 'private') {
+    html += `<div class="notice warn"><div class="notice-body"><p>${esc(fw.help)}</p></div></div>`;
+  }
+  const c = d.counts || {};
+  html += `<div class="rp-bar"><div class="art-seg">${[['open', 'Open'], ['resolved', 'Resolved'], ['dismissed', 'Dismissed'], ['all', 'All']].map(([k, n]) =>
+    `<button type="button" class="${rp.status === k ? 'on' : ''}" onclick="rpSetStatus('${k}')">${n}${k !== 'all' && c[k] ? ' · ' + c[k] : ''}</button>`).join('')}</div>
+    <span class="rp-limits">${d.per_ip} per address a day${d.purge_at ? ` · more than ${d.purge_at} in 7 days deletes them and blocks the address` : ''} · resolved reports don't count</span></div>`;
+
+  const groups = rpGroups(d.reports || []);
+  if (!groups.length) html += `<div class="art-empty">${rp.status === 'open' ? 'No open reports.' : 'Nothing here.'}</div>`;
+  for (const t of groups) {
+    const ids = t.items.map(r => r.id);
+    const openIds = t.items.filter(r => r.status === 'open').map(r => r.id);
+    const tmdb = t.tmdb_id ? `https://www.themoviedb.org/${t.media_type}/${encodeURIComponent(t.tmdb_id)}` : '';
+    html += `<div class="rp-title">${rpThumb(t)}<div>
+      <div class="rp-head"><h3>${esc(t.title || (t.tmdb_id ? 'TMDB ' + t.tmdb_id : t.imdb_id))}</h3>
+        <span class="rp-meta">${t.media_type === 'tv' ? 'Series' : 'Movie'}${t.tmdb_id ? ` · <a href="${esc(tmdb)}" target="_blank" rel="noopener noreferrer">tmdb:${esc(t.tmdb_id)}</a>` : ''}${t.imdb_id ? ` · <a href="https://www.imdb.com/title/${esc(t.imdb_id)}/" target="_blank" rel="noopener noreferrer">${esc(t.imdb_id)}</a>` : ''} · ${t.items.length} report${t.items.length === 1 ? '' : 's'}</span></div>
+      <div class="rp-actions">
+        ${t.tmdb_id ? `<button type="button" class="art-btn primary" onclick="setView('artwork');artOpen('${t.media_type}','${esc(t.tmdb_id)}')">Edit artwork</button>` : ''}
+        ${openIds.length ? `<button type="button" class="art-btn" onclick="rpMark([${openIds}],'resolved')">Resolve all</button><button type="button" class="art-btn" onclick="rpMark([${openIds}],'dismissed')">Dismiss all</button>` : ''}
+        <button type="button" class="art-btn danger" onclick="rpDelete([${ids}])">Delete all</button>
+      </div>`;
+    for (const r of t.items) {
+      html += `<div class="rp-item"><div>
+        <div class="rp-cat">${esc((d.categories || {})[r.category] || r.category)}${rp.status === 'all' || r.status !== rp.status ? ` <span class="rp-status ${esc(r.status)}">${esc(r.status)}</span>` : ''}</div>
+        ${r.note ? `<div class="rp-note">${esc(r.note)}</div>` : ''}
+        <div class="rp-sub">${fmtAgo(r.created_at)} · reporter <span class="who" title="A keyed hash of the reporter's address; the address itself isn't stored">${esc(r.reporter.slice(0, 8))}</span>${r.reporter_total > 1 ? ` (${r.reporter_total} reports)` : ''}</div>
+      </div><div class="rp-item-actions">
+        ${r.status === 'open'
+          ? `<button type="button" class="art-btn" onclick="rpMark([${r.id}],'resolved')">Resolve</button><button type="button" class="art-btn" onclick="rpMark([${r.id}],'dismissed')">Dismiss</button>`
+          : `<button type="button" class="art-btn" onclick="rpMark([${r.id}],'open')">Reopen</button>`}
+        <button type="button" class="art-btn danger" onclick="rpDelete([${r.id}])">Delete</button>
+        <button type="button" class="art-btn danger" onclick="rpBlock('${esc(r.reporter)}')">Block reporter</button>
+      </div></div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  if ((d.blocks || []).length) {
+    html += `<div class="rp-blocks"><div class="field-head"><span class="field-label">Blocked reporters</span></div>`;
+    html += d.blocks.map(b => `<div class="rp-block"><span><span class="who">${esc(b.reporter.slice(0, 8))}</span> · ${esc(b.reason)} · ${b.removed} report${b.removed === 1 ? '' : 's'} deleted · ${fmtAgo(b.blocked_at)}</span><button type="button" class="art-btn" onclick="rpUnblock('${esc(b.reporter)}')">Unblock</button></div>`).join('');
+    html += `</div>`;
+  }
+  return html + `</div></div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

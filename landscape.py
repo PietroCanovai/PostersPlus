@@ -541,6 +541,14 @@ def _draw_logo(image: Image.Image, logo: Image.Image, align: str = "left",
     else:
         y = (int(height * _BASELINE) if baseline is None else baseline) - drawn.height
 
+    # Black ink vanishes into a dark band; lighten it as the portrait does.
+    under = np.asarray(image.crop((max(0, x), max(0, y), min(width, x + drawn.width),
+                                   min(height, y + drawn.height))).convert("RGB"),
+                       dtype=np.float32)
+    if under.size and _luma(under.reshape(-1, 3).mean(axis=0)) / 255.0 < 0.40:
+        from tmdb import ensure_light_logo
+        drawn = ensure_light_logo(drawn)
+
     # Soft drop shadow so a white wordmark survives a light patch in the band.
     # Built on a padded canvas (see _drop_shadow): blurring the logo's own
     # alpha on a canvas exactly its size clamps at the edges, and wherever the

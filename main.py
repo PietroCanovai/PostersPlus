@@ -959,6 +959,7 @@ from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
 import tvdb
 import anime
 import art_overrides
+import reports
 import fanart
 import cinemeta
 
@@ -1884,6 +1885,7 @@ class RequestConfig:
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
+    sash_chip_y:      float = 0.0          # side chip: moved down by this fraction of poster height
     sash_badge_pad:   float = 1.0          # vertical padding scale (<1 tightens top/bottom space)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
@@ -2424,6 +2426,7 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.sash_mode = "notch" if cfg.sash_badge else "sash"
     cfg.sash_badge_inset         = _f("sash_badge_inset",         cfg.sash_badge_inset,         -0.02, 0.02)
     cfg.sash_badge_pad           = _f("sash_badge_pad",           cfg.sash_badge_pad,           0.5, 1.5)
+    cfg.sash_chip_y              = _f("sash_chip_y",              cfg.sash_chip_y,              -0.02, 0.15)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
     if "sash_badge_opacity" in params:
@@ -4784,7 +4787,8 @@ def _build_poster(
                                      star=_is_star,
                                      text_color=cfg.sash_text_color,
                                      position=cfg.sash_badge_pos,
-                                     body_opacity=cfg.sash_badge_opacity)
+                                     body_opacity=cfg.sash_badge_opacity,
+                                     chip_offset=cfg.sash_chip_y)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
@@ -4964,7 +4968,7 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
 
     band_top, band_h = side_chip_band(width, height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
-                                      cfg.sash_badge_pad, cfg.sash_badge_inset)
+                                      cfg.sash_badge_pad, cfg.sash_badge_inset + cfg.sash_chip_y)
     top_line = band_top + band_h / 2
     if cfg.sash_mode == "notch" and cfg.sash_badge_pos not in ("left", "right"):
         # A centred notch hangs from the top edge; share its line.
@@ -6593,7 +6597,7 @@ async def trending_addon(rest: str, request: Request):
 
 
 @app.get("/server-caps")
-async def server_caps(access_key: str = ""):
+async def server_caps(request: Request, access_key: str = ""):
     if not _configurator_key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     next_refresh_hours = None
@@ -6645,7 +6649,53 @@ async def server_caps(access_key: str = ""):
         # Off unless the operator turns it on: on a public instance it would
         # only point visitors at a login they can't pass.
         "artwork_edit_link":     _admin.enabled() and _artwork_edit_link_on(),
+        # The preview's Report button (REPORTS_ENABLED), hidden while the
+        # per-address limits can't tell visitors apart.
+        "reports":               _reports_open(request),
+        "report_categories":     reports.CATEGORIES,
     }
+
+
+def _reports_open(request: Request) -> bool:
+    """Whether this request may file reports.  Records how its address came
+    through the proxy, which the dashboard reports on."""
+    if not (_cfg.REPORTS_ENABLED and _admin.enabled()):
+        return False
+    state = reports.forwarding_state(request.client.host if request.client else None, request.headers)
+    reports.note_forwarding(state)
+    return state != "untrusted"
+
+
+@app.post("/report")
+async def report_poster(request: Request, access_key: str = ""):
+    """A user's report on the poster in their live preview.  Body: {media_type,
+    tmdb_id, imdb_id, title, category, note, url}; url is the preview's poster
+    URL, kept without any key so the operator can see what they saw."""
+    if not (_cfg.REPORTS_ENABLED and _admin.enabled()):
+        raise HTTPException(status_code=404, detail="Reports are off on this instance")
+    if not _configurator_key_ok(access_key):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    if not _reports_open(request):
+        raise HTTPException(status_code=503, detail="Reports are paused on this instance")
+    if int(request.headers.get("content-length") or 0) > 16_384:
+        raise HTTPException(status_code=413, detail="Report too large")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    text = lambda k: str(body.get(k) or "")[:reports.MAX_PARAMS]
+    try:
+        reports.submit(
+            reporter=reports.reporter_id(request.client.host if request.client else None),
+            media_type=text("media_type"), tmdb_id=text("tmdb_id"), imdb_id=text("imdb_id"),
+            title=text("title"), category=text("category"), note=text("note"),
+            params=reports.clean_params(text("url")),
+        )
+    except reports.ReportError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------------------
@@ -6675,7 +6725,9 @@ _configurator_etag: str | None = None
 #      differences only, but bumped so clients pick up the faster renderer.
 # "9": the sash is drawn by Skia at 1x and the frosted notch at 1x — label
 #      glyphs are anti-aliased differently, so cached composites are re-drawn.
-_RENDER_CACHE_VERSION = "9"
+# "10": black logos on a dark background are lightened per pixel (accents
+#      kept) instead of flattened to white, and landscape logos get it too.
+_RENDER_CACHE_VERSION = "10"
 
 
 # Targeted invalidation, for drawing changes that only some posters show.

@@ -47,6 +47,8 @@ Every setting is optional: API keys can be omitted from the server and passed pe
 
   Thumbnails load in your browser straight from the providers, so browsing downloads nothing to the server. A chosen image is downloaded once, when a poster first needs it, and cached like any other art. Choices are stored in the cache database, apply straight away (no restart), and clear that title's rendered posters. Clients that already hold the old poster keep it until their cache revalidates it.
 
+- **Reports**- what users flagged with the configurator's Report button, once `REPORTS_ENABLED` is on: text on a textless poster, the wrong art, the wrong logo, wrong details, or something else with a note. Reports for the same title are grouped, with the poster rendered from the reporter's own settings (their URL is kept with every key removed), a link into the Artwork editor, and Resolve, Dismiss, Delete and Block reporter. `REPORTS_PER_IP` caps how many reports one address files a day. An address that sends more than `REPORTS_PURGE_THRESHOLD` in 7 days, refused ones included, has its unresolved reports deleted and is blocked. A report you resolve stops counting against both limits, so someone whose reports are right isn't held back; dismissing or deleting one gives nothing back, and reopening a resolved one counts it again. Blocked addresses are listed at the bottom, where they can be unblocked. Addresses aren't stored: a reporter is a keyed hash of its address (IPv6 by its /64). Because the limits are per address, they need the real client address: behind a reverse proxy set `FORWARDED_ALLOW_IPS` (see *Security* below). While a request shows the proxy's forwarded address being ignored, the Report button is hidden, reports are refused, and this view says what to set.
+
 **What saving does.** Saved values go to `settings.json` in the cache volume; the dashboard never edits your `compose.yaml` or `.env` (it cannot see them). At startup the file is read alongside the environment and takes precedence per key, so a change made here always takes effect, and an env line you already have keeps working until you save over it. *Reset* on a field drops the saved value and the env or default shows through again.
 
 **Restart to apply.** Every module reads its configuration at startup, so saves apply on the next start. The dashboard says which settings are waiting and shows a *Restart required* notice with a **Restart now** button: the server stops gracefully (in-flight renders finish) and the container's restart policy starts it again- `compose.yaml` ships with `restart: unless-stopped`; without a policy the container stays stopped and you `docker compose up -d` it by hand. The page waits for the server to come back and reloads itself.
@@ -125,6 +127,14 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TRAKT_CLIENT_ID` | - | From an existing Trakt API app (creating one needs Trakt VIP). Only used when `WATCHLIST_SOURCE` is `trakt`. |
 | `TRAKT_USERNAME` | - | The public profile whose watchlist is read. Only used when `WATCHLIST_SOURCE` is `trakt`. |
 | `PMDB_API_KEY` | - | A PublicMetaDB API key (pm-...), created under Settings → API on publicmetadb.com. Only read access is used. Only used when `WATCHLIST_SOURCE` is `pmdb`. |
+
+#### Poster reports
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPORTS_ENABLED` | `false` | Add a Report button to the configurator's live preview so users can flag a poster (text on a textless poster, wrong art, wrong logo, wrong details). Reports land in the dashboard's Reports view. Needs the admin dashboard (ADMIN_KEY) to read them. Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address: the limits below are per address, and reports stay paused while every visitor arrives as the proxy. `true` or `false`. |
+| `REPORTS_PER_IP` | `10` | How many reports one address may file in 24 hours. Further reports are refused with a message saying so. Reports you resolve stop counting, so someone whose reports are right is not held back; dismissed and deleted ones still count. Only used when `REPORTS_ENABLED` is `true`. |
+| `REPORTS_PURGE_THRESHOLD` | `50` | An address that sends more than this many reports within 7 days, refused ones included and resolved ones not, has its unresolved reports deleted and is blocked from reporting. Blocked addresses are listed in the Reports view, where they can be unblocked. 0 turns this off. Only used when `REPORTS_ENABLED` is `true`. |
 
 #### Ratings
 

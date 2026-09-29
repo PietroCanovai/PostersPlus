@@ -86,6 +86,7 @@ GROUP_ORDER = (
     "Output",
     "Trending",
     "Watchlist",
+    "Poster reports",
     "Ratings",
     "Genres",
     "Caching",

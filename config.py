@@ -77,6 +77,13 @@ CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='
 # only invites people to try keys against the dashboard.  _flag isn't defined
 # yet at this point, hence the inline parse.
 SHOW_ADMIN_LINK       = _env('SHOW_ADMIN_LINK', "false", group='Access & serving', kind='bool', label='Admin link in configurator', help="Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled.").strip().lower() in ("1", "true", "yes")
+# Poster reports (reports.py): a Report button on the configurator's preview
+# that files into the dashboard's Reports view.  Limits are per address, so
+# behind a reverse proxy FORWARDED_ALLOW_IPS has to be set; reports pause
+# while it isn't (see reports.forwarding_state).
+REPORTS_ENABLED         = _env('REPORTS_ENABLED', "false", group='Poster reports', kind='bool', label='Poster reports', help="Add a Report button to the configurator's live preview so users can flag a poster (text on a textless poster, wrong art, wrong logo, wrong details). Reports land in the dashboard's Reports view. Needs the admin dashboard (ADMIN_KEY) to read them. Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address: the limits below are per address, and reports stay paused while every visitor arrives as the proxy.").strip().lower() in ("1", "true", "yes")
+REPORTS_PER_IP          = int(_env('REPORTS_PER_IP', "10", group='Poster reports', kind='int', label='Reports per address per day', help='How many reports one address may file in 24 hours. Further reports are refused with a message saying so. Reports you resolve stop counting, so someone whose reports are right is not held back; dismissed and deleted ones still count.', min=1, max=1000, show_if=('REPORTS_ENABLED', 'true')))
+REPORTS_PURGE_THRESHOLD = int(_env('REPORTS_PURGE_THRESHOLD', "50", group='Poster reports', kind='int', label='Mass-report threshold', help='An address that sends more than this many reports within 7 days, refused ones included and resolved ones not, has its unresolved reports deleted and is blocked from reporting. Blocked addresses are listed in the Reports view, where they can be unblocked. 0 turns this off.', min=0, max=100000, show_if=('REPORTS_ENABLED', 'true')))
 # Largest portrait width the resolution URL parameter may ask for.  Off (500,
 # the default canvas) unless raised: a 2000 px render costs ~12x the CPU of a
 # 500 and a large peak of memory, so a public instance must not let anyone

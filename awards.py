@@ -1644,6 +1644,7 @@ def draw_award_badge(
     text_color: tuple[int, int, int] | None = None,  # override default white text
     position: str = "center",         # "center" | "left" | "right"
     body_opacity: float | None = None,  # black/silver/gold body opacity; None = the style's own
+    chip_offset: float = 0.0,         # side chip only: moved down by this fraction of poster height
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1756,7 +1757,7 @@ def draw_award_badge(
     if position in ("left", "right"):
         return _draw_side_chip(
             image, label, position == "right", font_size_ss, SS, _chip_w_text,
-            _chip_badge_h, _chip_min_h, notch_inset,
+            _chip_badge_h, _chip_min_h, notch_inset + chip_offset,
             frost_opacity, frost_saturation, frost_reference, tint_rgb,
             style=notch_style, trim_rgb=trim_rgb if notch_style in ("silver", "gold") else None,
             text_color=text_color, body_opacity=body_opacity,

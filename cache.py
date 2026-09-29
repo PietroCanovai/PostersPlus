@@ -121,6 +121,45 @@ def _add_column_if_missing(
     return True
 
 
+# Poster reports from the configurator (reports.py).  reporter is an HMAC of
+# the reporting address, never the address itself; report_attempts holds
+# every report an address sent in the last 7 days, refused ones too (what
+# REPORTS_PURGE_THRESHOLD counts).  report_id is set when the attempt was
+# filed, and credited while that report is resolved: a resolved report stops
+# counting against either limit.
+REPORT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS poster_reports (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at  REAL NOT NULL,
+        reporter    TEXT NOT NULL,
+        media_type  TEXT NOT NULL,
+        tmdb_id     TEXT NOT NULL DEFAULT '',
+        imdb_id     TEXT NOT NULL DEFAULT '',
+        title       TEXT NOT NULL DEFAULT '',
+        category    TEXT NOT NULL,
+        note        TEXT NOT NULL DEFAULT '',
+        params      TEXT NOT NULL DEFAULT '',
+        status      TEXT NOT NULL DEFAULT 'open',
+        resolved_at REAL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_poster_reports_reporter ON poster_reports (reporter, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_poster_reports_status ON poster_reports (status, created_at)",
+    """CREATE TABLE IF NOT EXISTS report_attempts (
+        reporter  TEXT NOT NULL,
+        ts        REAL NOT NULL,
+        report_id INTEGER,
+        credited  INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_report_attempts ON report_attempts (reporter, ts)",
+    """CREATE TABLE IF NOT EXISTS report_blocks (
+        reporter   TEXT PRIMARY KEY,
+        blocked_at REAL NOT NULL,
+        reason     TEXT NOT NULL DEFAULT '',
+        removed    INTEGER NOT NULL DEFAULT 0
+    )""",
+)
+
+
 def init_db() -> None:
     global _initialised
     os.makedirs(TMDB_POSTER_CACHE_DIR, exist_ok=True)
@@ -373,6 +412,11 @@ def init_db() -> None:
     """)
     # A textless pick's manual crop, "x,y,zoom" (see art_overrides.parse_crop).
     _add_column_if_missing(conn, "art_overrides", "crop", "TEXT")
+
+    for statement in REPORT_SCHEMA:
+        conn.execute(statement)
+    _add_column_if_missing(conn, "report_attempts", "report_id", "INTEGER")
+    _add_column_if_missing(conn, "report_attempts", "credited", "INTEGER NOT NULL DEFAULT 0")
 
     # Migrate existing tmdb_metadata_cache rows.
     for col, definition in (

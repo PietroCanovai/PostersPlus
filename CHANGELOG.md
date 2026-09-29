@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Users can report a poster
+
+- With **Poster reports** on (`REPORTS_ENABLED`, off by default), the
+  configurator's live preview has a Report button. Users pick what is wrong
+  (text on a textless poster, wrong art, wrong logo, wrong details, or
+  something else), confirm, and the report lands in the dashboard's new
+  **Reports** view, grouped by title with the poster as they saw it and a
+  link into the Artwork editor.
+- `REPORTS_PER_IP` limits reports per address per day (10). An address that
+  sends more than `REPORTS_PURGE_THRESHOLD` (50) in a week has its
+  unresolved reports deleted and is blocked, until unblocked in the
+  dashboard. Reports you resolve stop counting against either limit;
+  dismissed and deleted ones don't.
+  Addresses are stored only as a keyed hash.
+- The limits need each visitor's real address. Behind a reverse proxy
+  whose forwarded addresses aren't trusted (`FORWARDED_ALLOW_IPS` unset),
+  reports pause and the dashboard says what to set.
+
+### Black logos turn light on dark posters
+
+- A black or near-black logo over a dark bottom (the usual vignette) is now
+  lightened: its black ink turns white (dark greys light grey, navy pale
+  blue), while any coloured parts keep their colour. Logos where the black
+  is an outline, a card behind light letters or a shadow are left alone.
+  This replaces the old whitening, which skipped many plain black logos and
+  turned coloured accents white. Landscape logos get it too.
+
+### Side notch vertical position
+
+- A notch set to Left, Right or Auto has a **Vertical Position** slider
+  (`sash_chip_y`) that moves the side chip down from the corner; top badge
+  groups beside it follow. On Auto it only applies when the chip goes to
+  the side.
+
+### Fixes
+
+- The configurator's Poster Resolution no longer resets to 500 when the
+  page is refreshed.
+
 ### A fourth graphic badge group
 
 - Graphic badges can be split across four groups instead of three

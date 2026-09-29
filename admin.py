@@ -42,6 +42,8 @@ from typing import Awaitable, Callable
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+import config as _cfg
+import reports as _reports
 import settings as _settings
 import watchlist as _watchlist
 
@@ -405,6 +407,7 @@ async def admin_status(request: Request, x_admin_key: str = Header(default="")):
     # /stats carries the public snapshot; the operator also gets the link state.
     stats["watchlist"] = _watchlist.link_status()
     stats["uptime_secs"] = int(time.time() - _started_at)
+    stats["reports_open"] = _reports.counts()["open"] if _cfg.REPORTS_ENABLED else None
     stats["pending_restart"] = _settings.pending_restart()
     stats["settings_file"] = {
         "path":     _settings.SETTINGS_PATH,
@@ -459,3 +462,108 @@ async def admin_simkl_unlink(request: Request, x_admin_key: str = Header(default
     result = await _simkl_unlinker()
     result["status"] = _watchlist.link_status()
     return _json(result)
+
+
+# ---------------------------------------------------------------------------
+# Poster reports (reports.py): what users flagged from the configurator.
+# ---------------------------------------------------------------------------
+
+_FORWARDING_HELP = {
+    "untrusted": "Requests arrive through a reverse proxy whose X-Forwarded-For uvicorn ignores, so "
+                 "every visitor has the proxy's address and would share one report limit. Reports "
+                 "are paused until FORWARDED_ALLOW_IPS is set to the proxy's address or subnet "
+                 "(e.g. 172.18.0.0/16 for a Docker network) and the container restarted.",
+    "private":   "Requests arrive from a private address with no X-Forwarded-For header. That is "
+                 "fine on a home network. If a reverse proxy is in front, it is not forwarding "
+                 "client addresses and every visitor shares one report limit.",
+    "forwarded": "Client addresses come through the reverse proxy (FORWARDED_ALLOW_IPS is set), "
+                 "so each visitor has their own report limit.",
+    "direct":    "Clients connect directly, so each has their own report limit.",
+}
+
+
+def _reports_summary(request: Request) -> dict:
+    mine = _reports.forwarding_state(_client_ip(request), request.headers)
+    seen, seen_at = _reports.last_forwarding()
+    # The operator's own request is the freshest word on the proxy when it
+    # came through one; from the LAN it says nothing, so the last visitor's
+    # does.
+    if mine in ("forwarded", "untrusted"):
+        _reports.note_forwarding(mine)
+        state = mine
+    else:
+        state = seen or mine
+    return {
+        "enabled":    _cfg.REPORTS_ENABLED,
+        "per_ip":     _cfg.REPORTS_PER_IP,
+        "purge_at":   _cfg.REPORTS_PURGE_THRESHOLD,
+        "forwarding": {"state": state, "help": _FORWARDING_HELP.get(state, ""), "seen_at": seen_at},
+        "counts":     _reports.counts(),
+        "categories": _reports.CATEGORIES,
+        "blocks":     _reports.blocks(),
+        # For the reported posters' previews (<img> can't send the admin
+        # header); it is in every poster URL the instance hands out anyway.
+        "access_key": _cfg.ACCESS_KEY or "",
+    }
+
+
+@router.get("/admin/api/reports")
+async def admin_reports(request: Request, status: str = "open", x_admin_key: str = Header(default="")):
+    await _authorise(request, x_admin_key)
+    if status not in (*_reports.STATUSES, "all"):
+        raise HTTPException(status_code=400, detail="Unknown status")
+    return _json({**_reports_summary(request), "reports": _reports.list_reports(status)})
+
+
+async def _body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    return body
+
+
+def _ids(body: dict) -> list[int]:
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+        raise HTTPException(status_code=400, detail="ids must be a list of report ids")
+    return ids
+
+
+@router.post("/admin/api/reports/status")
+async def admin_reports_status(request: Request, x_admin_key: str = Header(default="")):
+    """Body: {"ids": [...], "status": "open" | "resolved" | "dismissed"}."""
+    await _authorise(request, x_admin_key)
+    body = await _body(request)
+    try:
+        return _json({"updated": _reports.set_status(_ids(body), str(body.get("status")))})
+    except _reports.ReportError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+
+
+@router.post("/admin/api/reports/delete")
+async def admin_reports_delete(request: Request, x_admin_key: str = Header(default="")):
+    await _authorise(request, x_admin_key)
+    return _json({"deleted": _reports.delete(_ids(await _body(request)))})
+
+
+def _reporter(body: dict) -> str:
+    reporter = str(body.get("reporter") or "")
+    if not (len(reporter) == 24 and all(c in "0123456789abcdef" for c in reporter)):
+        raise HTTPException(status_code=400, detail="Unknown reporter")
+    return reporter
+
+
+@router.post("/admin/api/reports/block")
+async def admin_reports_block(request: Request, x_admin_key: str = Header(default="")):
+    """Block a reporter and delete everything it filed."""
+    await _authorise(request, x_admin_key)
+    return _json({"deleted": _reports.block(_reporter(await _body(request)))})
+
+
+@router.post("/admin/api/reports/unblock")
+async def admin_reports_unblock(request: Request, x_admin_key: str = Header(default="")):
+    await _authorise(request, x_admin_key)
+    return _json({"unblocked": _reports.unblock(_reporter(await _body(request)))})

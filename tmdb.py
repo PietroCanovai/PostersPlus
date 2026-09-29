@@ -136,107 +136,93 @@ def normalise_poster(image: Image.Image, size: tuple[int, int] | None = None) ->
     return image.crop((left, top, left + target_w, top + target_h))
 
 
-def ensure_light_logo(logo: Image.Image,
-                      lum_threshold: float = 0.2,
-                      sat_threshold: float = 0.25,
-                      light_lum: float = 0.6,
-                      light_frac_min: float = 0.05,
-                      card_coverage_max: float = 0.6) -> Image.Image:
+# Black-ink lightening (ensure_light_logo).  A pixel is "black ink" below
+# _INK_V_BLACK on its brightest channel, and fades out of the recolour between
+# that and _INK_V_RAMP so a dark-to-colour gradient has no seam.  Brightest
+# channel rather than luminance: pure blue or red has a luminance as low as
+# black's but reads on a dark poster, while a near-black with a faint tint
+# stays dark on every channel.
+_INK_V_BLACK = 90.0
+_INK_V_RAMP  = 130.0
+# The ink has to be most of the logo's solid pixels...
+_INK_MIN_FRAC = 0.5
+# ...and has to sit on transparency, not against the logo's own content: grown
+# by _INK_GROW px, it may run into at most this share of opaque non-black
+# pixels.  Black outlines round a coloured fill, black cards behind white text
+# and black shadows under a light face all fail it.
+_INK_MAX_ENCLOSE = 0.25
+_INK_GROW = 2
+
+
+def ensure_light_logo(logo: Image.Image) -> Image.Image:
     """
-    Whiten a logo's pixels *only* when we are confident it is a dark, achromatic
-    wordmark that would otherwise be invisible on a dark poster — and leave every
-    other logo completely untouched. Doing nothing is always preferable to a
-    recolour that could make the logo worse.
+    Lighten a logo's black ink so it reads on a dark poster, and leave every
+    other logo untouched.  Only the near-black pixels change: their lightness
+    is flipped (black → white, dark grey → light grey, navy → pale blue) with
+    hue kept, while coloured accents and light parts keep their own colours —
+    BEASTARS keeps its red B, black·ish its green "ish".
 
-    The asset this primarily guards against is a logo that is a *filled dark card
-    with light text baked in* (e.g. white "JURY DUTY" letters on a solid black
-    rectangle). Averaging the luminance of every opaque pixel — the naive test —
-    is dominated by the dark card, mislabels the asset "dark", and blanket-whitens
-    it into a solid white block, erasing the text. Two complementary structural
-    guards catch that before any recolour:
-
-      • Light-content guard — if a non-trivial share of the solid pixels are
-        already light, the logo carries its own legible content (light text,
-        free-standing or on a dark card) and reads fine on a dark poster. This
-        is the signal that tells a "black card + white text" asset (has a light
-        population) apart from plain "black text" (has none).
-
-      • Card guard — if the solid pixels fill most of their own bounding box, the
-        logo is a filled card/emblem rather than glyphs on transparency.
-        Whitening it would produce a solid block, so never touch it. This backs
-        up the light-content guard for the dark-card / dark-or-no-text case,
-        where there is no light population to detect.
-
-    Only after both guards pass do the original tests apply — the ink must be
-    dark (low mean luminance) and achromatic (low saturation), so coloured or
-    branded logos keep their hues. Colour statistics are computed over *solid*
-    pixels (alpha >= 128) so a soft anti-aliased fringe can't skew them; the
-    recolour itself still covers the full visible mask (alpha > 30) to keep
-    edge anti-aliasing intact.
+    Two gates decide whether a logo is black ink at all (see _INK_MIN_FRAC and
+    _INK_MAX_ENCLOSE): the black has to be most of the logo, and it has to
+    border transparency rather than the logo's own coloured or light parts.
+    A black outline round a coloured fill, a black card behind white letters,
+    or a black extrusion under a grey face is structure the logo relies on,
+    so such logos are left as they are.  Statistics use solid pixels
+    (alpha >= 128); the recolour covers every visible pixel (alpha > 30) so
+    anti-aliased edges lighten with the ink.
     """
-    rgba = np.array(logo.convert("RGBA"), dtype=np.float32)
+    rgba = np.asarray(logo.convert("RGBA"), dtype=np.float32)
     alpha = rgba[:, :, 3]
-
-    # Analyse only solidly-opaque pixels so a semi-transparent AA halo can't
-    # skew the luminance/saturation/coverage statistics below.
     solid = alpha >= 128
-    if not solid.any():
-        return logo  # nothing solid to analyse — leave as-is
+    n_solid = int(solid.sum())
+    if n_solid < 20:
+        return logo
 
-    r = rgba[:, :, 0][solid]
-    g = rgba[:, :, 1][solid]
-    b = rgba[:, :, 2][solid]
-    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0  # per-pixel 0–1
+    rgb = rgba[:, :, :3]
+    v = rgb.max(axis=2)
+    ink = solid & (v < _INK_V_BLACK)
+    ink_frac = float(ink.sum()) / n_solid
+    if ink_frac < _INK_MIN_FRAC:
+        return logo
 
-    # Guard 1 — the logo already carries light content (white text, on a card
-    # or free-standing), so it already reads on a dark poster. Leave it alone.
-    light_frac = float((lum >= light_lum).mean())
-    if light_frac >= light_frac_min:
+    grown = ink.copy()
+    for _ in range(_INK_GROW):
+        step = grown.copy()
+        step[1:] |= grown[:-1]
+        step[:-1] |= grown[1:]
+        step[:, 1:] |= grown[:, :-1]
+        step[:, :-1] |= grown[:, 1:]
+        grown = step
+    touch_other = int((grown & solid & (v >= _INK_V_RAMP)).sum())
+    touch_clear = int((grown & ~solid).sum())
+    enclose = touch_other / max(1, touch_other + touch_clear)
+    if enclose > _INK_MAX_ENCLOSE:
         logger.debug(
-            f"ensure_light_logo: skip (light content {light_frac:.0%} >= "
-            f"{light_frac_min:.0%}) — already legible on dark"
+            f"ensure_light_logo: skip (ink {ink_frac:.0%}, borders its own "
+            f"content {enclose:.0%}) — outline, card or shadow"
         )
         return logo
 
-    # Guard 2 — a filled card/emblem fills most of its bounding box. Whitening
-    # it would produce a solid block, so never touch it.
-    ys, xs = np.nonzero(solid)
-    bbox_area = (int(ys.max()) - int(ys.min()) + 1) * (int(xs.max()) - int(xs.min()) + 1)
-    coverage = float(solid.sum()) / bbox_area if bbox_area else 0.0
-    if coverage >= card_coverage_max:
-        logger.debug(
-            f"ensure_light_logo: skip (coverage {coverage:.0%} >= "
-            f"{card_coverage_max:.0%}) — filled card/shape, not a wordmark"
-        )
-        return logo
+    # HLS lightness flip, per pixel, keeping hue and HLS saturation.
+    c = rgb / 255.0
+    hi = c.max(axis=2)
+    lo = c.min(axis=2)
+    span = hi - lo
+    light = (hi + lo) / 2
+    sat = np.where(span > 0, span / np.maximum(1e-6, 1 - np.abs(2 * light - 1)), 0.0)
+    flipped = 1 - light
+    chroma = (1 - np.abs(2 * flipped - 1)) * sat
+    rel = np.where(span[..., None] > 0,
+                   (c - lo[..., None]) / np.maximum(1e-6, span)[..., None], 0.5)
+    lit = (flipped - chroma / 2)[..., None] + rel * chroma[..., None]
 
-    # Original gates — only whiten genuinely dark, achromatic ink.
-    avg_lum = float(lum.mean())
-    if avg_lum > lum_threshold:
-        return logo  # already light enough
-
-    # Saturation = (max - min) / max per pixel (HSV definition).
-    max_c = np.maximum(np.maximum(r, g), b)
-    min_c = np.minimum(np.minimum(r, g), b)
-    coloured = max_c > 0
-    if coloured.any():
-        avg_sat = float((((max_c - min_c) / np.where(coloured, max_c, 1.0)) * coloured).mean())
-    else:
-        avg_sat = 0.0
-    if avg_sat > sat_threshold:
-        return logo  # coloured/branded logo — preserve original hues
-
-    logger.debug(
-        f"ensure_light_logo: whitening dark wordmark "
-        f"(light={light_frac:.0%}, coverage={coverage:.0%}, "
-        f"avg_lum={avg_lum:.2f}, avg_sat={avg_sat:.2f})"
-    )
-    visible = alpha > 30
+    weight = np.clip((_INK_V_RAMP - v) / (_INK_V_RAMP - _INK_V_BLACK), 0.0, 1.0)
+    weight = (weight * (alpha > 30))[..., None]
     out = rgba.copy()
-    out[:, :, 0][visible] = 255
-    out[:, :, 1][visible] = 255
-    out[:, :, 2][visible] = 255
-    return Image.fromarray(out.astype(np.uint8))
+    out[:, :, :3] = (weight * lit + (1 - weight) * c) * 255.0
+    logger.debug(f"ensure_light_logo: lightening black ink (ink {ink_frac:.0%}, "
+                 f"borders its own content {enclose:.0%})")
+    return Image.fromarray(np.clip(np.rint(out), 0, 255).astype(np.uint8))
 
 
 # Experimental contrast-rescue tuning.  Lower = more conservative (only recolour
