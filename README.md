@@ -47,7 +47,7 @@ services:
     volumes:
       - ./postersplus-cache:/app/cache
     env_file:
-      - env 
+      - .env 
 ```
 
 Environment inside the compose:
