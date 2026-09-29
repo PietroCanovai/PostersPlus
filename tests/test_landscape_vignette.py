@@ -200,6 +200,17 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         self.assertGreater(b1, 480)
         c0, c1, _, _ = ink(landscape_info_pos="bottom_center")
         self.assertLess(abs((c0 + c1) / 2 - 500), 20)
+        # Auto, with no logo or title drawn (original art): the whole row is
+        # the line's, so a long genre isn't dropped to clear a missing logo.
+        art = Image.new("RGBA", (1000, 563), (20, 20, 20, 255))
+        cfg = main.RequestConfig(shape="landscape", vignette_poster_color_bottom=False,
+                                 sash_mode="hidden", landscape_info_scale=1.65)
+        with mock.patch.object(landscape, "_draw_info_strip", wraps=landscape._draw_info_strip) as spy:
+            out = landscape.build_landscape(art, 87, "Sci-Fi", cfg, release_year="2019")
+        self.assertEqual(spy.call_args.kwargs["bounds"], (1000 * landscape._SIDE_PAD,
+                                                          1000 * (1 - landscape._RIGHT_PAD)))
+        cols = np.flatnonzero((np.asarray(out.convert("L")) > 120).any(axis=0))
+        self.assertLess(cols[0], 500)       # the genre made it in
         self.assertEqual(main.build_request_config({"landscape_info_pos": "top_center"}).landscape_info_pos,
                          "top_center")
         self.assertEqual(main.build_request_config({"landscape_info_pos": "middle"}).landscape_info_pos, "auto")

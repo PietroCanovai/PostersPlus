@@ -1011,12 +1011,11 @@ def build_landscape(
         where = {"top": int(height * _BADGE_TOP)} if info_row == "top" else {}
         if info_row != logo_row:
             info_box = _strip(bounds=full, **where)
-        elif auto_info and logo_box is None and not (logo_left == logo_right == 0):
-            # No logo drawn: the line keeps clear of the widest a logo may be,
-            # as it always has (an empty logo, which drew nothing, doesn't count).
-            info_box = _strip(logo_left=None, logo_right=None, **where)
         else:
-            # The logo's side of the row is the logo's.
+            # The logo's side of the row is the logo's.  With nothing drawn
+            # there (original art carries its own title) the row is all the
+            # line's: keeping clear of a logo that isn't there only cost it
+            # the genre.
             lo, hi = full
             if logo_box:
                 if info_col == "left" or (info_col == "center" and align == "right"):
