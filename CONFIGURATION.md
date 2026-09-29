@@ -152,7 +152,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `FANART_POSTERS` | `false` | Let users pick fanart.tv as their poster source: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
+| `FANART_POSTERS` | `false` | Let users pick fanart.tv as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
 
 #### Cinemeta fallback
 

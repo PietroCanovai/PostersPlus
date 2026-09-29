@@ -99,6 +99,25 @@ _LOGO_SHADOW_DY    = 5
 _INFO_SHADOW_ALPHA = 170
 _INFO_SHADOW_BLUR  = 5.0
 
+# Optional top band (landscape_vignette_top): the bottom band's colour, faded
+# down from the top edge.  Shallower and lighter than the bottom one — it backs
+# a corner badge at most, not a row of text.
+_TOP_BAND_RATIO  = 0.30
+_TOP_BAND_ALPHA  = 170
+
+# Centred logo: the gap between its bottom and the top of the info line under it.
+_STACK_GAP       = 0.035
+# Where landscape_info_pos may put the "Genre • Year • Score" line; anything
+# else is "auto" (see build_landscape).
+_INFO_POSITIONS  = ("bottom_left", "bottom_center", "bottom_right",
+                    "top_left", "top_center", "top_right")
+# A logo in the top row (landscape_logo_pos=top_*) hangs from the badge line
+# and is held a little shorter: it shares the top with the client's own marks.
+_LOGO_MAX_H_TOP  = 0.24
+# Between the logo and a badge stacked on it (above in the bottom row, below
+# in the top row), or moved out of its way.
+_BADGE_LOGO_GAP  = 0.045
+
 _BADGE_TOP       = 0.075
 _BADGE_FONT      = 0.048  # was 0.042; pill scaled up ~15% with its padding
 _BADGE_PAD_X     = 25
@@ -188,7 +207,8 @@ def _band_ramp(band_h: int) -> np.ndarray:
 def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
                    source: tuple[float, float, float] | None = None,
                    ) -> tuple[float, float, float] | None:
-    """Paint the bottom band, tinted from the art when the user asked for it.
+    """Paint the bottom band, tinted from the art when the user asked for it,
+    and the tinted top band when landscape_vignette_top asks for one.
 
     ``art`` is the pre-vignette snapshot: sampling ``image`` would just return
     the darkness a previous pass painted.
@@ -200,7 +220,7 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
     """
     from main import (
         _fog_pick, _fog_faces, _vignette_tint_band, _vignette_frost_band, _vignette_level_band,
-        _vignette_composite, _VIGNETTE_SAT_FULL, _VIGNETTE_MATCH_MIN_CONF,
+        _vignette_composite, _vignette_fog_ramp, _VIGNETTE_SAT_FULL, _VIGNETTE_MATCH_MIN_CONF,
         _VIGNETTE_SEAM_H,
     )
 
@@ -213,10 +233,13 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
     )
 
     box = (0, band_y, width, height)
+    top_h = max(1, int(height * _TOP_BAND_RATIO))
+    want_top = bool(getattr(cfg, "landscape_vignette_top", False))
     tinted = None
     painted = None
     cover = None
-    if cfg.vignette_poster_color_bottom:
+    tint = None
+    if cfg.vignette_poster_color_bottom or want_top:
         if source is not None:
             # Handed a colour: paint with it outright.  Confidence is the
             # badge's business, and it has already committed to this hue.
@@ -224,21 +247,41 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
         else:
             # The same pick the portrait bottom band makes (see _fog_pick), so
             # "Blend Into Nearby Art" means the same thing on both shapes: the
-            # art this band covers, plus its seam, counts extra.
+            # art this band covers, plus its seam, counts extra.  One pick for
+            # both bands, as portrait does: the bottom band's when it is
+            # tinted, else the top band's own.
+            cover_box = ((0, max(0, band_y - int(height * _VIGNETTE_SEAM_H)), width, height)
+                         if cfg.vignette_poster_color_bottom
+                         else (0, 0, width, min(height, top_h + int(height * _VIGNETTE_SEAM_H))))
             tint, conf, second, cover = _fog_pick(
-                art, (0, max(0, band_y - int(height * _VIGNETTE_SEAM_H)), width, height),
-                cfg.vignette_color_local, cfg.vignette_color_ramp, _fog_faces(art),
+                art, cover_box, cfg.vignette_color_local, cfg.vignette_color_ramp, _fog_faces(art),
             )
-        if tint is not None:
-            # Same derivation the portrait bands use: levelling follows
-            # whichever of saturation / blur is asking for more of it.
-            slider = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
+    if tint is not None:
+        # Same derivation the portrait bands use: levelling follows
+        # whichever of saturation / blur is asking for more of it.
+        slider = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
+        level = max(slider, min(1.0, max(0.0, cfg.vignette_color_blur)))
+        if want_top:
+            # Painted first: the two bands never overlap (0.30 + 0.45 < 1).
+            top_alpha = _vignette_fog_ramp(top_h, _TOP_BAND_ALPHA, rising=False)
+            top_ramp = Image.fromarray(np.broadcast_to(
+                np.round(top_alpha).astype(np.uint8)[:, np.newaxis], (top_h, width)).copy())
+            top_box = (0, 0, width, top_h)
+            _vignette_frost_band(image, top_box, top_ramp, cfg.vignette_color_blur)
+            _vignette_level_band(image, top_box, top_ramp, level)
+            _vignette_composite(image, 0, _vignette_tint_band(
+                art, top_box, tint, conf,
+                cfg.vignette_color_saturation, cfg.vignette_color_blur,
+                second, cfg.vignette_color_lightness,
+                columns=_TINT_COLUMNS, ramp_columns=_RAMP_COLUMNS,
+                cover_lightness=cover, style=cfg.vignette_color_style,
+            ), top_alpha)
+        if cfg.vignette_poster_color_bottom:
             # Only a colour the band actually shows is one the badge may
             # follow — the same bar the portrait notch's match uses.  A band
             # that came out near black, or at saturation 0, is black.
             if conf >= _VIGNETTE_MATCH_MIN_CONF and slider > 0:
                 painted = tint
-            level = max(slider, min(1.0, max(0.0, cfg.vignette_color_blur)))
             _vignette_frost_band(image, box, ramp, cfg.vignette_color_blur)
             _vignette_level_band(image, box, ramp, level)
             tinted = _vignette_tint_band(
@@ -395,7 +438,11 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
 
 def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
                 cfg, logo_height: int = 0, plain: bool = False,
-                source: tuple[float, float, float] | None = None) -> None:
+                source: tuple[float, float, float] | None = None,
+                logo_align: str = "left", logo_baseline: int | None = None,
+                logo_box: tuple[int, int, int, int] | None = None,
+                logo_top_row: bool = False,
+                obstacles: tuple = ()) -> None:
     width, height = image.size
     draw = ImageDraw.Draw(image)
     # User scale on top of the tuned size: a pill legible on a monitor is
@@ -409,7 +456,8 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
         # strip's size and on its baseline, so the two read as one bottom row
         # rather than as a label that happens to be near some metadata.
         _plain_font = _font("Inter-Bold.ttf", int(height * _INFO_FONT * scale))
-        draw.text((int(width * _SIDE_PAD), int(height * _BASELINE)), text,
+        _px = _slot_x(width, draw.textlength(text, font=_plain_font), logo_align)
+        draw.text((_px, int(height * _BASELINE) if logo_baseline is None else logo_baseline), text,
                   font=_plain_font, fill=(255, 255, 255, 242), anchor="ls")
         return
 
@@ -419,27 +467,60 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
     pad_x, pad_y = round(_BADGE_PAD_X * scale), round(_BADGE_PAD_Y * scale)
     bw, bh = int(tw + pad_x * 2), int(th + pad_y * 2)
 
-    if position == "top_right":
+    gap = int(height * _BADGE_LOGO_GAP)
+    if position == "logo" and logo_top_row:
+        # A top-row logo carries its badge underneath, aligned the way it is;
+        # with no logo drawn the badge takes the slot at the top itself.
+        x = _slot_x(width, bw, logo_align)
+        y = logo_box[3] + gap if logo_box else int(height * _BADGE_TOP)
+    elif position == "top_right":
         x, y = width - int(width * _RIGHT_PAD) - bw, int(height * _BADGE_TOP)
-    elif position == "logo":
-        # Stacked above the logo, sharing its left edge.  With no logo drawn —
-        # original art, which carries its own title treatment — there is nothing
-        # to stack on, so the badge takes the bottom-left slot itself.
-        x = int(width * _SIDE_PAD)
+    elif position in ("bottom_left", "bottom_right"):
+        # Standing on the shared baseline, in from that side.
+        x = int(width * _SIDE_PAD) if position == "bottom_left" else width - int(width * _RIGHT_PAD) - bw
         y = int(height * _BASELINE) - bh
+    elif position == "logo":
+        # Stacked above the logo, aligned the way it is.  With no logo drawn —
+        # original art, which carries its own title treatment — there is nothing
+        # to stack on, so the badge takes the logo's slot itself.
+        x = _slot_x(width, bw, logo_align)
+        y = (int(height * _BASELINE) if logo_baseline is None else logo_baseline) - bh
         if logo_height:
             y -= logo_height + int(height * 0.045)
     else:  # top_left
         x, y = int(width * _SIDE_PAD), int(height * _BADGE_TOP)
+    # Whatever it lands on — a logo or the info line in its corner — it moves
+    # off, away from its edge: down past it at the top, up over it at the
+    # bottom.  A few passes, since clearing one can land it on the next.
+    down = y < height / 2
+    for _ in range(4):
+        hit = next((b for b in obstacles if b and x < b[2] and x + bw > b[0]
+                    and y < b[3] and y + bh > b[1]), None)
+        if hit is None:
+            break
+        y = hit[3] + gap if down else hit[1] - gap - bh
 
     ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source)
     draw.text((x + pad_x, y + pad_y - round(2 * scale)), text, font=font,
               fill=(*ink, 245))
 
 
-def _draw_logo(image: Image.Image, logo: Image.Image) -> tuple[int, int]:
-    """Left-aligned, bottom-anchored. Returns (drawn height, right edge x) — the
-    edge is what the info strip keeps clear of (see _draw_info_strip)."""
+def _slot_x(width: int, w: float, align: str) -> int:
+    """Left edge of something ``w`` wide in the logo slot: in from the left
+    (the default), in from the right, or centred."""
+    if align == "right":
+        return width - int(width * _RIGHT_PAD) - int(w)
+    if align == "center":
+        return int((width - w) / 2)
+    return int(width * _SIDE_PAD)
+
+
+def _draw_logo(image: Image.Image, logo: Image.Image, align: str = "left",
+               baseline: int | None = None, top: int | None = None) -> tuple[int, int, int]:
+    """Bottom-anchored on ``baseline`` (the shared one by default), or hung
+    from ``top`` in the top row, and placed by ``align`` (landscape_logo_pos).
+    Returns (drawn height, left x, right x) — the edges are what the info
+    strip keeps clear of (see _draw_info_strip)."""
     width, height = image.size
 
     alpha = logo.getchannel("A")
@@ -447,15 +528,18 @@ def _draw_logo(image: Image.Image, logo: Image.Image) -> tuple[int, int]:
     if bbox:
         logo = logo.crop(bbox)
     if logo.width <= 0 or logo.height <= 0:
-        return 0, 0
+        return 0, 0, 0
 
-    max_h = int(height * _LOGO_MAX_H)
+    max_h = int(height * (_LOGO_MAX_H if top is None else _LOGO_MAX_H_TOP))
     scale = min(int(width * _LOGO_MAX_W) / logo.width, max(1, max_h) / logo.height)
     drawn = logo.resize((max(1, round(logo.width * scale)),
                          max(1, round(logo.height * scale))), Image.Resampling.LANCZOS)
 
-    x = int(width * _SIDE_PAD)
-    y = int(height * _BASELINE) - drawn.height
+    x = _slot_x(width, drawn.width, align)
+    if top is not None:
+        y = top
+    else:
+        y = (int(height * _BASELINE) if baseline is None else baseline) - drawn.height
 
     # Soft drop shadow so a white wordmark survives a light patch in the band.
     # Built on a padded canvas (see _drop_shadow): blurring the logo's own
@@ -465,7 +549,7 @@ def _draw_logo(image: Image.Image, logo: Image.Image) -> tuple[int, int]:
     _drop_shadow(image, drawn.getchannel("A"), x + _LOGO_SHADOW_DX, y + _LOGO_SHADOW_DY,
                  _LOGO_SHADOW_BLUR, _LOGO_SHADOW_ALPHA)
     image.alpha_composite(drawn, (x, y))
-    return drawn.height, x + drawn.width
+    return drawn.height, x, x + drawn.width
 
 
 def _wrap(draw, text: str, font, max_w: float, max_lines: int) -> list[str] | None:
@@ -511,10 +595,11 @@ def _ellipsize(draw, text: str, font, max_w: float) -> str:
     return f"{stem}…" if stem else ""
 
 
-def _draw_title(image: Image.Image, title: str) -> tuple[int, int]:
-    """Left-aligned, bottom-anchored text stand-in for a missing logo.
+def _draw_title(image: Image.Image, title: str, align: str = "left",
+                baseline: int | None = None, top: int | None = None) -> tuple[int, int, int]:
+    """Bottom-anchored text stand-in for a missing logo, aligned like it.
 
-    Shares the logo's box, and returns (drawn height, right edge x) the same
+    Shares the logo's box, and returns (drawn height, left x, right x) the same
     way, so a badge stacked above it clears the text rather than landing on it
     and the info strip knows how far the text actually reaches.
     """
@@ -522,7 +607,7 @@ def _draw_title(image: Image.Image, title: str) -> tuple[int, int]:
     draw = ImageDraw.Draw(image)
 
     max_w = int(width * _LOGO_MAX_W)
-    max_h = int(height * _LOGO_MAX_H)
+    max_h = int(height * (_LOGO_MAX_H if top is None else _LOGO_MAX_H_TOP))
 
     # Largest size that fits, one line preferred over two at every size — a
     # single line beside a logo reads better than a wrapped one a size larger.
@@ -577,23 +662,44 @@ def _draw_title(image: Image.Image, title: str) -> tuple[int, int]:
         chosen = (font, lines or [_ellipsize(draw, title, font, max_w)], line_h)
 
     font, lines, line_h = chosen
-    baseline = int(height * _BASELINE)
-    x = int(width * _SIDE_PAD)
+    if top is not None:
+        # Hung from the top: the first line's ascent starts at ``top``.
+        baseline = top + font.getmetrics()[0] + line_h * (len(lines) - 1)
+    elif baseline is None:
+        baseline = int(height * _BASELINE)
+    widest = max(draw.textlength(line, font=font) for line in lines)
+    left = _slot_x(width, widest, align)
+    # Each line sits on the block's own side: ragged right when left-aligned,
+    # ragged left when right-aligned, centred on the block when centred.
+    anchor, x = {"right": ("rs", left + widest), "center": ("ms", left + widest / 2)}.get(
+        align, ("ls", left))
     for i, line in enumerate(reversed(lines)):
         draw.text((x, baseline - i * line_h), line,
-                  font=font, fill=(255, 255, 255, 245), anchor="ls")
+                  font=font, fill=(255, 255, 255, 245), anchor=anchor)
 
     ascent = font.getmetrics()[0]
-    right = x + int(max(draw.textlength(line, font=font) for line in lines))
-    return line_h * (len(lines) - 1) + ascent, right
+    return line_h * (len(lines) - 1) + ascent, left, left + int(widest)
 
 
 def _draw_info_strip(image: Image.Image, genre_label: str,
                      release_year: str | None, score, scale: float = 1.0,
                      logo_right: int | None = None,
                      out_of_10: bool = False,
-                     star: bool = False) -> None:
+                     star: bool = False,
+                     align: str = "right",
+                     logo_left: int | None = None,
+                     bounds: tuple[float, float] | None = None,
+                     baseline: int | None = None,
+                     top: int | None = None) -> tuple[int, int, int, int] | None:
     """`Genre • Year • 87`, right-aligned on the shared baseline.
+
+    ``align`` is the side it hangs from: "right" beside a left logo (the
+    default), "left" beside a right one, "center" under a centred one.
+    ``bounds`` (left x, right x) is the room it may use, in place of keeping
+    clear of ``logo_left`` / ``logo_right``.  It sits on ``baseline`` (the
+    shared one by default), or hangs from ``top``.  Returns the box its text
+    takes (left, top of the caps, right, baseline), or None when nothing is
+    drawn — what a stacked logo or a badge keeps clear of.
 
     Drawn right-to-left so the score stays pinned to the right edge whatever the
     genre string does, and the whole strip is measured before anything is drawn
@@ -646,7 +752,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     if score_text:
         parts.append((score_text, _MUTED))
     if not parts:
-        return
+        return None
 
     sep = "  •  "
     star_sep = "  ★ "
@@ -665,10 +771,22 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     def total(items) -> float:
         return sum(draw.textlength(t, font=font) for t, _ in segments(items))
 
-    # Everything left of the info strip belongs to the logo; if the two would
-    # meet, shed the genre first, then the year, before shrinking any type.
-    left = width * (_SIDE_PAD + _LOGO_MAX_W) if logo_right is None else logo_right
-    limit = width * (1 - _RIGHT_PAD) - left - width * 0.03
+    # Everything on the logo's side of the info strip belongs to the logo; if
+    # the two would meet, shed the genre first, then the year, before shrinking
+    # any type.  Centred, the strip has the row to itself.
+    if bounds is not None:
+        # Centred, it may slide off the canvas centre into the middle of the
+        # room it has (beside a side logo), so all of that room counts.
+        lo, hi = bounds
+        limit = hi - lo
+    elif align == "left":
+        right = (width * (1 - _RIGHT_PAD - _LOGO_MAX_W)) if logo_left is None else logo_left
+        limit = right - width * _SIDE_PAD - width * 0.03
+    elif align == "center":
+        limit = width * (1 - _SIDE_PAD - _RIGHT_PAD)
+    else:
+        left = width * (_SIDE_PAD + _LOGO_MAX_W) if logo_right is None else logo_right
+        limit = width * (1 - _RIGHT_PAD) - left - width * 0.03
     while len(parts) > 1 and total(parts) > limit:
         parts.pop(0)
 
@@ -678,8 +796,20 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     # sits.  Compositing the layer afterwards keeps the text itself crisp.
     layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     ldraw = ImageDraw.Draw(layer)
-    x = width - int(width * _RIGHT_PAD)
-    baseline = int(height * _BASELINE)
+    if align == "left":
+        x = int(width * _SIDE_PAD) + total(parts)
+    elif align == "center":
+        x = (width + total(parts)) / 2
+        if bounds is not None and (x > bounds[1] or x - total(parts) < bounds[0]):
+            x = (bounds[0] + bounds[1] + total(parts)) / 2
+    else:
+        x = width - int(width * _RIGHT_PAD)
+    x_right = x
+    ascent = font.getmetrics()[0]
+    if top is not None:
+        baseline = top + ascent
+    elif baseline is None:
+        baseline = int(height * _BASELINE)
     for text, fill in reversed(segments(parts)):
         x -= draw.textlength(text, font=font)
         ldraw.text((x, baseline), text, font=font, fill=fill, anchor="ls")
@@ -697,6 +827,71 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         shadow.putalpha(ImageChops.multiply(shadow.getchannel("A"), ImageChops.invert(ink)))
         image.alpha_composite(shadow)
     image.alpha_composite(layer)
+    return int(x), baseline - ascent, int(x_right), baseline
+
+
+# Graphic badge rows (badge_display_mode 7).  A group's size is in the portrait
+# poster's units, where 22 sits beside the side chip; here it is scaled to sit
+# beside the glass pill, whose text is _BADGE_FONT of the height.
+_GB_UNIT         = 0.062   # row height at the default size, of the height
+_GB_SEARCH       = 0.35    # how far a corner row may move from its corner, of the height
+
+
+def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: list[str],
+                         certification: str | None, age_rating: int | None,
+                         logos: tuple, logo_box: tuple[int, int, int, int] | None,
+                         badge_position: str | None) -> None:
+    """The graphic badge groups, laid out the portrait way (main._draw_graphic_badges)
+    against the landscape furniture: top rows share the glass pill's centre
+    line, "chip" takes the top corner the pill leaves free, and every row moves
+    away from its corner until it clears what is already drawn."""
+    import graphic_badges
+    from graphic_badges import DEFAULT_SIZE
+    from main import _draw_custom_group, _draw_logo_group, _occupied_cols, _score_points
+
+    width, height = image.size
+    left_margin, right_margin = int(width * _SIDE_PAD), int(width * _RIGHT_PAD)
+    clear = int(width * 0.02)
+    show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
+    scale = max(0.1, float(getattr(cfg, "landscape_badge_scale", 1.0) or 1.0))
+    pill_h = int(height * _BADGE_FONT * scale) + 2 * round(_BADGE_PAD_Y * scale)
+    top_line = int(height * _BADGE_TOP) + pill_h / 2
+
+    for group in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3):
+        unit = max(8, round(height * _GB_UNIT * group.size / DEFAULT_SIZE))
+        # Spacing is a fraction of a portrait width; keyed to height here, as
+        # every size on this canvas is.  At the default it is the portrait gap.
+        gap = int(height * group.spacing * 0.9)
+        items = graphic_badges.row_items(tokens, certification, age_rating, unit,
+                                         group.slots, show_quality, *logos)[:group.max_items]
+        if not items:
+            continue
+        if group.xy is not None:
+            _draw_custom_group(image, items, group.xy, group.align, gap)
+            continue
+        now = np.asarray(image)
+        if group.anchor in graphic_badges.LOGO_ANCHORS:
+            _draw_logo_group(image, now, before, items, group.anchor, logo_box,
+                             left_margin, clear, gap, unit)
+            continue
+        if group.anchor == "chip":
+            top, right = True, badge_position != "top_right"
+        else:
+            top, right = group.anchor[0] == "t", group.anchor[1] == "r"
+        margin = right_margin if right else left_margin
+        half = max(im.height for _, im in items) / 2 + clear / 2
+        start = top_line if top else height - (height - int(height * _BASELINE)) - unit / 2
+        step, offset = max(2, unit // 3), 0.0
+        while offset <= height * _GB_SEARCH:
+            cy = start + offset if top else start - offset
+            cols = _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
+            fitted = graphic_badges.fit(items, graphic_badges.free_run(cols, right, margin) - clear, gap)
+            if fitted:
+                row_w = graphic_badges.row_width(fitted, gap)
+                graphic_badges.draw_row(image, fitted, center_y=cy, gap=gap,
+                                        left_x=width - margin - row_w if right else margin)
+                break
+            offset += step
 
 
 def build_landscape(
@@ -708,11 +903,15 @@ def build_landscape(
     fallback_title: str | None = None,
     discovery_meta=None,
     release_year: str | None = None,
+    quality_tokens: list[str] | None = None,
+    age_rating: int | None = None,
+    certification: str | None = None,
+    badge_logos: tuple = (None, None),
     **_ignored,
 ) -> Image.Image:
     """Render the landscape poster.  Mirrors ``build_poster``'s call shape so the
     request pipeline can swap one for the other; extra kwargs it does not use
-    (quality tokens, age rating) are accepted and dropped."""
+    are accepted and dropped.  Quality shows only as graphic badges."""
     from main import pick_sash
 
     image = image.convert("RGBA")
@@ -732,6 +931,10 @@ def build_landscape(
         shared = tuple(float(c) for c in dominant_frost_rgb(art))
     band_tint = _draw_vignette(image, art, cfg, source=shared)
     badge_source = band_tint if link == "badge_follows_vignette" else shared
+    # What the overlays are measured against, for the graphic badges to lay
+    # themselves out around them.
+    graphic = bool(getattr(cfg, "landscape_graphic_badges", False))
+    before = np.asarray(image).copy() if graphic else None
 
     # What belongs in the logo slot was decided upstream, where the art actually
     # got picked: a logo, or a title to stand in for one, or neither when the
@@ -740,31 +943,94 @@ def build_landscape(
     # cases that matter — `original` falling back to the neutral backdrop or to
     # the genre canvas passes a title precisely because that art has none, and
     # suppressing it produced a completely untitled render.
-    logo_height, logo_right = 0, None
-    if logo is not None:
-        logo_height, logo_right = _draw_logo(image, logo)
-    elif fallback_title:
-        # Height comes back for the same reason it does from the logo: a
-        # badge stacked above needs something to clear.
-        logo_height, logo_right = _draw_title(image, fallback_title)
+    #
+    # Two slots, each a row (top / bottom) and a column (left / centre /
+    # right): the logo's (landscape_logo_pos) and the info line's
+    # (landscape_info_pos).  "auto" puts the line where it has always gone:
+    # opposite a bottom-row logo, under a centred one, and on a top logo's side
+    # of the bottom row.  Sharing a slot, the two stack — the logo standing on
+    # the line at the bottom, the line hanging under the logo at the top.
+    width, height = image.size
+    pos = getattr(cfg, "landscape_logo_pos", "left")
+    logo_row, align = ("top", pos[4:]) if pos.startswith("top_") else ("bottom", pos)
+    if align not in ("left", "right", "center"):
+        align = "left"
+    info_pos = getattr(cfg, "landscape_info_pos", "auto")
+    auto_info = info_pos not in _INFO_POSITIONS
+    if auto_info:
+        info_row = "bottom"
+        info_col = align if logo_row == "top" else {"left": "right", "right": "left"}.get(align, "center")
+    else:
+        info_row, info_col = info_pos.split("_")
+    stacked = (info_row, info_col) == (logo_row, align)
+    top_row = logo_row == "top"
+    edge_gap = width * 0.03
+    full = (width * _SIDE_PAD, width * (1 - _RIGHT_PAD))
 
     # Hiding the rating is passed as "there is no score": the strip already
     # drops a missing one along with its separator, which is exactly the result
     # wanted here, and the same switch reads the same way in either shape.
-    _draw_info_strip(image,
-                     "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
-                     None if cfg.hide_year else release_year,
-                     None if cfg.hide_rating else score,
-                     scale=getattr(cfg, "landscape_info_scale", 1.0),
-                     logo_right=logo_right,
-                     out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
-                     star=getattr(cfg, "landscape_score_star", False))
+    def _strip(**where):
+        return _draw_info_strip(
+            image,
+            "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
+            None if cfg.hide_year else release_year,
+            None if cfg.hide_rating else score,
+            scale=getattr(cfg, "landscape_info_scale", 1.0),
+            out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
+            star=getattr(cfg, "landscape_score_star", False),
+            align=info_col, **where)
 
+    info_box = None
+    logo_baseline = None
+    logo_top = int(height * _BADGE_TOP) if top_row else None
+    if stacked and not top_row:
+        info_box = _strip(bounds=full)
+        if info_box:
+            logo_baseline = info_box[1] - int(height * _STACK_GAP)
+    logo_height, logo_left, logo_right = 0, None, None
+    if logo is not None:
+        logo_height, logo_left, logo_right = _draw_logo(image, logo, align, logo_baseline, logo_top)
+    elif fallback_title:
+        # Height comes back for the same reason it does from the logo: a
+        # badge stacked above needs something to clear.
+        logo_height, logo_left, logo_right = _draw_title(image, fallback_title, align,
+                                                         logo_baseline, logo_top)
+    logo_box = None
+    if logo_height and top_row:
+        logo_box = (logo_left, logo_top, logo_right, logo_top + logo_height)
+    elif logo_height:
+        _base = int(height * _BASELINE) if logo_baseline is None else logo_baseline
+        logo_box = (logo_left, _base - logo_height, logo_right, _base)
+
+    if stacked and top_row:
+        info_box = _strip(bounds=full, top=(logo_box[3] if logo_box else logo_top)
+                          + (int(height * _STACK_GAP) if logo_box else 0))
+    elif not stacked:
+        where = {"top": int(height * _BADGE_TOP)} if info_row == "top" else {}
+        if info_row != logo_row:
+            info_box = _strip(bounds=full, **where)
+        elif auto_info and logo_box is None and not (logo_left == logo_right == 0):
+            # No logo drawn: the line keeps clear of the widest a logo may be,
+            # as it always has (an empty logo, which drew nothing, doesn't count).
+            info_box = _strip(logo_left=None, logo_right=None, **where)
+        else:
+            # The logo's side of the row is the logo's.
+            lo, hi = full
+            if logo_box:
+                if info_col == "left" or (info_col == "center" and align == "right"):
+                    hi = min(hi, logo_box[0] - edge_gap) if align != "left" else hi
+                if info_col == "right" or (info_col == "center" and align == "left"):
+                    lo = max(lo, logo_box[2] + edge_gap) if align != "right" else lo
+            info_box = _strip(bounds=(lo, hi), **where)
+
+    badge_position = None
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)
         if sash_result is not None:
             label, _sash_type = sash_result
             position = getattr(cfg, "landscape_badge_pos", "top_left")
+            badge_position = position
             _draw_badge(image, upper_label(translate_sash(label, cfg.logo_language), cfg.logo_language),
                         position, art, cfg, logo_height=logo_height,
                         # Only a stacked badge with an empty logo slot lands
@@ -773,7 +1039,16 @@ def build_landscape(
                         # are bare art, so those keep the glass that makes them
                         # readable.  Keyed on what was drawn, not on the mode
                         # that was asked for, for the same reason as above.
-                        plain=(logo_height == 0 and position == "logo"),
-                        source=badge_source)
+                        plain=(logo_height == 0 and position == "logo" and not top_row
+                               and not (info_row == "bottom" and info_col == align)),
+                        source=badge_source,
+                        logo_align=align, logo_baseline=logo_baseline,
+                        logo_box=logo_box, logo_top_row=top_row,
+                        obstacles=(logo_box, info_box))
+
+    # Drawn last because they lay themselves out around everything else.
+    if graphic:
+        _draw_graphic_badges(image, before, cfg, quality_tokens or [], certification, age_rating,
+                             badge_logos, logo_box, badge_position)
 
     return image

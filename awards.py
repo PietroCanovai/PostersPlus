@@ -1643,6 +1643,7 @@ def draw_award_badge(
     star: bool | None = None,         # override ★ decision (resolved on canonical label)
     text_color: tuple[int, int, int] | None = None,  # override default white text
     position: str = "center",         # "center" | "left" | "right"
+    body_opacity: float | None = None,  # black/silver/gold body opacity; None = the style's own
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1758,7 +1759,7 @@ def draw_award_badge(
             _chip_badge_h, _chip_min_h, notch_inset,
             frost_opacity, frost_saturation, frost_reference, tint_rgb,
             style=notch_style, trim_rgb=trim_rgb if notch_style in ("silver", "gold") else None,
-            text_color=text_color,
+            text_color=text_color, body_opacity=body_opacity,
         )
 
     if notch_style == "frosted":
@@ -1819,7 +1820,9 @@ def draw_award_badge(
             corners=(False, False, True, True)
         )
         body = Image.new("RGBA", (bw, bh), (10, 10, 12, 230))
-        body.putalpha(rr_mask_ss)
+        # putalpha replaces the 230, so this body has always been solid.
+        _black_a = _dark_body_alpha(255, body_opacity)
+        body.putalpha(rr_mask_ss.point(lambda a: a * _black_a // 255))
         badge_ss = body
         txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         td = ImageDraw.Draw(txt_layer)
@@ -1832,7 +1835,7 @@ def draw_award_badge(
         result.alpha_composite(badge_final, (bx, by_composite))
         return result
 
-    body_alpha   = 235
+    body_alpha   = _dark_body_alpha(235, body_opacity)
     border_alpha = 215
 
     # ── Badge body + border (dark gradient, silver or gold trim) ─────────────
@@ -1951,6 +1954,18 @@ def draw_award_badge(
     return result
 
 
+# The dark notch bodies' own opacities (black 230 as a chip, solid as a notch;
+# silver/gold 235) are treated as 0.90, so 0.90 draws them exactly as before.
+_DARK_BODY_OPACITY = 0.90
+
+
+def _dark_body_alpha(base: int, opacity: float | None) -> int:
+    """Body alpha for a black / silver / gold notch or chip at ``opacity``."""
+    if opacity is None:
+        return base
+    return max(0, min(255, round(base * opacity / _DARK_BODY_OPACITY)))
+
+
 # Side chip geometry, as fractions of the sizes draw_award_badge already
 # derives.  The chip is a little shorter than the notch — it floats, so it has
 # no edge-hidden strip to make up for — and sits in by the margin on both axes.
@@ -1980,6 +1995,7 @@ def _draw_side_chip(
     tint_rgb: tuple[float, float, float] | None,
     style: str = "frosted", trim_rgb: tuple[int, int, int] | None = None,
     text_color: tuple[int, int, int] | None = None,
+    body_opacity: float | None = None,
 ) -> Image.Image:
     """Chip floating in from a top corner — see draw_award_badge's
     ``position``.
@@ -2006,7 +2022,7 @@ def _draw_side_chip(
     mask = _chip_mask(w, h, radius)
     if style != "frosted":
         badge = _dark_chip_body(label, font_size_ss, ss, w, h, radius, border_w,
-                                style, trim_rgb, text_color)
+                                style, trim_rgb, text_color, body_opacity)
         return _place_chip(image, badge, mask, x, y, w, h, pad, shadow_dy, shadow_blur)
 
     region = image.crop((x, y, x + w, y + h))
@@ -2026,7 +2042,8 @@ def _draw_side_chip(
 def _dark_chip_body(label: str, font_size_ss: float, ss: int, w: int, h: int,
                     radius: int, border_w: int, style: str,
                     trim_rgb: tuple[int, int, int] | None,
-                    text_color: tuple[int, int, int] | None) -> Image.Image:
+                    text_color: tuple[int, int, int] | None,
+                    body_opacity: float | None = None) -> Image.Image:
     """The black / silver / gold chip at 1x: drawn at ``ss`` and box-reduced,
     as the centred notch is.  Same body (black: flat near-black; silver and
     gold: the notch's dark vertical gradient) and the same label treatment."""
@@ -2035,7 +2052,8 @@ def _dark_chip_body(label: str, font_size_ss: float, ss: int, w: int, h: int,
     ImageDraw.Draw(shape).rounded_rectangle([(0, 0), (bw - 1, bh - 1)], radius=r, fill=255)
     if style == "black":
         body = Image.new("RGBA", (bw, bh), (10, 10, 12, 230))
-        body.putalpha(shape.point(lambda a: a * 230 // 255))
+        _a = _dark_body_alpha(230, body_opacity)
+        body.putalpha(shape.point(lambda a: a * _a // 255))
     else:
         t = np.linspace(0, 1, bh, dtype=np.float32)
         darkness = (4 + 10 * np.sin(t * np.pi)).astype(np.uint8)
@@ -2044,7 +2062,8 @@ def _dark_chip_body(label: str, font_size_ss: float, ss: int, w: int, h: int,
         arr[:, :, 1] = darkness[:, None]
         arr[:, :, 2] = np.minimum(255, darkness * 1.3).astype(np.uint8)[:, None]
         body = Image.fromarray(arr)
-        body.putalpha(shape.point(lambda a: a * 235 // 255))
+        _a = _dark_body_alpha(235, body_opacity)
+        body.putalpha(shape.point(lambda a: a * _a // 255))
         if trim_rgb is not None:
             trim = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
             ImageDraw.Draw(trim).rounded_rectangle(

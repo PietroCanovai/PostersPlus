@@ -139,9 +139,8 @@ class HideRatingConfiguratorTests(unittest.TestCase):
         # sent as hide_rating / landscape_hide_rating accordingly.
         shared = re.search(r"const _SHARED_PARAM = \{(.*?)\};", self.html, re.S).group(1)
         self.assertIn("'tog-hide-rating':           'hide_rating'", shared)
-        docked = re.search(r"const _DOCKED_ROWS = \[(.*?)\];", self.html, re.S).group(1)
-        self.assertIn("'hide-rating-row'", docked)
-        self.assertIn('id="hide-rating-home"', self.html)
+        # One row for both shapes, in the Rating tab: not marked portrait-only.
+        self.assertIn('<div class="toggle-row" id="hide-rating-row">', self.html)
 
     def test_score_only_controls_hide_with_the_rating(self):
         # A control that cannot change anything should not be on screen to be

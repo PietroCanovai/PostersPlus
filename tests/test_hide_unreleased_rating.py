@@ -94,9 +94,8 @@ class HideUnreleasedRatingConfiguratorTests(unittest.TestCase):
         self.assertRegex(self.html, r"p\.has\('hide_unreleased_rating'\)")
 
     def test_switch_follows_hide_rating_into_landscape(self):
-        docked = re.search(r"const _DOCKED_ROWS = \[(.*?)\];", self.html, re.S).group(1)
-        self.assertIn("'hide-unreleased-rating-row'", docked)
-        self.assertIn('id="hide-unreleased-rating-home"', self.html)
+        # One row for both shapes, in the Rating tab: not marked portrait-only.
+        self.assertIn('<div class="toggle-row" id="hide-unreleased-rating-row">', self.html)
 
 
 if __name__ == "__main__":

@@ -81,3 +81,30 @@ class NotchPositionConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DarkNotchOpacityTests(unittest.TestCase):
+    """sash_badge_opacity: the black / silver / gold body's opacity."""
+
+    def test_default_is_the_old_look_and_key(self):
+        import main
+        base = main._render_config_signature(main.build_request_config({}))
+        for raw in ("0.90", "0.9"):
+            cfg = main.build_request_config({"sash_badge_opacity": raw})
+            self.assertIsNone(cfg.sash_badge_opacity)
+            self.assertEqual(main._render_config_signature(cfg), base)
+        self.assertEqual(main.build_request_config({"sash_badge_opacity": "0.4"}).sash_badge_opacity, 0.4)
+
+    def test_body_fades(self):
+        from PIL import Image
+        import numpy as np
+        import awards
+        art = Image.new("RGBA", (500, 750), (240, 240, 240, 255))
+        for style in ("black", "silver"):
+            with self.subTest(style=style):
+                solid = awards.draw_award_badge(art, "WINNER", notch_style=style)
+                same = awards.draw_award_badge(art, "WINNER", notch_style=style, body_opacity=0.90)
+                faint = awards.draw_award_badge(art, "WINNER", notch_style=style, body_opacity=0.2)
+                self.assertTrue(np.array_equal(np.asarray(solid), np.asarray(same)))
+                self.assertGreater(np.asarray(faint.convert("L"))[:30].mean(),
+                                   np.asarray(solid.convert("L"))[:30].mean() + 10)

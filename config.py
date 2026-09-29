@@ -149,7 +149,7 @@ TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fall
 # fallback).  Off by default: it adds poster downloads, disk cache and text
 # scans alongside the TMDB art.  Random picks are RANDOM_POSTERS.
 FANART_API_KEY        = _env('FANART_API_KEY', "", group='API keys', kind='secret', label='fanart.tv API key', help='Optional fanart.tv project key, needed for the fanart.tv poster source (see FANART_POSTERS).').strip()
-FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='fanart.tv', kind='bool', label='Offer fanart.tv posters', help='Let users pick fanart.tv as their poster source: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='fanart.tv', kind='bool', label='Offer fanart.tv posters', help='Let users pick fanart.tv as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when fanart has none. Needs the fanart.tv key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
 
 # Where a TVDB clearlogo sits in the logo source chain:
 #   1 = TVDB first      — beats both TMDB and the Metahub CDN

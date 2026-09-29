@@ -93,9 +93,8 @@ class HideYearConfiguratorTests(unittest.TestCase):
     def test_the_switch_is_shared_with_landscape(self):
         shared = re.search(r"const _SHARED_PARAM = \{(.*?)\};", self.html, re.S).group(1)
         self.assertIn("'tog-hide-year':             'hide_year'", shared)
-        docked = re.search(r"const _DOCKED_ROWS = \[(.*?)\];", self.html, re.S).group(1)
-        self.assertIn("'hide-year-row'", docked)
-        self.assertIn('id="hide-year-home"', self.html)
+        # One row for both shapes, in the Rating tab: not marked portrait-only.
+        self.assertIn('<div class="toggle-row" id="hide-year-row">', self.html)
 
 
 if __name__ == "__main__":

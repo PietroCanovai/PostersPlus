@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Landscape logo position, top band and graphic badges; per-type rating badges
+
+- Landscape: the logo can sit left, centre or right, in the bottom row or at
+  the top (`landscape_logo_pos`). The genre, year and score line moves out of
+  its way, or can be placed on its own (`landscape_info_pos`), and the info
+  badge can take any corner (`badge_pos=bottom_left` / `bottom_right`). A
+  tinted top band in the bottom band's colour can be switched on
+  (`landscape_vignette_top`) to back a top logo.
+- Landscape can have Graphic Badges, with its own on switch and groups
+  (`landscape_badge_display_mode=7`, `landscape_badge_group1`-`3`), so a Nuvio
+  `{shape}` URL can set them for each layout. They stay off unless chosen. In
+  the landscape view the Quality tab offers just Hidden and Graphic Badges.
+- The black, silver and gold notches have an opacity slider
+  (`sash_badge_opacity`). At its default they draw as before.
+- Poster Source has a "TMDB, with fanart.tv for anime" choice
+  (`poster_source=fanart_anime`), for instances that offer fanart.tv.
+- Each rating badge can be shown on movies, TV or anime only, from chips on
+  its row in the list (`rating_badges=imdb:mt`), and the number drawn can be
+  capped (`rating_badge_max`), with sites further down the list filling in
+  for missing scores.
+- Logo tab: Bottom Anchor is at the top of the overlay controls, and the
+  logo sliders hide while Textless is on.
+
 ### Sci-Fi or Fantasy for TV, and a genre order you can drag
 
 - TMDB puts every TV show that is either sci-fi or fantasy in one merged

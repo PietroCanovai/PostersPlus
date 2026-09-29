@@ -137,8 +137,12 @@ class LandscapeSplitParamTests(unittest.TestCase):
     def test_the_configurator_maps_exactly_the_split_params(self):
         html = Path("configurator.html").read_text(encoding="utf-8")
         block = re.search(r"const _SHARED_PARAM = \{(.*?)\};", html, re.S).group(1)
-        self.assertEqual(sorted(re.findall(r":\s*'([a-z_]+)'", block)),
-                         sorted(main._LANDSCAPE_SPLIT_PARAMS))
+        # badge_display_mode is kept per shape by the configurator but is not a
+        # split param: landscape reads only landscape_badge_display_mode (opt-in,
+        # no fallback to the portrait mode), which the configurator marks.
+        self.assertIn("const _SHARED_NO_FALLBACK = new Set(['badge_display_mode']);", html)
+        self.assertEqual(sorted(re.findall(r":\s*'([a-z_0-9]+)'", block)),
+                         sorted([*main._LANDSCAPE_SPLIT_PARAMS, "badge_display_mode"]))
 
 
 class ShapeCacheKeyTests(unittest.TestCase):

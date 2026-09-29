@@ -1685,6 +1685,12 @@ class RequestConfig:
     # as the provider does (7.8, 92%, 3.9); "normalized" on the weighted
     # score's scale, following the mode's out-of-10 switch.
     rating_badges:           str   = ""
+    # The badges narrowed to some kinds of title ("imdb:mt" — movies and TV,
+    # not anime), from the same parameter; see rating_badges.parse_kinds.
+    rating_badge_kinds:      str   = ""
+    # At most this many badges drawn, from the top of the list down, skipping
+    # sites the title has no score from.  0 is no cap (only the room).
+    rating_badge_max:        int   = 0
     rating_badge_scale:      str   = "native"
     # "color": each site's own colours.  "mono": every badge in the text
     # colour beside it, so a tinted vignette or light bar can't clash.
@@ -1755,7 +1761,8 @@ class RequestConfig:
     original_art_source: str = "primary"
     # Poster art source: "tmdb" (default) or "fanart" (fanart.tv: textless,
     # or in the logo language under original art; TMDB fallback; needs the
-    # operator's FANART_POSTERS + key).
+    # operator's FANART_POSTERS + key).  "fanart_anime" is fanart.tv for anime
+    # (Japanese animation, or a request by anime id) and TMDB for the rest.
     poster_source: str = "tmdb"
     # "top" (default) or "random": one of the source's top five candidates,
     # re-rolled each time the poster renders.  Needs RANDOM_POSTERS.
@@ -1828,10 +1835,29 @@ class RequestConfig:
     #   "original" — the highest-voted language-tagged backdrop (title treatment
     #                already baked in), served as-is with no logo of ours
     landscape_art: str = "textless"
-    # Where the info badge sits: "top_left" | "top_right" | "logo".  "logo"
-    # stacks it above the logo in textless mode; in original-art mode there is
-    # no logo of ours to stack on, so it takes the bottom-left slot itself.
+    # Where the info badge sits: a corner ("top_left" | "top_right" |
+    # "bottom_left" | "bottom_right") or "logo", stacked on the logo; with no
+    # logo of ours drawn it takes the logo's slot itself.  A badge that lands
+    # on the logo or the info line moves off it, away from its edge.
     landscape_badge_pos: str = "top_left"
+    # Where the landscape logo (or title) sits: "left" | "right" | "center"
+    # in the bottom row, where the info strip takes the other side (or the
+    # row under a centred logo), or "top_left" | "top_center" | "top_right",
+    # leaving the bottom row to the info strip, on the logo's side.
+    landscape_logo_pos: str = "left"
+    # Graphic badges on landscape (landscape_badge_display_mode=7).  Opt-in
+    # and apart from badge_display_mode: one "{shape}" URL is two configs, and
+    # the portrait's badge mode must not decide the landscape's.  The groups
+    # are the split badge_group1-3 (landscape_badge_group1, ...).
+    landscape_graphic_badges: bool = False
+    # Where the landscape "Genre • Year • Score" line goes: "auto" (placed
+    # against the logo, see landscape.build_landscape) or a slot of its own,
+    # "bottom_left" ... "top_right".
+    landscape_info_pos: str = "auto"
+    # A tinted top band as well, in the bottom band's colour.  Landscape only:
+    # not a split parameter, so a portrait vignette_poster_color_top on a
+    # "{shape}" URL never adds one.
+    landscape_vignette_top: bool = False
     # Colour link between the landscape band and its badge, when the band is
     # tinted: "off" | "badge_follows_vignette" | "vignette_follows_badge".
     landscape_color_link: str = "off"
@@ -1853,6 +1879,7 @@ class RequestConfig:
     sash_badge_pad:   float = 1.0          # vertical padding scale (<1 tightens top/bottom space)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
+    sash_badge_opacity: float | None = None  # black/silver/gold body opacity; None = 0.90, their own
     sash_badge_frost_saturation: float = 1.2 # frosted colour-cast strength (0 = grey)
     # Take the frosted notch's colour from whatever a tinted vignette landed on,
     # instead of from its own whole-poster sample.  Ignored when neither band is
@@ -1937,6 +1964,10 @@ _LANDSCAPE_SPLIT_PARAMS: tuple[str, ...] = (
     "hide_rating",
     "textless",
     "sash_mode",
+    # Landscape's own graphic badge groups, drawn only with landscape_badge_display_mode=7.
+    "badge_group1",
+    "badge_group2",
+    "badge_group3",
 )
 
 
@@ -2147,7 +2178,11 @@ def _uses_quality(cfg: "RequestConfig") -> bool:
     """Whether this request draws anything from stream quality — and so is
     worth fetching, waiting for or holding the composite back over.  Graphic
     badges only count when a group shows a quality badge: certificate, network
-    and studio come from TMDB alone."""
+    and studio come from TMDB alone.  Landscape draws graphic badges only, and
+    only when it opts in (landscape_graphic_badges)."""
+    if cfg.shape == "landscape":
+        return cfg.landscape_graphic_badges and graphic_badges.groups_use_quality(
+            cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
     if cfg.badge_display_mode in _QUALITY_BADGE_MODES:
         return True
     return cfg.badge_display_mode == 7 and graphic_badges.groups_use_quality(
@@ -2203,7 +2238,11 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "trending_scale": 1.0, "trending_label": False, "trending_corner": False,
                               "trending_ribbon_style": "charcoal",
                               "trending_frost_opacity": 0.75, "trending_frost_saturation": 1.2,
-                              "trending_side": "left", "trending_sash": "keep"}
+                              "trending_side": "left", "trending_sash": "keep",
+                              "sash_badge_opacity": None,
+                              "landscape_logo_pos": "left", "landscape_vignette_top": False,
+                              "landscape_graphic_badges": False, "landscape_info_pos": "auto",
+                              "rating_badge_kinds": "", "rating_badge_max": 0}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2350,8 +2389,17 @@ def build_request_config(params: dict) -> RequestConfig:
     if _ls_art in ("textless", "original"):
         cfg.landscape_art = _ls_art
     _ls_badge = (params.get("badge_pos") or "").strip().lower()
-    if _ls_badge in ("top_left", "top_right", "logo"):
+    if _ls_badge in ("top_left", "top_right", "bottom_left", "bottom_right", "logo"):
         cfg.landscape_badge_pos = _ls_badge
+    _ls_logo = (params.get("landscape_logo_pos") or "").strip().lower()
+    if _ls_logo in ("left", "right", "center", "top_left", "top_center", "top_right"):
+        cfg.landscape_logo_pos = _ls_logo
+    cfg.landscape_vignette_top = _b("landscape_vignette_top", cfg.landscape_vignette_top)
+    _ls_info = (params.get("landscape_info_pos") or "").strip().lower()
+    if _ls_info in ("bottom_left", "bottom_center", "bottom_right", "top_left", "top_center", "top_right"):
+        cfg.landscape_info_pos = _ls_info
+    # Only Graphic Badges draw on landscape, so 7 is the one value that means anything.
+    cfg.landscape_graphic_badges = (params.get("landscape_badge_display_mode") or "").strip() == "7"
     _ls_link = (params.get("landscape_color_link") or "").strip().lower()
     if _ls_link in ("off", "badge_follows_vignette", "vignette_follows_badge"):
         cfg.landscape_color_link = _ls_link
@@ -2374,6 +2422,10 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_badge_pad           = _f("sash_badge_pad",           cfg.sash_badge_pad,           0.5, 1.5)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
+    if "sash_badge_opacity" in params:
+        # 0.90 is how the dark styles draw anyway, so it shares their key.
+        _op = _f("sash_badge_opacity", 0.90, 0.0, 1.0)
+        cfg.sash_badge_opacity = None if _op == 0.90 else _op
     cfg.sash_badge_frost_saturation = _f("sash_badge_frost_saturation", cfg.sash_badge_frost_saturation, 0.0, 2.0)
     cfg.notch_vignette_color        = _b("notch_vignette_color", cfg.notch_vignette_color)
     cfg.sash_badge_size_w       = _f("sash_badge_size_w",       cfg.sash_badge_size_w,       0.5, 2.0)
@@ -2455,6 +2507,10 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.minimalist_rating_separator = _mrsep
 
     cfg.rating_badges = rating_badges.parse_providers(params.get("rating_badges"))
+    cfg.rating_badge_kinds = rating_badges.parse_kinds(params.get("rating_badges"))
+    cfg.rating_badge_max = _i("rating_badge_max", 0, 0, 6)
+    if cfg.rating_badge_max >= len([p for p in cfg.rating_badges.split(",") if p]):
+        cfg.rating_badge_max = 0   # no fewer than the list: the same render as no cap
     _rbs = (params.get("rating_badge_scale") or "").strip().lower()
     if _rbs in rating_badges.SCALES:
         cfg.rating_badge_scale = _rbs
@@ -2540,8 +2596,8 @@ def build_request_config(params: dict) -> RequestConfig:
     _pss = (params.get("poster_source") or "").strip().lower()
     # Parsed as "tmdb" while the operator hasn't enabled fanart, so those
     # requests share the TMDB composite rather than minting an identical one.
-    if _pss == "fanart" and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
-        cfg.poster_source = "fanart"
+    if _pss in ("fanart", "fanart_anime") and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
+        cfg.poster_source = _pss
     # Likewise "top" while the operator hasn't allowed random picks.  Landscape
     # draws from backdrops, which neither setting touches.
     if (params.get("poster_pick") or "").strip().lower() == "random" and _cfg.RANDOM_POSTERS:
@@ -4265,8 +4321,12 @@ def _build_poster(
     # Rating badges stand in for the ★ and the weighted score wherever a mode
     # prints one; a title with a score from none of the chosen providers keeps
     # the weighted score, so it isn't left bare.
+    # rating_badge_max caps how many are drawn: the first that many the title
+    # has a score from, so the later sites stand in for missing ones.
     _rb_items = (rating_badges.entries(ratings, cfg.rating_badges, score)
                  if cfg.rating_badges and not cfg.hide_rating else [])
+    if cfg.rating_badge_max:
+        _rb_items = _rb_items[:cfg.rating_badge_max]
 
     def _rb_run(font_size: float, out_of_10: bool, measure, budget: float, lead: float = 0.0) -> list[tuple]:
         """The badges as a run, dropping providers off the end until it fits
@@ -4708,7 +4768,8 @@ def _build_poster(
                                      tint_rgb=_frost_tint,
                                      star=_is_star,
                                      text_color=cfg.sash_text_color,
-                                     position=cfg.sash_badge_pos)
+                                     position=cfg.sash_badge_pos,
+                                     body_opacity=cfg.sash_badge_opacity)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
@@ -8254,11 +8315,11 @@ async def get_poster(
             _quality_backoff_remaining() > 0 or _quality_title_cooling(quality_id)
         )
 
-        # The landscape renderer has no quality badges — build_landscape drops the
-        # tokens — so fetching them buys nothing and costs plenty: wait_for_quality
-        # would block every landscape request on a provider whose answer is thrown
-        # away, and a pending fetch would keep the composite out of the cache, so a
-        # slow source turned every request into a fresh render.
+        # The landscape renderer draws graphic badges and no other quality mode,
+        # which _uses_quality knows: fetching tokens it would drop buys nothing
+        # and costs plenty — wait_for_quality would block every landscape request
+        # on a provider whose answer is thrown away, and a pending fetch would
+        # keep the composite out of the cache.
         _is_landscape = rcfg.shape == "landscape"
 
         # Nothing on this poster shows quality (no badges, age rating only, or
@@ -8272,7 +8333,6 @@ async def get_poster(
             and cached_tokens is None
             and _has_quality_source
             and not _quality_cooldown_active
-            and not _is_landscape
         )
 
         quality_pending = bool(
@@ -8280,7 +8340,6 @@ async def get_poster(
             and _quality_cooldown_active
             and quality_id is not None
             and cached_tokens is None
-            and not _is_landscape
         )
         if quality_needs_fetch and not rcfg.wait_for_quality:
             # Fire-and-forget background fetch — poster is served immediately
@@ -8391,7 +8450,12 @@ async def get_poster(
         # scan, backdrop rescue); it wins over the backdrop fallback too.
         # Original-art mode swaps in a poster in the logo-priority language and
         # serves it as-is.  TMDB's pick stands when fanart has none.
-        if (rcfg.poster_source != "tmdb" and not using_anime_art
+        # "fanart_anime" asks only for anime: requested by anime id, or TMDB's
+        # Animation genre on a Japanese-language original.
+        _fanart_wanted = rcfg.poster_source == "fanart" or (
+            rcfg.poster_source == "fanart_anime"
+            and (is_anime or (16 in _gid_set and _original_lang == "ja")))
+        if (_fanart_wanted and not using_anime_art
                 and not use_cinemeta):
             from fanart import fanart_poster_url
             _fa_url = await fanart_poster_url(
@@ -9618,13 +9682,20 @@ async def get_poster(
         )
 
         _render_cfg = dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg
+        if rcfg.rating_badge_kinds:
+            # Anime by the rule the weights use: requested by anime id, or
+            # carrying a score from an anime site.
+            _rb_kind = ("a" if is_anime or (isinstance(ratings_dict, dict) and is_anime_rated(ratings_dict))
+                        else "t" if type in ("tv", "series") else "m")
+            _render_cfg = dataclasses.replace(_render_cfg, rating_badges=rating_badges.for_kind(
+                rcfg.rating_badges, rcfg.rating_badge_kinds, _rb_kind))
         if not _is_landscape:
             _render_cfg = _scale_render_cfg(_render_cfg)
 
         # Graphic badges: the Commons marks (fetched once per instance), and
         # the title's US certificate, network and studio (one TMDB call per
         # title per month; each logo downloaded once).
-        if rcfg.badge_display_mode == 7 and not _is_landscape:
+        if (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7):
             await graphic_badges.ensure_assets(client)
             # An anime request with a mapped TMDB id gets them too; the anime
             # id standing in for a missing one is rejected by the fetcher.
@@ -9644,9 +9715,11 @@ async def get_poster(
         # instance).  A mark that can't be had yet leaves its badge out, so a
         # render missing one isn't kept.
         _rating_badges_missing = False
-        if (rcfg.rating_badges and not _is_landscape and rcfg.rating_display_mode in (2, 3, 4)
+        if (_render_cfg.rating_badges and not _is_landscape and rcfg.rating_display_mode in (2, 3, 4)
                 and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
-            _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, rcfg.rating_badges, score)]
+            _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, _render_cfg.rating_badges, score)]
+            if rcfg.rating_badge_max:
+                _rb_shown = _rb_shown[:rcfg.rating_badge_max]
             if _rb_shown:
                 _rating_badges_missing = not await rating_badges.ensure_assets(client, _rb_shown, rcfg.rating_badge_style)
                 _bp_args["ratings"] = ratings_dict

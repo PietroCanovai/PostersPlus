@@ -482,7 +482,11 @@
   /* Three tabs spread edge to edge read as three unrelated labels; with
      half the bar gone in landscape they sit together at the left on the
      same rhythm the six-tab bar has between neighbours. */
-  .tab-bar.is-landscape { justify-content: flex-start; gap: 28px; }
+  /* Controls one shape reads and the other doesn't.  The body class follows
+     the preview's shape (updateShapeFields); !important because the portrait
+     controls are also shown and hidden inline by their own mode logic. */
+  body.shape-landscape .portrait-only { display: none !important; }
+  body:not(.shape-landscape) .landscape-only { display: none !important; }
   .tab-bar::after {
     content: '';
     position: absolute;
@@ -1391,6 +1395,23 @@
   .sash-item:hover .sash-enable-btn { opacity: 1; }
   .sash-disable-btn:hover { color: #c0443a; background: rgba(192,68,58,0.12); opacity: 1; }
   .sash-enable-btn:hover  { color: var(--gold); background: var(--gold-faint); opacity: 1; }
+
+  /* Rating badges: which kinds of title each site shows on.  Small enough to
+     sit in the row beside the name rather than take a row of their own. */
+  .rb-kinds { display: flex; gap: 3px; flex-shrink: 0; }
+  .rb-kind {
+    font-family: var(--mono);
+    font-size: 8.5px;
+    letter-spacing: 0.04em;
+    padding: 2px 5px;
+    border-radius: 4px;
+    border: 1px solid var(--black5);
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .rb-kind.on { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-faint); }
 
   .sash-disabled-section { margin-top: 14px; }
   .lp-list { margin-bottom: 0; }
@@ -2377,7 +2398,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <!-- Shown only when the server's MAX_POSTER_RESOLUTION allows more
                  than the default canvas (serverCaps.max_poster_resolution). -->
-            <div class="field" id="resolution-field" hidden>
+            <div class="field portrait-only" id="resolution-field" hidden>
               <label class="field-label" id="resolution-label" data-tip="Portrait poster size. Larger posters look sharper on big screens but take longer to render and download. Landscape is unaffected.">Poster Resolution</label>
               <select id="cfg-resolution" onchange="build(); if (serverCaps.preview_at_resolution) queuePreviewReload()">
                 <option value="500" selected>500 × 750 (default)</option>
@@ -2502,43 +2523,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             </div><!-- /presentation group -->
 
-            <div class="cfg-sep" id="landscape-fields" style="display:none;">
-              <span class="group-title">Landscape</span>
-              <div class="field">
-                <label class="field-label" data-tip="Textless uses the language-neutral backdrop with your logo on top. Original uses the highest-voted backdrop that already carries its own title treatment, as-is.">Art</label>
-                <select id="cfg-landscape-art" onchange="updateShapeFields(); build(); queuePreviewReload()">
-                  <option value="textless" selected>Textless + Logo</option>
-                  <option value="original">Original</option>
-                </select>
-              </div>
-              <div class="field">
-                <label class="field-label" data-tip="Size of the genre, year and score line, 1.00 being the tuned size. It grows up and to the left from the bottom-right corner; if it would reach the logo, the genre is dropped first.">Info Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-landscape-info-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lis'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lis">1.00</span>
-                </div>
-              </div>
-              <div class="toggle-row" id="landscape-score10-row">
-                <span class="toggle-label">Display score out of 10</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" id="landscape-star-row">
-                <span class="toggle-label" data-tip="Put a star beside the score, as Clean does on a portrait: Genre • Year ★ 87.">Star beside score</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-score-star" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <!-- The Hide Genre, Hide Year, Hide Rating and Textless switches move in
-                   here while the tabs that own them are hidden (see
-                   updateShapeFields): one control, one parameter, shared by
-                   both shapes. -->
-              <div id="landscape-docked-rows"></div>
-              <div class="field-hint">Only the settings landscape uses are shown; the badge is under Sash.</div>
-            </div><!-- /landscape group -->
 
             <div class="cfg-sep">
               <span class="group-title">Vignette</span>
@@ -2612,6 +2596,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               </div><!-- /vignette-portrait-fields -->
+              <div class="toggle-row" id="landscape-vignette-top-row" style="display:none;">
+                <span class="toggle-label" data-tip="Adds a band across the top, faded from the same poster colour as the bottom one, behind the top-corner badge. Uses the colour settings below.">Top Colour from Poster</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-vignette-top" onchange="updateGradientFields(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="toggle-row">
                 <span class="toggle-label" data-tip="Fades the bottom into a fog of a colour the poster already has, instead of into black. Faces are left out of the choice, and art with no real colour of its own gets a deep blue. Greyscaled posters (still in cinemas) keep the plain black fade. Also tints the landscape poster's bottom band.">Bottom Colour from Poster</span>
                 <label class="toggle-switch">
@@ -2672,6 +2663,50 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 2. RATING / GENRE LABEL -->
         <div class="section" data-tab="rating">
           <div class="section-body">
+            <!-- Landscape draws one "Genre • Year • Score" line; this group and
+                 Labels below are all of this tab it reads. -->
+            <div class="landscape-only">
+              <span class="group-title">Info Line</span>
+              <div class="field">
+                <label class="field-label" data-tip="Where the genre, year and score line goes. Auto places it against the logo: across from a bottom logo, under a centred one, and in the bottom row on a top logo's side. Put it in the logo's own spot and the two stack. A long line drops its genre first rather than run into the logo.">Placement</label>
+                <select class="segmented-source" id="cfg-landscape-info-row" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
+                  <option value="auto" selected>Auto</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-info-row"></div>
+                <div id="landscape-info-col-field" style="display:none;">
+                  <select class="segmented-source" id="cfg-landscape-info-col" onchange="build(); queuePreviewReload()">
+                    <option value="left">Left</option>
+                    <option value="center">Centre</option>
+                    <option value="right" selected>Right</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-landscape-info-col" style="margin-top: 6px;"></div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Size of the genre, year and score line, 1.00 being the tuned size. It grows up and away from its corner; if it would reach the logo, the genre is dropped first.">Info Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-info-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lis'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lis">1.00</span>
+                </div>
+              </div>
+              <div class="toggle-row" id="landscape-score10-row">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row" id="landscape-star-row">
+                <span class="toggle-label" data-tip="Put a star beside the score, as Clean does on a portrait: Genre • Year ★ 87.">Star beside score</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-score-star" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+            </div>
+            <div class="portrait-only">
             <span class="group-title">Mode</span>
             <div class="field">
               <label class="field-label">Display Mode</label>
@@ -2703,8 +2738,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                         placeholder="One score:hex per line.&#10;The highest threshold below the rating wins.&#10;&#10;0:#FF5050&#10;50:#FFD25A&#10;70:#78FFA0&#10;85:#BE8CFF"
                         oninput="build(); queuePreviewReload()"></textarea>
             </div>
+            </div><!-- /portrait-only mode group -->
 
-            <div class="cfg-sep" id="rating-style-group">
+            <div class="cfg-sep portrait-only" id="rating-style-group">
               <span class="group-title">Style</span>
               <div id="rating-mode1-fields">
                 <div class="field">
@@ -2919,7 +2955,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div><!-- /rating-style-group -->
 
-            <div class="cfg-sep" id="rating-glow-fields">
+            <div class="cfg-sep portrait-only" id="rating-glow-fields">
               <span class="group-title">Glow</span>
               <div class="field">
                 <label class="field-label">Score Glow Threshold</label>
@@ -2946,7 +2982,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep" id="rating-labels-group">
               <span class="group-title">Labels</span>
-              <div id="hide-genre-home"></div>
               <div class="toggle-row" id="hide-genre-row">
                 <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
                 <label class="toggle-switch">
@@ -2954,7 +2989,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div id="hide-year-home"></div>
               <div class="toggle-row" id="hide-year-row">
                 <span class="toggle-label" data-tip="Removes the release year and its separator. Minimalist's Year mode shows the score as the colour of the separator before the year, so with the year hidden it prints the score instead.">Hide Year</span>
                 <label class="toggle-switch">
@@ -2962,7 +2996,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div id="hide-rating-home"></div>
               <div class="toggle-row" id="hide-rating-row">
                 <span class="toggle-label" data-tip="Removes the score from whichever display mode is drawing it — the number, the Rating Bar, the colour a Minimalist separator carries, and the Bar mode rating fill, which falls back to its plain body. Controls that only style the score hide with it.">Hide Rating</span>
                 <label class="toggle-switch">
@@ -2970,7 +3003,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div id="hide-unreleased-rating-home"></div>
               <div class="toggle-row" id="hide-unreleased-rating-row">
                 <span class="toggle-label" data-tip="Hides the score, as Hide Rating does, only on titles nobody can have watched yet: a film not out in cinemas or anywhere else, or a series that has not aired an episode. The score comes back on its own once the title is out. Films need a TMDB key or Cinemeta to know their release dates.">Hide Rating Until Released</span>
                 <label class="toggle-switch">
@@ -2981,28 +3013,28 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <!-- Score-out-of-10 toggles: one per rating mode that prints a
                    numeric score. Grouped here rather than inside each mode's
                    own block so every mode-agnostic toggle sits together. -->
-              <div class="toggle-row score10-row" id="numeric-score10-row" style="display:none;">
+              <div class="toggle-row score10-row portrait-only" id="numeric-score10-row" style="display:none;">
                 <span class="toggle-label">Display score out of 10</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row score10-row" id="minimalist-score10-row" style="display:none;">
+              <div class="toggle-row score10-row portrait-only" id="minimalist-score10-row" style="display:none;">
                 <span class="toggle-label">Display score out of 10</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-minimalist-score-10" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row score10-row" id="minimalist-center-row" style="display:none;">
+              <div class="toggle-row score10-row portrait-only" id="minimalist-center-row" style="display:none;">
                 <span class="toggle-label" data-tip="Centre the strip under the logo instead of hanging it off the right margin. The X Position slider stops applying.">Centre under logo</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-minimalist-center" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row score10-row" id="bar-score10-row" style="display:none;">
+              <div class="toggle-row score10-row portrait-only" id="bar-score10-row" style="display:none;">
                 <span class="toggle-label">Display score out of 10</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
@@ -3010,12 +3042,25 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
             </div>
-            <div class="cfg-sep" id="rating-badges-fields" style="display:none;">
+            <div class="cfg-sep portrait-only" id="rating-badges-fields" style="display:none;">
               <span class="group-title">Rating Badges</span>
               <div class="field">
-                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating). The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove.">Sites</label>
+                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating). The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove. Movie, TV and Anime choose which titles each site shows on.">Sites</label>
                 <input type="hidden" id="cfg-rating-badges" value="" data-default="">
+                <input type="hidden" id="cfg-rating-badge-kinds" value="" data-default="">
                 <div class="sash-list lp-list" id="rating-badges-list"></div>
+              </div>
+              <div class="field" id="rating-badge-max-field" style="display:none;">
+                <label class="field-label" data-tip="Draws at most this many badges: the first ones down the list that the title has a score from, so the sites further down stand in when one is missing. All draws as many as fit.">Show At Most</label>
+                <select class="segmented-source" id="cfg-rating-badge-max" onchange="build(); queuePreviewReload()">
+                  <option value="0" selected>All</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+                <div class="segmented" data-for="cfg-rating-badge-max"></div>
               </div>
               <div class="field" id="rating-badge-scale-field" style="display:none;">
                 <label class="field-label" data-tip="Each site's own scale is what the site itself shows — IMDb 7.8, Rotten Tomatoes 92%, Letterboxd 3.9. P+ scale puts every score on the weighted score's scale instead, following this mode's Out of 10 switch.">Badge Scores</label>
@@ -3038,7 +3083,17 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <div class="section" data-tab="logo">
           <div class="section-body">
             <span class="group-title">Artwork</span>
-            <div class="toggle-row">
+            <!-- Landscape's art choice; the rest of this group is portrait's. -->
+            <div class="landscape-only">
+              <div class="field">
+                <label class="field-label" data-tip="Textless uses the language-neutral backdrop with your logo on top. Original uses the highest-voted backdrop that already carries its own title treatment, as-is.">Art</label>
+                <select id="cfg-landscape-art" onchange="updateShapeFields(); build(); queuePreviewReload()">
+                  <option value="textless" selected>Textless + Logo</option>
+                  <option value="original">Original</option>
+                </select>
+              </div>
+            </div>
+            <div class="toggle-row portrait-only">
               <span class="toggle-label" data-tip="Use the original poster art instead of textless art with a logo overlay. Bar or minimal rating modes suit it best.">Original Art</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-original-art" onchange="updateOriginalArt(); build(); queuePreviewReload()">
@@ -3046,7 +3101,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
             </div>
             <!-- Original Art source (shown only in Original Art mode) -->
-            <div class="field" id="original-art-source-field" style="display:none;">
+            <div class="field portrait-only" id="original-art-source-field" style="display:none;">
               <label class="field-label" data-tip="Primary is TMDB's main poster; top-rated picks the highest-voted one.">Art Source</label>
               <select id="cfg-original-art-source" onchange="build(); queuePreviewReload()">
                 <option value="primary" selected>Primary (TMDB default)</option>
@@ -3054,14 +3109,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <!-- Poster source and pick; each shown only when the operator allows it -->
-            <div class="field" id="poster-source-field" hidden>
-              <label class="field-label" data-tip="Where posters come from. fanart.tv art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without fanart.tv art keep their TMDB poster.">Poster Source</label>
+            <div class="field portrait-only" id="poster-source-field" hidden>
+              <label class="field-label" data-tip="Where posters come from. fanart.tv art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without fanart.tv art keep their TMDB poster. The anime option uses fanart.tv only for anime (Japanese animation) and TMDB for everything else.">Poster Source</label>
               <select id="cfg-poster-source" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">fanart.tv</option>
+                <option value="fanart_anime">TMDB, with fanart.tv for anime</option>
               </select>
             </div>
-            <div class="field" id="poster-pick-field" hidden>
+            <div class="field portrait-only" id="poster-pick-field" hidden>
               <label class="field-label" data-tip="Top uses the best-rated poster. Random picks one of the top five, fixed until the poster is re-rendered (about weekly), so some picks will be duds.">Poster Pick</label>
               <select id="cfg-poster-pick" onchange="build(); queuePreviewReload()">
                 <option value="top" selected>Top</option>
@@ -3072,41 +3128,60 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                  so the group heading and its rule hide along with them. -->
             <div class="cfg-sep" id="logo-controls">
               <span class="group-title">Overlay</span>
-              <div id="textless-home"></div>
               <div class="toggle-row" id="textless-row">
                 <span class="toggle-label" data-tip="Draw the art alone, with no logo or title on it.">Textless</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-textless" onchange="build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-textless" onchange="updateOriginalArt(); updateLandscapeLogoFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <!-- Landscape's logo placement; nothing to place without our logo. -->
+              <div class="landscape-only" id="landscape-logo-pos-field">
               <div class="field">
-                <label class="field-label">Logo Width</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lw">0.75</span>
-                </div>
+                <label class="field-label" data-tip="Where the logo (or the title standing in for one) goes. In the bottom row the genre, year and score line takes the other side, or sits under a centred logo. At the top the logo hangs from the badge line and the bottom row is the line's alone, on the logo's side; a corner badge in the logo's way moves under it. Top Colour from Poster (under Vignette) backs a top logo. A badge set to Above Logo follows the logo, below it at the top.">Logo Position</label>
+                <select class="segmented-source" id="cfg-landscape-logo-row" onchange="build(); queuePreviewReload()">
+                  <option value="bottom" selected>Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-logo-row"></div>
+                <select class="segmented-source" id="cfg-landscape-logo-pos" onchange="build(); queuePreviewReload()">
+                  <option value="left" selected>Left</option>
+                  <option value="center">Centre</option>
+                  <option value="right">Right</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-logo-pos" style="margin-top: 6px;"></div>
               </div>
-              <div class="field">
-                <label class="field-label">Logo Height</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-logo-h" min="0.05" max="0.40" step="0.01" value="0.25" oninput="updateRange(this,'rng-lh'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lh">0.25</span>
-                </div>
               </div>
-              <div class="field">
-                <label class="field-label">Logo Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lb">0.28</span>
+              <!-- Logo placement — nothing to place when Textless is on. -->
+              <div id="logo-size-fields" class="portrait-only">
+                <div class="toggle-row">
+                  <span class="toggle-label" data-tip="Logos expand upwards only, ideal for bottom placement. By default they share a midline and expand both ways. Set this using a wide logo.">Bottom Anchor</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-logo-bottom-anchor" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
                 </div>
-              </div>
-              <div class="toggle-row">
-                <span class="toggle-label" data-tip="Logos expand upwards only, ideal for bottom placement. By default they share a midline and expand both ways. Set this using a wide logo.">Bottom Anchor</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-logo-bottom-anchor" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
+                <div class="field">
+                  <label class="field-label">Logo Width</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lw">0.75</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Logo Height</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-h" min="0.05" max="0.40" step="0.01" value="0.25" oninput="updateRange(this,'rng-lh'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lh">0.25</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Logo Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lb">0.28</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>        </div>
@@ -3332,6 +3407,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-sbfo">0.75</span>
                 </div>
               </div>
+              <div class="field" id="sash-badge-dark-opacity-field" style="display:none;">
+                <label class="field-label" data-tip="How solid the notch's dark body is. The label and trim stay as they are. 0.90 is the style's usual look.">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-opacity" min="0.00" max="1.00" step="0.01" value="0.90" oninput="updateRange(this,'rng-sbdo'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbdo">0.90</span>
+                </div>
+              </div>
               <div class="field" id="sash-badge-saturation-field" style="display:none;">
                 <label class="field-label">Colour Saturation</label>
                 <div class="range-row">
@@ -3372,11 +3454,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="cfg-sep" id="landscape-sash-fields" style="display:none;">
               <span class="group-title">Badge</span>
               <div class="field">
-                <label class="field-label" data-tip="Where the info sash's label sits. The top corners are where Stremio and Nuvio draw their watched marks, so the pill is frosted to stay readable under one. Above Logo stacks it over the logo inside the band.">Badge Position</label>
+                <label class="field-label" data-tip="Where the info sash's label sits. The top corners are where Stremio and Nuvio draw their watched marks, so the pill is frosted to stay readable under one. With Logo stacks it on the logo: above it in the bottom row, below it at the top. A badge that would land on the logo or the info line moves off it, away from its edge.">Badge Position</label>
                 <select id="cfg-landscape-badge-pos" onchange="build(); queuePreviewReload()">
                   <option value="top_left" selected>Top Left</option>
                   <option value="top_right">Top Right</option>
-                  <option value="logo">Above Logo</option>
+                  <option value="bottom_left">Bottom Left</option>
+                  <option value="bottom_right">Bottom Right</option>
+                  <option value="logo">With Logo</option>
                 </select>
               </div>
               <div class="field">
@@ -4490,10 +4574,11 @@ function updateImdbSourceAvailability() {
 // Whether the badges shown need stream quality at all.  Mirrors _uses_quality
 // in main.py: graphic badges only when some group shows a quality badge —
 // certificate, network and studio come from TMDB alone.
-function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode'))) {
+function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode')),
+                          groups = GB_GROUPS.map(g => vEl(`cfg-badge-group${g}`))) {
   if ([1, 2, 4, 5, 6].includes(mode)) return true;
   if (mode !== 7) return false;
-  return GB_GROUPS.some(g => (gbParse(vEl(`cfg-badge-group${g}`))?.slots || [])
+  return groups.some(raw => (gbParse(raw)?.slots || [])
     .some(id => ['video', 'audio', 'res'].includes(id)));
 }
 
@@ -4721,6 +4806,35 @@ function updateBadgeModeHint() {
   // Graphic badges size each group separately (in the Layout sliders gbRender shows).
   document.getElementById('badge-size-field').style.display        = mode === 7 ? 'none' : '';
   gbRender();   // also hides the per-group Layout sliders outside this mode
+}
+
+// Landscape's logo position means nothing when no logo of ours is drawn
+// (Textless, or Original art with its own title), and the info line's column
+// only once it has a row of its own.
+function updateLandscapeLogoFields() {
+  const noLogo = c('tog-textless') || vEl('cfg-landscape-art') === 'original';
+  document.getElementById('landscape-logo-pos-field').style.display = noLogo ? 'none' : '';
+  document.getElementById('landscape-info-col-field').style.display =
+    vEl('cfg-landscape-info-row') === 'auto' ? 'none' : '';
+}
+
+// Landscape draws Graphic Badges and nothing else, so in its view the mode
+// list is just Hidden and Graphic Badges.  Its mode is its own (kept per
+// shape, see _SHARED_PARAM), and off unless chosen.
+// The options are taken out rather than hidden: iOS Safari ignores hidden
+// on an <option>.
+let _badgeModeOptions = null;
+// A select's options, including any the landscape view has taken out.
+function _allOptions(el) {
+  return el.id === 'cfg-badge-display-mode' && _badgeModeOptions ? _badgeModeOptions : [...el.options];
+}
+function _updateBadgeModeOptions() {
+  const landscape = c('tog-landscape');
+  const sel = document.getElementById('cfg-badge-display-mode');
+  _badgeModeOptions ??= [...sel.options];
+  const value = sel.value;
+  sel.replaceChildren(..._badgeModeOptions.filter(o => !landscape || ['0', '7'].includes(o.value)));
+  sel.value = [...sel.options].some(o => o.value === value) ? value : '0';
 }
 
 // Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
@@ -5597,7 +5711,7 @@ const RATING_BADGES_MAX = 6;
 function ratingBadgeSources(value) {
   const known = new Set(RATING_BADGE_SOURCES.map(s => s.id));
   const out = [];
-  for (const token of (value || '').toLowerCase().split(',').map(t => t.trim())) {
+  for (const token of (value || '').toLowerCase().split(',').map(t => t.trim().split(':')[0])) {
     if (known.has(token) && !out.includes(token)) out.push(token);
   }
   return out.slice(0, RATING_BADGES_MAX);
@@ -5608,11 +5722,41 @@ function setRatingBadges(ids) {
   buildRatingBadgeList(); updateRatingFields(); build(); queuePreviewReload();
 }
 
+// Which kinds of title each badge shows on, as rating_badges spells them
+// ("m", "t", "a").  Only narrowed sites are stored ("imdb:mt,kitsu:a"); a site
+// that isn't listed shows on all three.
+const RATING_BADGE_KINDS = [['m', 'Movie'], ['t', 'TV'], ['a', 'Anime']];
+function ratingBadgeKinds() {
+  const out = {};
+  for (const entry of (vEl('cfg-rating-badge-kinds') || '').split(',')) {
+    const [id, kinds] = entry.split(':');
+    if (id && kinds !== undefined) out[id] = kinds;
+  }
+  return out;
+}
+function setRatingBadgeKind(id, kind, on) {
+  const all = ratingBadgeKinds();
+  const now = new Set((all[id] ?? 'mta').split(''));
+  on ? now.add(kind) : now.delete(kind);
+  const kinds = RATING_BADGE_KINDS.map(([k]) => k).filter(k => now.has(k)).join('');
+  if (kinds === 'mta') delete all[id]; else all[id] = kinds;
+  document.getElementById('cfg-rating-badge-kinds').value =
+    Object.entries(all).map(([p, k]) => `${p}:${k}`).join(',');
+  buildRatingBadgeList(); build(); queuePreviewReload();
+}
+// The rating_badges parameter: the drawn list, each narrowed site with its kinds.
+function ratingBadgesParam() {
+  const kinds = ratingBadgeKinds();
+  return ratingBadgeSources(vEl('cfg-rating-badges'))
+    .map(id => kinds[id] !== undefined ? `${id}:${kinds[id]}` : id).join(',');
+}
+
 function buildRatingBadgeList() {
   const container = document.getElementById('rating-badges-list');
   if (!container) return;
   const order = ratingBadgeSources(vEl('cfg-rating-badges'));
   const full = order.length >= RATING_BADGES_MAX;
+  const kinds = ratingBadgeKinds();
   const row = (src, idx) => {
     const item = document.createElement('div');
     const active = idx !== null;
@@ -5623,12 +5767,17 @@ function buildRatingBadgeList() {
       ${active ? `<span class="sash-drag-handle" title="Drag to reorder">⠿</span>
       <span class="sash-rank">${idx + 1}</span>` : ''}
       <span class="sash-label">${src.label}</span>
+      ${active ? `<span class="rb-kinds">${RATING_BADGE_KINDS.map(([k, name]) =>
+        `<button class="rb-kind${(kinds[src.id] ?? 'mta').includes(k) ? ' on' : ''}" data-kind="${k}"
+                 title="Show on ${name === 'Anime' ? 'anime' : name + 's'}">${name}</button>`).join('')}</span>` : ''}
       ${active ? `<button class="sash-disable-btn" title="Remove">✕</button>`
                : (full ? '' : `<button class="sash-enable-btn" title="Add">+</button>`)}
     `;
-    item.querySelector('button')?.addEventListener('click', () => {
+    item.querySelector('.sash-disable-btn, .sash-enable-btn')?.addEventListener('click', () => {
       setRatingBadges(active ? order.filter(id => id !== src.id) : [...order, src.id]);
     });
+    item.querySelectorAll('.rb-kind').forEach(btn => btn.addEventListener('click', () =>
+      setRatingBadgeKind(src.id, btn.dataset.kind, !btn.classList.contains('on'))));
     if (active) {
       item.draggable = true;
       item.addEventListener('dragstart', e => { _rbDragId = src.id; item.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
@@ -5931,7 +6080,6 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const userMdblistKey = vEl('cfg-mdblist-key');
 
   const ratingMode = ni('cfg-rating-mode');
-  const badgeMode  = ni('cfg-badge-display-mode');
   const landscape  = c('tog-landscape');
   // A "{shape}" URL is resolved for both layouts, so it is a landscape URL and
   // a portrait one at once: the portrait-only settings have to ride along or
@@ -5947,6 +6095,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const sashMode   = pShared['cfg-sash-mode'] || 'sash';
   const showSash   = sashMode !== 'hidden';
   const lShowSash  = (lShared['cfg-sash-mode'] || 'sash') !== 'hidden';
+  // Quality badge mode and graphic groups are per shape too.
+  const badgeMode  = parseInt(pShared['cfg-badge-display-mode'], 10) || 0;
+  const pGroups    = GB_GROUPS.map(g => pShared[`cfg-badge-group${g}`] || '');
+  const lBadgeMode = parseInt(lShared['cfg-badge-display-mode'], 10) === 7 ? 7 : 0;
+  const lGroups    = GB_GROUPS.map(g => lShared[`cfg-badge-group${g}`] || '');
 
   const params = new URLSearchParams();
 
@@ -6040,8 +6193,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // for landscape that default is ON — so the switch could be turned off and
   // change nothing.  omitServerDefaults() still drops whichever state is the
   // default for the URL's shape, so a default URL stays as short as before.
-  // Sliders only ride along when a tint is on.  The landscape layout has no
-  // top band, so its toggle is portrait-only.
+  // Sliders only ride along when a tint is on.  The landscape top band has its
+  // own toggle, emitted with the landscape layout choices below.
   //
   // Everything here is kept per shape, so it is written once per shape the URL
   // renders: plain for portrait, "landscape_"-prefixed for landscape.  A
@@ -6051,7 +6204,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     const on  = id => v[id] === true || v[id] === 'true';
     const num = id => Number(v[id]).toFixed(2);
     const set = (key, value) => params.set(prefix + key, value);
-    const _vgTop = withTop && c('tog-vignette-color-top'), _vgBot = on('tog-vignette-color-bottom');
+    // Landscape's top band has a toggle of its own (landscape_vignette_top,
+    // written with the other landscape choices), but it needs the sliders too.
+    const _vgTop = withTop ? c('tog-vignette-color-top') : c('tog-landscape-vignette-top');
+    const _vgBot = on('tog-vignette-color-bottom');
     if (withTop) params.set('vignette_poster_color_top', _vgTop ? 'true' : 'false');
     set('vignette_poster_color_bottom', _vgBot ? 'true' : 'false');
     if (_vgTop || _vgBot) {
@@ -6100,6 +6256,15 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('badge_pos',     vEl('cfg-landscape-badge-pos') || 'top_left');
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
+    // Both left out at their defaults; import reads an absent one as that.
+    // Written even while the control is hidden (Textless, Original art): an
+    // Original title with no text-bearing backdrop falls back to the neutral
+    // one with our logo on it, and that logo still goes where it was put.
+    const _llp = (vEl('cfg-landscape-logo-row') === 'top' ? 'top_' : '') + (vEl('cfg-landscape-logo-pos') || 'left');
+    if (_llp !== 'left') params.set('landscape_logo_pos', _llp);
+    const _lir = vEl('cfg-landscape-info-row') || 'auto';
+    if (_lir !== 'auto') params.set('landscape_info_pos', `${_lir}_${vEl('cfg-landscape-info-col') || 'right'}`);
+    if (c('tog-landscape-vignette-top')) params.set('landscape_vignette_top', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
     // Only meaningful with a tinted band — there is nothing to link otherwise.
@@ -6206,7 +6371,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     }
     // Rating badges: the Rating Bar has no printed score to put them on.
     if (ratingMode !== 1 && vEl('cfg-rating-badges')) {
-      params.set('rating_badges', vEl('cfg-rating-badges'));
+      params.set('rating_badges', ratingBadgesParam());
+      // Only a cap below the list's length changes anything.
+      const _rbMax = ni('cfg-rating-badge-max');
+      if (_rbMax && _rbMax < ratingBadgeSources(vEl('cfg-rating-badges')).length)
+        params.set('rating_badge_max', _rbMax);
       if (vEl('cfg-rating-badge-scale') === 'normalized') params.set('rating_badge_scale', 'normalized');
       if (vEl('cfg-rating-badge-style') === 'mono') params.set('rating_badge_style', 'mono');
     }
@@ -6280,6 +6449,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
         params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
         if (c('tog-notch-vignette-color')) params.set('notch_vignette_color', 'true');
+      } else if (n('cfg-sash-badge-opacity') !== 0.9) {
+        params.set('sash_badge_opacity', n('cfg-sash-badge-opacity').toFixed(2));
       }
       // Every notch style can float off centre (it was frosted only).
       const _pos = vEl('cfg-sash-badge-pos') || 'center';
@@ -6323,14 +6494,13 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   }
 
   // ── Quality Badges ─────────────────────────────────────────────────────────
-  // Landscape never fetches quality (see get_poster), so none of this applies.
+  // Portrait's mode goes out under the plain names; landscape's (Graphic
+  // Badges or nothing, see _uses_quality) under landscape_ ones below.
   if (emitAll) params.set('badge_display_mode', badgeMode);
   if (emitAll && badgeMode !== 0) {
     if (badgeMode !== 7) params.set('badge_height', ni('cfg-badge-h'));
     if (badgeMode === 7) {
-      params.set('badge_group1', vEl('cfg-badge-group1'));
-      params.set('badge_group2', vEl('cfg-badge-group2'));
-      params.set('badge_group3', vEl('cfg-badge-group3'));
+      pGroups.forEach((g, i) => params.set(`badge_group${i + 1}`, g));
     } else if (badgeMode !== 6) {
       params.set('badge_anchor_x', n('cfg-badge-x').toFixed(3));
       params.set('badge_anchor_y', n('cfg-badge-y').toFixed(3));
@@ -6339,14 +6509,23 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       // badge_gap only applies to Quality Badge Row mode
       params.set('badge_gap', ni('cfg-badge-gap'));
     }
-    if (badgeUsesQuality(badgeMode)) {
+    if (badgeUsesQuality(badgeMode, pGroups)) {
       params.set('badge_min_score', ni('cfg-badge-min-score'));
     }
     if (badgeMode === 5) {
       if (c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
     }
   }
-  if (emitAll && c('tog-wait-quality') && badgeUsesQuality(badgeMode)) {
+  if (emitLandscape && lBadgeMode === 7) {
+    params.set('landscape_badge_display_mode', '7');
+    lGroups.forEach((g, i) => params.set(`landscape_badge_group${i + 1}`, g));
+  }
+  // The minimum quality and the wait are one setting for both shapes; they go
+  // out for whichever shape shows quality.
+  const _qualityShown = (emitAll && badgeUsesQuality(badgeMode, pGroups))
+    || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
+  if (_qualityShown && !params.has('badge_min_score')) params.set('badge_min_score', ni('cfg-badge-min-score'));
+  if (_qualityShown && c('tog-wait-quality')) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
@@ -7088,6 +7267,8 @@ function updateBadgeStyleFields() {
     && vEl('cfg-sash-mode') === 'notch' && vEl('cfg-sash-badge-style') === 'frosted';
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-badge-dark-opacity-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch' && !isFrosted) ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-pos-field').style.display =
     (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch') ? '' : 'none';
@@ -7127,11 +7308,17 @@ function onFrostReferenceChange(el) {
 function updateOriginalArt() {
   // In Original Art mode no logo is drawn, so its overlay controls don't apply;
   // show the art-source picker in their place instead.
-  const on = c('tog-original-art');
+  // Original Art is the portrait's; landscape's art choice leaves its logo
+  // placement showing either way (a title can still stand in for a logo, and
+  // the info line follows the position).
+  const on = c('tog-original-art') && !c('tog-landscape');
   const lc = document.getElementById('logo-controls');
   const sf = document.getElementById('original-art-source-field');
   if (lc) lc.style.display = on ? 'none' : '';
   if (sf) sf.style.display = on ? '' : 'none';
+  // Textless draws no logo, so there is nothing for the sizing and anchor to move.
+  const ls = document.getElementById('logo-size-fields');
+  if (ls) ls.style.display = c('tog-textless') ? 'none' : '';
 }
 
 // The two Rating Bar styles draw the score as a progress fill, so with the
@@ -7186,12 +7373,13 @@ function updateCustomPaletteFields() {
 function updateGradientFields() {
   document.getElementById('top-gradient-custom-fields').style.display = document.getElementById('cfg-top-gradient').value === 'custom' ? 'block' : 'none';
   document.getElementById('bottom-gradient-custom-fields').style.display = document.getElementById('cfg-bottom-gradient').value === 'custom' ? 'block' : 'none';
-  // The landscape layout has no top band, so its toggle cannot be what
-  // reveals the colour sliders there.
+  // Landscape has its own top-band toggle (the portrait one hides there), so
+  // it is whichever of the two is showing that reveals the colour sliders.
   const landscape = c('tog-landscape');
+  document.getElementById('landscape-vignette-top-row').style.display = landscape ? '' : 'none';
+  const _topTint = landscape ? c('tog-landscape-vignette-top') : c('tog-vignette-color-top');
   document.getElementById('vignette-color-fields').style.display =
-    ((document.getElementById('tog-vignette-color-top').checked && !landscape)
-     || document.getElementById('tog-vignette-color-bottom').checked) ? 'block' : 'none';
+    (_topTint || document.getElementById('tog-vignette-color-bottom').checked) ? 'block' : 'none';
   // Muted and Exact set the fog's colour and depth themselves, so the two
   // sliders that shape Shade's darker tone have nothing to do there.
   const shade = document.getElementById('cfg-vignette-style').value === 'shade';
@@ -7231,13 +7419,23 @@ const _SHARED_PARAM = {
   'tog-hide-rating':           'hide_rating',
   'tog-textless':              'textless',
   'cfg-sash-mode':             'sash_mode',
+  // Graphic badges.  Landscape's mode never falls back to the portrait one
+  // (see _SHARED_NO_FALLBACK): a "{shape}" URL is two configs, and the badges
+  // are opt-in on landscape.
+  'cfg-badge-display-mode':    'badge_display_mode',
+  'cfg-badge-group1':          'badge_group1',
+  'cfg-badge-group2':          'badge_group2',
+  'cfg-badge-group3':          'badge_group3',
 };
+const _SHARED_NO_FALLBACK = new Set(['badge_display_mode']);
 const _SHAPE_SHARED = Object.keys(_SHARED_PARAM);
 const _LANDSCAPE_SHARED_DEFAULTS = {
   'tog-vignette-color-bottom': true, 'tog-vignette-ramp': true, 'tog-vignette-local': false,
   'cfg-vignette-style': 'shade',
   'cfg-vignette-sat': '2.00', 'cfg-vignette-light': '1.30', 'cfg-vignette-blur': '1.00',
   'tog-hide-genre': false, 'tog-hide-year': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
+  'cfg-badge-display-mode': '0', 'cfg-badge-group1': 'chip:4:video,audio,res,cert',
+  'cfg-badge-group2': '', 'cfg-badge-group3': '',
 };
 const SHAPE_STASH_KEY = 'postersplus_shape_stash';
 let _shapeStash = { portrait: null, landscape: null };   // null = that shape's defaults
@@ -7251,6 +7449,9 @@ function _readShared() {
   return out;
 }
 function _writeShared(values) {
+  // The mode list follows the shape (see _updateBadgeModeOptions); it has to
+  // be the incoming shape's before its mode is written into it.
+  _updateBadgeModeOptions();
   for (const id of _SHAPE_SHARED) {
     if (!(id in values)) continue;
     const v = values[id];
@@ -7264,7 +7465,7 @@ function _sharedDefaults(shape) {
     const el = document.getElementById(id);
     if (!el) continue;
     out[id] = el.type === 'checkbox' ? el.defaultChecked
-            : el.tagName === 'SELECT' ? [...el.options].find(o => o.defaultSelected)?.value ?? el.value
+            : el.tagName === 'SELECT' ? _allOptions(el).find(o => o.defaultSelected)?.value ?? el.value
             : el.defaultValue;
   }
   return out;
@@ -7277,13 +7478,15 @@ function _sharedFromParams(p, shape) {
   const out = {};
   for (const [id, param] of Object.entries(_SHARED_PARAM)) {
     const twin = shape === 'landscape' ? p.get('landscape_' + param) : null;
-    const raw  = twin ?? p.get(param);
+    const raw  = (shape === 'landscape' && _SHARED_NO_FALLBACK.has(param)) ? twin : twin ?? p.get(param);
     const el  = document.getElementById(id);
     if (raw === null || raw === undefined || !el) { out[id] = defaults[id]; continue; }
     if (el.type === 'checkbox') {
       out[id] = !['0', 'false', 'no'].includes(raw.trim().toLowerCase());
     } else if (el.tagName === 'SELECT') {
-      out[id] = [...el.options].some(o => o.value === raw) ? raw : defaults[id];
+      out[id] = _allOptions(el).some(o => o.value === raw) ? raw : defaults[id];
+    } else if (el.type === 'hidden') {
+      out[id] = raw;
     } else {
       out[id] = Number.isFinite(Number(raw)) ? raw : defaults[id];
     }
@@ -7295,7 +7498,13 @@ function _sharedFromParams(p, shape) {
 // its stash (or its defaults) when it is not.
 function _sharedFor(shape) {
   if (c('tog-landscape') === (shape === 'landscape')) return _readShared();
-  return _shapeStash[shape] || _sharedDefaults(shape);
+  return _stashFor(shape);
+}
+// A shape's stash over its defaults: a stash saved before a setting was kept
+// per shape has no value for it, and a missing value must read as the
+// default, not as nothing (parseInt(undefined) is a Hidden badge mode).
+function _stashFor(shape) {
+  return { ..._sharedDefaults(shape), ...(_shapeStash[shape] || {}) };
 }
 function _saveShapeStash() {
   try { localStorage.setItem(SHAPE_STASH_KEY, JSON.stringify(_shapeStash)); } catch (e) {}
@@ -7316,31 +7525,17 @@ function toggleShape() {
   // saves, and the save stashes the controls under whichever shape is
   // checked — that has to be the one being written, not the one leaving.
   tog.checked = !tog.checked;
-  _writeShared(_shapeStash[to] || _sharedDefaults(to));
+  _writeShared(_stashFor(to));
   _saveShapeStash();
   updateShapeFields();
   build();
   queuePreviewReload();
 }
 
-// Tabs the landscape renderer reads nothing from.  Hidden outright rather than
-// greyed: a visible control that does nothing is a bug report waiting to be
-// filed.  The switches it does read from those tabs (Hide Genre, Hide Year, Hide Rating,
-// Textless) are docked into the Landscape group meanwhile — moved, not copied,
-// so there is one control and one parameter whichever shape is showing.
-const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];
-const _DOCKED_ROWS = [
-  { id: 'hide-genre-row',  home: 'hide-genre-home' },
-  { id: 'hide-year-row',   home: 'hide-year-home' },
-  { id: 'hide-rating-row', home: 'hide-rating-home' },
-  { id: 'hide-unreleased-rating-row', home: 'hide-unreleased-rating-home' },
-  { id: 'textless-row',    home: 'textless-home' },
-];
-
-function _dockRow(id, target) {
-  const row = document.getElementById(id);
-  if (row && row.parentElement !== target) target.appendChild(row);
-}
+// Every tab serves both shapes: the controls only one shape reads are marked
+// .portrait-only / .landscape-only and follow the body's shape class, so the
+// landscape settings sit in the same tabs as their portrait counterparts
+// (logo placement under Logo, the info line under Rating).
 
 function updateShapeFields() {
   const landscape = c('tog-landscape');
@@ -7350,10 +7545,10 @@ function updateShapeFields() {
   if (frame) frame.classList.toggle('is-landscape', landscape);
   const dim = document.getElementById('preview-placeholder-dim');
   if (dim) dim.textContent = landscape ? '1000 × 563' : '1000 × 1500';
-  document.getElementById('landscape-fields').style.display = landscape ? '' : 'none';
+  document.body.classList.toggle('shape-landscape', landscape);
   document.getElementById('landscape-sash-fields').style.display = landscape ? '' : 'none';
-  // The band's depth and strength are fixed in landscape and there is no top
-  // band at all, so the level pickers and the top-only toggles hide with it.
+  // The bands' depth and strength are fixed in landscape, so the level
+  // pickers and the portrait top toggles hide (landscape has its own).
   document.getElementById('vignette-portrait-fields').style.display = landscape ? 'none' : '';
   // The landscape canvas is 16:9; the photoreal set is 2:3 and never drawn on it.
   document.getElementById('fallback-bg-style-field').style.display = landscape ? 'none' : '';
@@ -7390,24 +7585,14 @@ function updateShapeFields() {
   });
   syncSegmented();
 
-  // Tabs.
-  document.querySelector('.tab-bar')?.classList.toggle('is-landscape', landscape);
-  document.querySelectorAll('.tab-btn').forEach(b => {
-    if (_PORTRAIT_ONLY_TABS.includes(b.dataset.tab)) b.style.display = landscape ? 'none' : '';
-  });
-  const active = document.querySelector('.tab-btn.active');
-  if (landscape && active && _PORTRAIT_ONLY_TABS.includes(active.dataset.tab)) showTab('core');
-
-  // Docked switches.
-  const dock = document.getElementById('landscape-docked-rows');
-  for (const { id, home } of _DOCKED_ROWS) {
-    const target = landscape ? dock : document.getElementById(home);
-    if (target) _dockRow(id, target);
-  }
   // Textless has nothing to switch off when the art carries its own title.
   const tl = document.getElementById('textless-row');
   if (tl && landscape) tl.style.display = vEl('cfg-landscape-art') === 'original' ? 'none' : '';
   else if (tl) tl.style.display = '';
+  updateOriginalArt();   // Textless is per shape and the stash writes it silently
+  updateLandscapeLogoFields();
+  _updateBadgeModeOptions();
+  updateBadgeModeHint();   // the mode and groups are per shape, written silently
   updateGradientFields();
 }
 
@@ -7681,8 +7866,8 @@ function _ratingLabelParts() {
   };
 }
 
-// The Labels switches.  In landscape they are docked into the Landscape group,
-// whose renderer reads all of them, so they all show there.
+// The Labels switches.  The landscape renderer reads all of them, so in its
+// view they all show, whatever the portrait's rating mode.
 function _updateLabelRows() {
   const landscape = c('tog-landscape');
   const parts = _ratingLabelParts();
@@ -7692,7 +7877,7 @@ function _updateLabelRows() {
   show('hide-rating-row', parts.score);
   show('hide-unreleased-rating-row', parts.score);
   const group = document.getElementById('rating-labels-group');
-  if (group) group.style.display = parts.genre ? '' : 'none';
+  if (group) group.style.display = (landscape || parts.genre) ? '' : 'none';
 }
 
 function updateRatingFields() {
@@ -7715,6 +7900,9 @@ function updateRatingFields() {
   document.getElementById('bar-score10-row').style.display          = (labelParts.barScore && !hideRating) ? '' : 'none';
   document.getElementById('rating-badges-fields').style.display     = (labelParts.badges && !hideRating) ? '' : 'none';
   document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
+  // A cap means something once there is more than one site to choose from.
+  document.getElementById('rating-badge-max-field').style.display =
+    ratingBadgeSources(vEl('cfg-rating-badges')).length > 1 ? '' : 'none';
   document.getElementById('rating-badge-style-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
   document.getElementById('landscape-star-row').style.display       = hideRating ? 'none' : '';
@@ -7925,7 +8113,9 @@ function _buildPresetCard(grid, preset) {
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
-                                  'tog-landscape-score-star'];
+                                  'tog-landscape-score-star', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
+                                  'cfg-landscape-info-row', 'cfg-landscape-info-col',
+                                  'tog-landscape-vignette-top'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
 const _BOTH_SHAPES_CONTROLS = new Set([
@@ -8099,8 +8289,22 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // portrait controls and has its landscape set picked out at the end.
   const _landscapeShared = _dualShape ? _sharedFromParams(p, 'landscape') : null;
   if ((p.get('shape') || '').toLowerCase() === 'landscape') {
+    // A portrait stash saved before a setting became per shape (the badge mode
+    // and groups) has no value for it, and the plain parameter about to be
+    // replaced below is the portrait's own: file it there first.
+    const _port = _shapeStash.portrait;
+    if (_port) {
+      const _plain = _sharedFromParams(p, 'portrait');
+      let _seeded = false;
+      for (const [id, param] of Object.entries(_SHARED_PARAM)) {
+        if (!(id in _port) && p.has(param)) { _port[id] = _plain[id]; _seeded = true; }
+      }
+      if (_seeded) _saveShapeStash();
+    }
     for (const param of Object.values(_SHARED_PARAM)) {
       if (p.has('landscape_' + param)) p.set(param, p.get('landscape_' + param));
+      // Off unless the landscape itself asked for it.
+      else if (_SHARED_NO_FALLBACK.has(param)) p.set(param, '0');
     }
   }
 
@@ -8228,6 +8432,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-landscape-info-scale', p.get('landscape_info_scale') || '1.00');
     _setEl('tog-landscape-score-10',   p.get('landscape_score_out_of_10') || 'false');
     _setEl('tog-landscape-score-star', p.get('landscape_score_star') || 'false');
+    { const _llp = (p.get('landscape_logo_pos') || 'left').toLowerCase();
+      _setEl('cfg-landscape-logo-row', _llp.startsWith('top_') ? 'top' : 'bottom');
+      _setEl('cfg-landscape-logo-pos', ['left', 'center', 'right'].includes(_llp.replace('top_', '')) ? _llp.replace('top_', '') : 'left');
+      const [_lir, _lic] = (p.get('landscape_info_pos') || 'auto').toLowerCase().split('_');
+      const _okInfo = ['bottom', 'top'].includes(_lir) && ['left', 'center', 'right'].includes(_lic);
+      _setEl('cfg-landscape-info-row', _okInfo ? _lir : 'auto');
+      _setEl('cfg-landscape-info-col', _okInfo ? _lic : 'right'); }
+    _setEl('tog-landscape-vignette-top', p.get('landscape_vignette_top') || 'false');
   }
   // Anime ids carry no setting to restore: which ids a URL may use is decided
   // by the copy template now, so stremio_id / anilist_id / kitsu_id on an
@@ -8269,6 +8481,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
   if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
   if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
+  _setEl('cfg-sash-badge-opacity', p.get('sash_badge_opacity') || '0.90');
   if (p.has('sash_badge_frost_saturation')) _setEl('cfg-sash-badge-frost-sat', p.get('sash_badge_frost_saturation'));
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
@@ -8349,7 +8562,13 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // them out as much as by listing them.
   if (p.has('rating_badges') || p.has('rating_display_mode')) {
     _setEl('cfg-rating-badges', ratingBadgeSources(p.get('rating_badges') || '').join(','));
+    // The kinds ride on the same parameter ("imdb:mt"); keep only narrowed ones.
+    _setEl('cfg-rating-badge-kinds', (p.get('rating_badges') || '').toLowerCase().split(',')
+      .map(t => t.trim().split(':')).filter(([id, k]) => k !== undefined && ratingBadgeSources(id).length)
+      .map(([id, k]) => [id, ['m', 't', 'a'].filter(c => k.includes(c)).join('')])
+      .filter(([, k]) => k !== 'mta').map(([id, k]) => `${id}:${k}`).join(','));
     _setEl('cfg-rating-badge-scale', p.get('rating_badge_scale') === 'normalized' ? 'normalized' : 'native');
+    _setEl('cfg-rating-badge-max', ['1', '2', '3', '4', '5'].includes(p.get('rating_badge_max')) ? p.get('rating_badge_max') : '0');
     _setEl('cfg-rating-badge-style', p.get('rating_badge_style') === 'mono' ? 'mono' : 'color');
     buildRatingBadgeList();
   }

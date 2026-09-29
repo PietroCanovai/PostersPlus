@@ -41,6 +41,10 @@ class PosterSourceParsingTests(unittest.TestCase):
                 main._render_config_signature(main.build_request_config({})),
             )
 
+    def test_fanart_for_anime_is_gated_like_fanart(self):
+        self.assertEqual(self._parsed(True, False, poster_source="fanart_anime"), ("fanart_anime", "top"))
+        self.assertEqual(self._parsed(False, False, poster_source="fanart_anime"), ("tmdb", "top"))
+
     def test_landscape_ignores_both(self):
         self.assertEqual(self._parsed(True, True, shape="landscape"), ("tmdb", "top"))
 

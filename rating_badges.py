@@ -478,14 +478,41 @@ def score_text(provider: str, value: float, scale: str, out_of_10: bool) -> str:
     return str(score)
 
 
-def parse_providers(raw: str | None) -> str:
-    """rating_badges in canonical spelling: known providers, first mention
-    kept, at most _MAX_BADGES.  "" when none."""
-    seen: list[str] = []
+# Which titles a badge shows on: m(ovies), t(v), a(nime).  Written after the
+# provider ("imdb:mt") only when it is narrowed; a bare provider shows on all.
+KINDS = "mta"
+
+
+def _tokens(raw: str | None) -> list[tuple[str, str]]:
+    """(provider, kinds) for each known provider, first mention kept, at most
+    _MAX_BADGES."""
+    seen: list[tuple[str, str]] = []
     for token in (raw or "").lower().replace(" ", "").split(","):
-        if token in PROVIDERS and token not in seen:
-            seen.append(token)
-    return ",".join(seen[:_MAX_BADGES])
+        provider, sep, kinds = token.partition(":")
+        if provider in PROVIDERS and provider not in (p for p, _ in seen):
+            seen.append((provider, "".join(k for k in KINDS if k in kinds) if sep else KINDS))
+    return seen[:_MAX_BADGES]
+
+
+def parse_providers(raw: str | None) -> str:
+    """rating_badges' providers in canonical spelling, without their kinds.
+    "" when none."""
+    return ",".join(p for p, _ in _tokens(raw))
+
+
+def parse_kinds(raw: str | None) -> str:
+    """The narrowed providers of rating_badges, canonically ("imdb:mt,kitsu:a");
+    "" when every badge shows on every kind of title."""
+    return ",".join(f"{p}:{k}" for p, k in _tokens(raw) if k != KINDS)
+
+
+def for_kind(providers: str, kinds: str, kind: str) -> str:
+    """``providers`` less those whose kinds (see parse_kinds) leave out
+    ``kind`` — "m", "t" or "a"."""
+    if not kinds or not providers:
+        return providers
+    narrowed = dict(entry.split(":") for entry in kinds.split(","))
+    return ",".join(p for p in providers.split(",") if kind in narrowed.get(p, KINDS))
 
 
 def entries(ratings: dict | None, providers: str, score=None) -> list[tuple[str, float]]:

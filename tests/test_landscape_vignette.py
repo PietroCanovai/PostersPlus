@@ -5,6 +5,7 @@ import re
 import unittest
 from unittest import mock
 
+import numpy as np
 from PIL import Image, ImageChops
 
 import main
@@ -147,6 +148,104 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         cfg = main.build_request_config({"landscape_info_scale": "1.5"})
         self.assertEqual(cfg.landscape_info_scale, 1.5)
         self.assertEqual(main.build_request_config({"landscape_info_scale": "9"}).landscape_info_scale, 2.0)
+
+    def test_logo_position_moves_logo_and_strip(self):
+        # Left puts the strip on the right; right mirrors it; centre stacks the
+        # logo on a centred strip.  Only the drawn pixels are compared.
+        logo = Image.new("RGBA", (400, 100), (255, 255, 255, 255))
+
+        def ink(pos):
+            art = Image.new("RGBA", (1000, 563), (20, 20, 20, 255))
+            cfg = main.RequestConfig(shape="landscape", landscape_logo_pos=pos,
+                                     vignette_poster_color_bottom=False, sash_mode="hidden")
+            out = landscape.build_landscape(art, 87, "Drama", cfg, logo=logo, release_year="2019")
+            m = np.asarray(out.convert("L")) > 200
+            cols = np.flatnonzero(m.any(axis=0))
+            rows = np.flatnonzero(m.any(axis=1))
+            return cols[0], cols[-1], rows[0], rows[-1]
+        l0, l1, _, _ = ink("left")
+        r0, r1, _, _ = ink("right")
+        c0, c1, ct, cb = ink("center")
+        self.assertLess(l0, 80)
+        self.assertGreater(r1, 920)
+        self.assertLess(abs((c0 + c1) / 2 - 500), 20)
+        # Logo is stacked above the centred line, so its ink reaches higher.
+        self.assertLess(ct, ink("left")[2])
+        self.assertEqual(main.build_request_config({"landscape_logo_pos": "right"}).landscape_logo_pos, "right")
+        self.assertEqual(main.build_request_config({"landscape_logo_pos": "top_center"}).landscape_logo_pos,
+                         "top_center")
+        # Top row: the logo hangs near the top, the strip keeps the bottom row
+        # on the logo's side.
+        t0, t1, tt, tb = ink("top_right")
+        self.assertGreater(t1, 920)
+        self.assertLess(tt, 60)
+        self.assertGreater(tb, 480)
+        self.assertEqual(main.build_request_config({"landscape_logo_pos": "up"}).landscape_logo_pos, "left")
+
+    def test_info_line_placement(self):
+        # The line alone on a plain canvas (no logo): its ink goes where asked.
+        def ink(**over):
+            art = Image.new("RGBA", (1000, 563), (20, 20, 20, 255))
+            cfg = main.RequestConfig(shape="landscape", vignette_poster_color_bottom=False,
+                                     sash_mode="hidden", **over)
+            out = landscape.build_landscape(art, 87, "Drama", cfg, release_year="2019")
+            m = np.asarray(out.convert("L")) > 120
+            cols, rows = np.flatnonzero(m.any(axis=0)), np.flatnonzero(m.any(axis=1))
+            return cols[0], cols[-1], rows[0], rows[-1]
+        l0, _, t0, _ = ink(landscape_info_pos="top_left")
+        self.assertLess(l0, 80)
+        self.assertLess(t0, 80)
+        _, r1, _, b1 = ink(landscape_info_pos="bottom_right")
+        self.assertGreater(r1, 920)
+        self.assertGreater(b1, 480)
+        c0, c1, _, _ = ink(landscape_info_pos="bottom_center")
+        self.assertLess(abs((c0 + c1) / 2 - 500), 20)
+        self.assertEqual(main.build_request_config({"landscape_info_pos": "top_center"}).landscape_info_pos,
+                         "top_center")
+        self.assertEqual(main.build_request_config({"landscape_info_pos": "middle"}).landscape_info_pos, "auto")
+
+    def test_badge_moves_off_what_it_would_cover(self):
+        # A bottom-corner badge over the info line climbs above it.
+        art = Image.new("RGBA", (1000, 563), (20, 20, 20, 255))
+        cfg = main.RequestConfig(shape="landscape", landscape_badge_pos="bottom_right")
+        with mock.patch.object(landscape, "_glass_pill", wraps=landscape._glass_pill) as spy:
+            landscape._draw_badge(art.copy(), "OSCAR WINNER", "bottom_right", art, cfg,
+                                  obstacles=((700, 480, 955, 520),))
+            x0, y0, x1, y1 = spy.call_args.args[1]
+        self.assertGreater(x1, 900)
+        self.assertLessEqual(y1, 480)
+        self.assertEqual(main.build_request_config({"badge_pos": "bottom_left"}).landscape_badge_pos,
+                         "bottom_left")
+
+    def test_graphic_badges_are_opt_in(self):
+        # badge_display_mode is the portrait's; landscape has its own switch,
+        # and a "{shape}" URL's portrait mode must not turn it on.
+        cfg = main.build_request_config({"shape": "landscape", "badge_display_mode": "7"})
+        self.assertFalse(cfg.landscape_graphic_badges)
+        self.assertFalse(main._uses_quality(cfg))
+        cfg = main.build_request_config({"shape": "landscape", "landscape_badge_display_mode": "7",
+                                         "badge_group1": "bl:2:cert",
+                                         "landscape_badge_group1": "tr:4:video,res"})
+        self.assertTrue(cfg.landscape_graphic_badges)
+        self.assertEqual(cfg.badge_group1, "tr:4:video,res")
+        self.assertTrue(main._uses_quality(cfg))
+        # Portrait never reads the landscape twins.
+        self.assertEqual(main.build_request_config({"landscape_badge_group1": "tr:4:res"}).badge_group1,
+                         main.RequestConfig().badge_group1)
+
+    def test_top_band_only_when_asked(self):
+        art = Image.new("RGBA", (1000, 563), (60, 140, 220, 255))
+
+        def top_mean(on):
+            cfg = main.RequestConfig(shape="landscape", landscape_vignette_top=on, sash_mode="hidden")
+            main._apply_landscape_defaults(cfg)
+            out = landscape.build_landscape(art.copy(), 87, "Drama", cfg)
+            return np.asarray(out.convert("RGB"))[:20].mean()
+        self.assertLess(top_mean(True), top_mean(False) - 20)
+        # New settings stay out of the cache key at their defaults.
+        base = main._render_config_signature(main.build_request_config({}))
+        self.assertEqual(base, main._render_config_signature(main.build_request_config(
+            {"landscape_logo_pos": "left", "landscape_vignette_top": "false"})))
 
     def test_info_strip_score_can_read_out_of_10(self):
         # Same formatting as portrait's out-of-10 switches: one decimal, and a
@@ -338,19 +437,31 @@ class ConfiguratorLandscapeTests(unittest.TestCase):
         # so it is not filtered either.
         self.assertIn("const emitAll    = full || !landscape || dualShape;", self.html)
         self.assertIn("buildBaseParams({ usePlaceholders: true, full: true })", self.html)
-        for gated in ("params.set('rating_display_mode', ratingMode)",
-                      "params.set('badge_display_mode', badgeMode)"):
-            self.assertIn(f"if (emitAll) {gated}", self.html)
+        self.assertIn("if (emitAll) params.set('rating_display_mode', ratingMode)", self.html)
+        self.assertIn("if (emitAll) params.set('badge_display_mode', badgeMode)", self.html)
+        # Landscape's own badge mode, opt-in, under its own name.
+        self.assertIn("params.set('landscape_badge_display_mode', '7')", self.html)
         # The saved settings and a "{shape}" URL serve landscape, whose info
         # strip always prints the score, so they carry the weights even when
         # portrait hides its rating (and the rating block skips them).
         self.assertIn("if (!emitAll || ((full || dualShape) && ratingMode === 0)) emitWeights();", self.html)
 
-    def test_portrait_only_tabs_hide_in_landscape(self):
-        self.assertIn("const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];", self.html)
-        for row in ("hide-genre-row", "textless-row"):
-            self.assertIn(f'id="{row}"', self.html)
-        self.assertIn('id="landscape-docked-rows"', self.html)
+    def test_landscape_controls_live_in_their_tabs(self):
+        # No tab is hidden in landscape: each shape's own controls are marked
+        # and follow the body class, landscape's in the tabs portrait uses.
+        self.assertNotIn("_PORTRAIT_ONLY_TABS", self.html)
+        self.assertIn("body.shape-landscape .portrait-only { display: none !important; }", self.html)
+        self.assertIn("document.body.classList.toggle('shape-landscape', landscape);", self.html)
+        def tab(name):
+            start = self.html.index(f'<div class="section" data-tab="{name}">')
+            return self.html[start:self.html.index('<div class="section" data-tab=', start + 10)]
+        for control in ('id="cfg-landscape-art"', 'id="cfg-landscape-logo-pos"', 'id="textless-row"'):
+            self.assertIn(control, tab("logo"))
+        for control in ('id="cfg-landscape-info-scale"', 'id="tog-landscape-score-10"', 'id="hide-genre-row"'):
+            self.assertIn(control, tab("rating"))
+        # Core no longer carries a Landscape group of its own.
+        self.assertNotIn('id="landscape-fields"', self.html)
+        self.assertNotIn('id="cfg-landscape-info-scale"', tab("core"))
         self.assertIn('id="cfg-landscape-color-link"', self.html)
 
     def test_landscape_presets_carry_their_shape(self):

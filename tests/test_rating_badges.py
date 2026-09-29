@@ -302,3 +302,38 @@ class RenderTests(_AssetDir):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RatingBadgeKindsTests(unittest.TestCase):
+    """rating_badges=imdb:mt — a badge narrowed to some kinds of title."""
+
+    def test_parse(self):
+        self.assertEqual(rb.parse_providers("imdb:mt,tomatoes,kitsu:a"), "imdb,tomatoes,kitsu")
+        self.assertEqual(rb.parse_kinds("imdb:tm,tomatoes,kitsu:a"), "imdb:mt,kitsu:a")
+        self.assertEqual(rb.parse_kinds("imdb:mta,tomatoes"), "")      # all three is no narrowing
+        self.assertEqual(rb.parse_kinds("imdb:,bogus:m"), "imdb:")      # none: never shown
+
+    def test_for_kind(self):
+        kinds = rb.parse_kinds("imdb:m,tomatoes,kitsu:a")
+        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "m"), "imdb,tomatoes")
+        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "t"), "tomatoes")
+        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "a"), "tomatoes,kitsu")
+        self.assertEqual(rb.for_kind("imdb", "", "t"), "imdb")
+
+    def test_config_and_cache_key(self):
+        cfg = main.build_request_config({"rating_badges": "imdb:m,tomatoes"})
+        self.assertEqual((cfg.rating_badges, cfg.rating_badge_kinds), ("imdb,tomatoes", "imdb:m"))
+        # An unnarrowed list keys as it always did.
+        self.assertEqual(
+            main._render_config_signature(main.build_request_config({"rating_badges": "imdb:mta,tomatoes"})),
+            main._render_config_signature(main.build_request_config({"rating_badges": "imdb,tomatoes"})))
+
+
+class RatingBadgeCapTests(unittest.TestCase):
+    def test_cap_parses_and_only_keys_when_it_bites(self):
+        cfg = main.build_request_config({"rating_badges": "imdb,tomatoes,letterboxd", "rating_badge_max": "2"})
+        self.assertEqual(cfg.rating_badge_max, 2)
+        loose = main.build_request_config({"rating_badges": "imdb,tomatoes", "rating_badge_max": "2"})
+        self.assertEqual(loose.rating_badge_max, 0)
+        self.assertEqual(main._render_config_signature(loose), main._render_config_signature(
+            main.build_request_config({"rating_badges": "imdb,tomatoes"})))
