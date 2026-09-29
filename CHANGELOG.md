@@ -24,6 +24,9 @@
   for missing scores.
 - Logo tab: Bottom Anchor is at the top of the overlay controls, and the
   logo sliders hide while Textless is on.
+- Right-click (or press and hold) a tab or a group heading to reset just that
+  part to its defaults. API keys and the selected title are kept, and in the
+  landscape view only landscape's own settings change.
 
 ### Sci-Fi or Fantasy for TV, and a genre order you can drag
 

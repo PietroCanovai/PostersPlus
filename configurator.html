@@ -551,6 +551,8 @@
      size up from the field labels: those are bright silver and often carry a
      tooltip underline, so a cream 15px heading was carrying less visual weight
      than the rows beneath it. */
+  /* Held for the section reset menu: no text selection or iOS callout. */
+  .tab-btn, .group-title { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .group-title {
     display: block;
     font-family: var(--serif);
@@ -2457,7 +2459,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="af">Afrikaans ★</option>
               </select>
             </div>
-            <div class="field" id="fallback-bg-style-field">
+            <div class="field portrait-only" id="fallback-bg-style-field">
               <!-- The label doubles as the gallery trigger: hover explains, click previews. -->
               <label class="field-label label-action" onclick="openFallbackGallery()"
                 data-tip="Used only when no poster can be found for a title. Click the label to preview both styles.">Fallback Poster Style</label>
@@ -2526,7 +2528,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep">
               <span class="group-title">Vignette</span>
-              <div id="vignette-portrait-fields">
+              <div class="portrait-only" id="vignette-portrait-fields">
               <div class="field">
                 <label class="field-label" data-tip="How strongly the top of the poster is darkened, above the logo.">Top</label>
                 <select class="segmented-source" id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
@@ -2596,7 +2598,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               </div><!-- /vignette-portrait-fields -->
-              <div class="toggle-row" id="landscape-vignette-top-row" style="display:none;">
+              <div class="toggle-row landscape-only" id="landscape-vignette-top-row" style="display:none;">
                 <span class="toggle-label" data-tip="Adds a band across the top, faded from the same poster colour as the bottom one, behind the top-corner badge. Uses the colour settings below.">Top Colour from Poster</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-vignette-top" onchange="updateGradientFields(); build(); queuePreviewReload()">
@@ -3199,7 +3201,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="segmented" data-for="cfg-sash-mode"></div>
             </div>
-            <div class="field" id="sash-style-field" style="display:none;">
+            <div class="field portrait-only" id="sash-style-field" style="display:none;">
               <label class="field-label">Style</label>
               <select id="cfg-sash-badge-style" onchange="updateBadgeStyleFields(); build(); queuePreviewReload()">
                 <option value="frosted" selected>Frosted</option>
@@ -3208,7 +3210,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="gold">Black, Gold Trim</option>
               </select>
             </div>
-            <div class="field" id="sash-badge-pos-field" style="display:none;">
+            <div class="field portrait-only" id="sash-badge-pos-field" style="display:none;">
               <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
               <select id="cfg-sash-badge-pos" onchange="build(); queuePreviewReload()">
                 <option value="center" selected>Centre</option>
@@ -3218,7 +3220,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="auto_hug">Auto, Beside Notch</option>
               </select>
             </div>
-            <div class="field" id="sash-text-color-field" style="display:none;">
+            <div class="field portrait-only" id="sash-text-color-field" style="display:none;">
               <label class="field-label" data-tip="Hex colour for the sash/notch text. Leave blank for the mode default.">Text Colour</label>
               <div class="color-field">
                 <input type="text" id="cfg-sash-text-color" placeholder="Default" maxlength="6"
@@ -3228,7 +3230,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep" id="sash-trending-group">
+            <div class="cfg-sep portrait-only" id="sash-trending-group">
               <span class="group-title">Trending Rank</span>
               <div class="field" id="sash-trending-style-field">
                 <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
@@ -3309,7 +3311,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep">
               <span class="group-title">Behaviour</span>
-              <div class="toggle-row" id="sash-cinema-greyscale-row">
+              <div class="toggle-row portrait-only" id="sash-cinema-greyscale-row">
                 <span class="toggle-label" data-tip="Applies to cinema and production. Requires the Release Status sash to be enabled.">Greyscale Poster if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-cinema-greyscale" checked onchange="build(); queuePreviewReload()">
@@ -3330,21 +3332,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="sash-winner-star-row">
+              <div class="toggle-row portrait-only" id="sash-winner-star-row">
                 <span class="toggle-label" data-tip="Prefix a ★ before award winners.">Winner Star</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-sash-winner-star" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="sash-muted-row">
+              <div class="toggle-row portrait-only" id="sash-muted-row">
                 <span class="toggle-label" data-tip="Reduce sash opacity slightly.">Muted Sashes</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-muted" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="sash-poster-color-row">
+              <div class="toggle-row portrait-only" id="sash-poster-color-row">
                 <span class="toggle-label" data-tip="Tints the sash from the poster art instead of the category colour.">Sash Colour from Poster</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-sash-poster-color" onchange="build(); queuePreviewReload()">
@@ -3353,14 +3355,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <!-- Frosted-notch only. Its dependent slider (Colour Saturation)
                    stays in the Notch Size group with the other sliders. -->
-              <div class="toggle-row" id="sash-vignette-color-row" style="display:none;">
+              <div class="toggle-row portrait-only" id="sash-vignette-color-row" style="display:none;">
                 <span class="toggle-label" data-tip="Takes the notch's colour from whatever a tinted vignette landed on, so the two agree. Keeps its usual colour when neither vignette is tinted, or when the tinted one came out too near black to have a colour of its own. Frosted notch only.">Match Tinted Vignette</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-notch-vignette-color" onchange="onNotchVignetteColorChange(this)">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="sash-reference-row" style="display:none;">
+              <div class="toggle-row portrait-only" id="sash-reference-row" style="display:none;">
                 <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint. Frosted notch only.">Reference Colour</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-sash-frost-reference" onchange="onFrostReferenceChange(this)">
@@ -3370,7 +3372,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
 
             <!-- Notch sizing/offset options — only shown in Notch mode -->
-            <div class="cfg-sep" id="sash-badge-offsets" style="display:none;">
+            <div class="cfg-sep portrait-only" id="sash-badge-offsets" style="display:none;">
               <span class="group-title">Notch Size</span>
               <div class="field">
                 <label class="field-label">Width</label>
@@ -3423,7 +3425,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep" id="sash-size-fields" style="display:none;">
+            <div class="cfg-sep portrait-only" id="sash-size-fields" style="display:none;">
               <span class="group-title">Sash Size</span>
               <div class="field">
                 <label class="field-label" data-tip="Which top corner the diagonal sash crosses. On the left, a Corner Bookmark quality badge moves to the top right to make room.">Corner</label>
@@ -3451,7 +3453,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <!-- Landscape's badge: the sash's one form there.  Shown in place
                  of the sash / notch styling while the landscape preview is up. -->
-            <div class="cfg-sep" id="landscape-sash-fields" style="display:none;">
+            <div class="cfg-sep landscape-only" id="landscape-sash-fields" style="display:none;">
               <span class="group-title">Badge</span>
               <div class="field">
                 <label class="field-label" data-tip="Where the info sash's label sits. The top corners are where Stremio and Nuvio draw their watched marks, so the pill is frosted to stay readable under one. With Logo stacks it on the logo: above it in the bottom row, below it at the top. A badge that would land on the logo or the info line moves off it, away from its edge.">Badge Position</label>
@@ -3699,28 +3701,28 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
               </div>
-              <div class="field" id="badge-size-field">
+              <div class="field portrait-only" id="badge-size-field">
                 <label class="field-label">Badge Size</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-h" min="16" max="80" step="1" value="20" oninput="updateRange(this,'rng-bh'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-bh">20</span>
                 </div>
               </div>
-              <div class="field" id="badge-gap-field" style="display:none">
+              <div class="field portrait-only" id="badge-gap-field" style="display:none">
                 <label class="field-label">Badge Gap</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-gap" min="0" max="32" step="1" value="8" oninput="updateRange(this,'rng-bg'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-bg">8</span>
                 </div>
               </div>
-              <div class="field" id="badge-x-field">
+              <div class="field portrait-only" id="badge-x-field">
                 <label class="field-label">Badge Horizontal Position</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-x" min="0.01" max="1" step="0.01" value="0.050" oninput="updateRange(this,'rng-bx'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-bx">0.050</span>
                 </div>
               </div>
-              <div class="field" id="badge-y-field">
+              <div class="field portrait-only" id="badge-y-field">
                 <label class="field-label">Badge Vertical Position</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-y" min="0.01" max="0.95" step="0.005" value="0.050" oninput="updateRange(this,'rng-by'); build(); queuePreviewReload()">
@@ -3875,7 +3877,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
           <button class="btn btn-primary" onclick="openPresetModal()"
             data-tip="Replace the current settings with a saved preset.">Load preset</button>
           <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()"
-            data-tip="Return every setting to its default. Your API keys, language and selected title are kept.">Reset config</button>
+            data-tip="Return every setting to its default. Your API keys, language and selected title are kept. To reset one tab or group, right-click (or press and hold) its tab or heading.">Reset config</button>
         </div>
         <div class="preview-controls">
           <div id="url-display-row">
@@ -3904,6 +3906,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 <!-- Filled from COPY_TEMPLATES at init so the client list lives in one place.
      Parked here for the same reason as the menu above. -->
 <div class="menu" id="copy-menu" role="menu" aria-label="Copy the poster URL for" hidden></div>
+<div class="menu" id="reset-menu" role="menu" aria-label="Reset" hidden>
+  <button type="button" class="menu-item" role="menuitem" onclick="runResetMenu()">Reset to defaults</button>
+</div>
 
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
   <div class="preset-modal-box">
@@ -6026,8 +6031,11 @@ function positionMenu(menu, btn) {
 // Dismiss on an outside click, Escape, or anything that moves the anchor.
 // Picking an item closes it too — the destination opens in a new tab, so
 // without this the menu would still be sitting there on return.
-function closeMenus() { closeExternalMenu(); closeCopyMenu(); }
+function closeMenus() { closeExternalMenu(); closeCopyMenu(); closeResetMenu(); }
 document.addEventListener('click', ev => {
+  if (ev.target.closest?.('#reset-menu')) return;   // its item closes it itself
+  // The tap that ends a press-and-hold arrives after the menu it opened.
+  if (Date.now() - _resetMenuOpenedAt < 600) return;
   if (ev.target.closest?.('.menu-item')) { closeMenus(); return; }
   // The anchors are excluded so the click that opens a menu does not also
   // close it on the way back up.
@@ -7079,19 +7087,7 @@ function resetDefaults() {
   // a reset — visible regression for the Compact Show Year toggle, latent
   // pre-existing bug for textless / muted / sash-badge / award-sash.
   document.querySelectorAll('[id^="cfg-"],[id^="tog-"]').forEach(el => {
-    if (preserve.has(el.id)) return;
-    if (el.type === 'range' || el.type === 'number' || el.type === 'text' || el.tagName === 'TEXTAREA') {
-      el.value = el.defaultValue;
-      if (el.type === 'range') el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    if (el.type === 'checkbox') el.checked = el.defaultChecked;
-    // A hidden input's value *is* its value attribute, so defaultValue follows
-    // every write; one that needs a real default carries it in data-default.
-    if (el.type === 'hidden')   el.value   = el.dataset.default ?? (el.defaultValue || '');
-    if (el.tagName === 'SELECT') { for (const opt of el.options) opt.selected = opt.defaultSelected; }
-    // Forget "the user chose this themselves" marks, so the mode-driven
-    // defaults start seeding again from a clean slate.
-    delete el.dataset.userSet;
+    if (!preserve.has(el.id)) _resetControl(el);
   });
   onPrimaryClientChange({ rebuild: false });
   // Re-reads both gradient selects: re-hides the custom opacity/height sliders
@@ -7126,6 +7122,171 @@ function resetDefaults() {
   try { localStorage.removeItem(SHAPE_STASH_KEY); } catch (e) {}
   collapsePreview();
   setStatus('Reset to defaults. API keys preserved.', 'info');
+}
+
+/** One control back to its default, as written in the page. */
+function _resetControl(el) {
+  if (el.type === 'range' || el.type === 'number' || el.type === 'text' || el.tagName === 'TEXTAREA') {
+    el.value = el.defaultValue;
+    if (el.type === 'range') el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if (el.type === 'checkbox') el.checked = el.defaultChecked;
+  // A hidden input's value *is* its value attribute, so defaultValue follows
+  // every write; one that needs a real default carries it in data-default.
+  if (el.type === 'hidden')   el.value   = el.dataset.default ?? (el.defaultValue || '');
+  if (el.tagName === 'SELECT') {
+    // The badge mode list is cut down in landscape; its default may be one of
+    // the options taken out (see _updateBadgeModeOptions).
+    const def = _allOptions(el).find(o => o.defaultSelected);
+    if (def && [...el.options].includes(def)) { for (const opt of el.options) opt.selected = opt === def; }
+    else if (el.options.length) el.selectedIndex = 0;
+  }
+  // Forget "the user chose this themselves" marks, so the mode-driven
+  // defaults start seeding again from a clean slate.
+  delete el.dataset.userSet;
+}
+
+// ── Section reset ────────────────────────────────────────────────────────────
+// Right-click (or press and hold) a tab or a group heading for "Reset … to
+// defaults": the headings are the handles, so no extra icons.  A tab resets
+// everything on it; a heading resets its own group, which is the .cfg-sep (or
+// other wrapper) it heads, or, for a tab's first group that has no wrapper,
+// everything from it down to the next group.  Keys, the access key and the
+// selected title are kept, as Reset config keeps them.  In landscape view the
+// per-shape settings go back to landscape's defaults, and the other shape's
+// values are left alone.
+const _SECTION_RESET_KEEP = new Set(['cfg-tmdb-key', 'cfg-mdblist-key', 'cfg-access-key', 'cfg-domain',
+                                     'cfg-search-query']);
+
+/** The elements a heading's reset covers. */
+function _headingScope(title) {
+  const parent = title.parentElement;
+  if (!parent.classList.contains('section-body')) return [parent];
+  const out = [];
+  for (let el = title.nextElementSibling; el; el = el.nextElementSibling) {
+    if (el.classList.contains('cfg-sep') || el.classList.contains('group-title')) break;
+    out.push(el);
+  }
+  return out;
+}
+
+function resetScope(roots, name) {
+  const landscape = c('tog-landscape');
+  // The other shape's controls sit in the same tabs, hidden; they are its
+  // settings, not this view's, so they stay as they are.
+  const otherShape = landscape ? '.portrait-only' : '.landscape-only';
+  const inScope = el => roots.some(r => r === el || r.contains(el)) && !el.closest(otherShape);
+  const touched = [];
+  document.querySelectorAll('[id^="cfg-"],[id^="tog-"]').forEach(el => {
+    if (_SECTION_RESET_KEEP.has(el.id) || !inScope(el)) return;
+    _resetControl(el);
+    touched.push(el.id);
+  });
+  if (landscape) {
+    for (const id of touched) {
+      if (id in _LANDSCAPE_SHARED_DEFAULTS) {
+        const v = _LANDSCAPE_SHARED_DEFAULTS[id];
+        _setEl(id, typeof v === 'boolean' ? String(v) : v);
+      }
+    }
+  }
+  // The lists keep their state outside any input.
+  const weights = [['movie-weights', MOVIE_SOURCES, DEFAULT_MOVIE_W], ['tv-weights', TV_SOURCES, DEFAULT_TV_W],
+                   ['anime-movie-weights', ANIME_MOVIE_SOURCES, DEFAULT_ANIME_MOVIE_W],
+                   ['anime-tv-weights', ANIME_TV_SOURCES, DEFAULT_ANIME_TV_W]];
+  for (const [id, sources, defaults] of weights) {
+    const grid = document.getElementById(id);
+    if (grid && inScope(grid)) buildWeightSection(id, sources, defaults);
+  }
+  const sashList = document.getElementById('sash-priority-list');
+  if (sashList && inScope(sashList)) {
+    sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
+    sashDisabled = new Set(SASH_DEFAULT_DISABLED);
+    try { localStorage.removeItem('postersplus_sash_order'); } catch (e) {}
+  }
+  if (touched.includes('cfg-primary-client')) onPrimaryClientChange({ rebuild: false });
+  updateGradientFields();
+  updateAnimeWeightFields();
+  buildSashList();
+  buildLogoPriorityList();
+  buildRatingBadgeList();
+  syncSecondaryLangVisibility();
+  updateRatingFields();
+  updateOriginalArt();
+  updateBadgeModeHint();
+  gbRender();
+  updateSashBadgeFields();
+  updateShapeFields();
+  syncSegmented();
+  saveApiKeys();   // the language is kept with the keys
+  build();
+  queuePreviewReload();
+  setStatus(`${name} reset to defaults.`, 'info');
+}
+
+let _resetTarget = null, _resetMenuOpenedAt = 0, _resetPressTimer = null, _resetPressOrigin = null;
+
+function _resetTargetOf(node) {
+  const tab = node.closest?.('.tab-btn');
+  if (tab) {
+    const section = document.querySelector(`.section[data-tab="${tab.dataset.tab}"]`);
+    return section && { roots: [section], name: tab.querySelector('.tab-btn-label')?.textContent || tab.title };
+  }
+  const title = node.closest?.('.section .group-title');
+  return title && { roots: _headingScope(title), name: title.textContent.trim() };
+}
+
+function openResetMenu(node, x, y) {
+  const target = _resetTargetOf(node);
+  if (!target) return;
+  const menu = document.getElementById('reset-menu');
+  // Android follows a long press with a contextmenu for the same gesture.
+  if (!menu.hidden && Date.now() - _resetMenuOpenedAt < 600) return;
+  closeMenus();
+  _resetTarget = target;
+  const item = menu.querySelector('.menu-item');
+  item.textContent = `Reset ${target.name} to defaults`;
+  menu.hidden = false;
+  _resetMenuOpenedAt = Date.now();
+  // At the pointer, kept on screen; a little above a finger so it isn't under it.
+  menu.style.left = '0px'; menu.style.top = '0px';
+  const m = menu.getBoundingClientRect(), M = 8;
+  menu.style.left = Math.round(Math.max(M, Math.min(x, window.innerWidth - m.width - M))) + 'px';
+  menu.style.top  = Math.round(Math.max(M, Math.min(y + 6, window.innerHeight - m.height - M))) + 'px';
+}
+function closeResetMenu() {
+  const menu = document.getElementById('reset-menu');
+  if (menu) menu.hidden = true;
+}
+function runResetMenu() {
+  // The finger that opened it by holding can lift over the item: not a choice.
+  if (Date.now() - _resetMenuOpenedAt < 400) return;
+  const target = _resetTarget;
+  closeResetMenu();
+  if (target) resetScope(target.roots, target.name);
+}
+
+document.addEventListener('contextmenu', ev => {
+  if (!ev.target.closest?.('.tab-btn, .section .group-title')) return;
+  ev.preventDefault();
+  openResetMenu(ev.target, ev.clientX, ev.clientY);
+});
+// Touch has no right-click (and iOS Safari sends no contextmenu), so a press
+// and hold opens it too, as it does for Copy config.
+document.addEventListener('pointerdown', ev => {
+  if (ev.pointerType === 'mouse' || !ev.target.closest?.('.tab-btn, .section .group-title')) return;
+  clearTimeout(_resetPressTimer);
+  const node = ev.target;
+  _resetPressOrigin = { x: ev.clientX, y: ev.clientY };
+  _resetPressTimer = setTimeout(() => openResetMenu(node, _resetPressOrigin.x, _resetPressOrigin.y - 60), 500);
+});
+document.addEventListener('pointermove', ev => {
+  if (_resetPressOrigin && Math.hypot(ev.clientX - _resetPressOrigin.x, ev.clientY - _resetPressOrigin.y) > 10) {
+    clearTimeout(_resetPressTimer); _resetPressOrigin = null;
+  }
+});
+for (const done of ['pointerup', 'pointercancel']) {
+  document.addEventListener(done, () => { clearTimeout(_resetPressTimer); _resetPressOrigin = null; });
 }
 
 function queuePreviewReload() {
@@ -7308,13 +7469,15 @@ function onFrostReferenceChange(el) {
 function updateOriginalArt() {
   // In Original Art mode no logo is drawn, so its overlay controls don't apply;
   // show the art-source picker in their place instead.
-  // Original Art is the portrait's; landscape's art choice leaves its logo
-  // placement showing either way (a title can still stand in for a logo, and
-  // the info line follows the position).
-  const on = c('tog-original-art') && !c('tog-landscape');
+  // Original Art is the portrait's.  Landscape's Original art hides both of
+  // the group's rows (Textless and Logo Position), so the group goes with them
+  // rather than leave its heading standing alone.
+  const landscape = c('tog-landscape');
+  const on = c('tog-original-art') && !landscape;
   const lc = document.getElementById('logo-controls');
   const sf = document.getElementById('original-art-source-field');
-  if (lc) lc.style.display = on ? 'none' : '';
+  const landscapeOriginal = landscape && vEl('cfg-landscape-art') === 'original';
+  if (lc) lc.style.display = (on || landscapeOriginal) ? 'none' : '';
   if (sf) sf.style.display = on ? '' : 'none';
   // Textless draws no logo, so there is nothing for the sizing and anchor to move.
   const ls = document.getElementById('logo-size-fields');

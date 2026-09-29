@@ -45,3 +45,22 @@ class DefaultOnToggleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SectionResetTests(unittest.TestCase):
+    """Right-click / press-and-hold a tab or group heading to reset just it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = Path("configurator.html").read_text(encoding="utf-8")
+
+    def test_wiring(self):
+        self.assertIn('<div class="menu" id="reset-menu" role="menu"', self.html)
+        self.assertIn("if (!ev.target.closest?.('.tab-btn, .section .group-title')) return;", self.html)
+        # The full reset and the section reset put a control back the same way.
+        self.assertIn("if (!preserve.has(el.id)) _resetControl(el);", self.html)
+        self.assertIn("    _resetControl(el);\n    touched.push(el.id);", self.html)
+        # Keys and the selected title survive a section reset, as they do Reset config.
+        self.assertIn("'cfg-tmdb-key', 'cfg-mdblist-key', 'cfg-access-key'", self.html)
+        # The other shape's controls are left alone.
+        self.assertIn("const otherShape = landscape ? '.portrait-only' : '.landscape-only';", self.html)

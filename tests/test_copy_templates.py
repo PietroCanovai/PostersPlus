@@ -196,7 +196,7 @@ class CopyButtonBehaviourTests(unittest.TestCase):
     def test_both_menus_share_dismissal(self):
         # Escape, an outside click, a scroll or a resize closes either one.
         self.assertIn(
-            "function closeMenus() { closeExternalMenu(); closeCopyMenu(); }", self.html
+            "function closeMenus() { closeExternalMenu(); closeCopyMenu(); closeResetMenu(); }", self.html
         )
         self.assertIn("window.addEventListener('scroll', closeMenus, true);", self.html)
         self.assertIn(
