@@ -3447,6 +3447,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-scy">0.000</span>
                 </div>
               </div>
+              <div class="field" id="sash-chip-x-field" style="display:none;">
+                <label class="field-label" data-tip="Moves the side chip in from its corner towards the middle, as a share of the poster's width; below zero pulls it out to the edge. Badge groups beside it make room. On Auto it only applies to posters where the notch moves to the side.">Horizontal Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-chip-x" min="-0.045" max="0.250" step="0.005" value="0.000" oninput="updateRange(this,'rng-scx'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-scx">0.000</span>
+                </div>
+              </div>
             </div>
 
             <div class="cfg-sep portrait-only" id="sash-size-fields" style="display:none;">
@@ -6622,6 +6629,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       const _pos = vEl('cfg-sash-badge-pos') || 'center';
       if (_pos !== 'center') params.set('sash_badge_pos', _pos);
       if (_pos !== 'center' && n('cfg-sash-chip-y') !== 0) params.set('sash_chip_y', n('cfg-sash-chip-y').toFixed(3));
+      if (_pos !== 'center' && n('cfg-sash-chip-x') !== 0) params.set('sash_chip_x', n('cfg-sash-chip-x').toFixed(3));
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -7601,6 +7609,9 @@ function updateBadgeStyleFields() {
   document.getElementById('sash-chip-y-field').style.display =
     (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch'
      && (vEl('cfg-sash-badge-pos') || 'center') !== 'center') ? '' : 'none';
+  document.getElementById('sash-chip-x-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch'
+     && (vEl('cfg-sash-badge-pos') || 'center') !== 'center') ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
@@ -7891,7 +7902,8 @@ function updateShapeFields() {
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
-                    'sash-badge-saturation-field', 'sash-badge-pos-field', 'sash-chip-y-field']) {
+                    'sash-badge-saturation-field', 'sash-badge-pos-field', 'sash-chip-y-field',
+                    'sash-chip-x-field']) {
     const el = document.getElementById(id);
     if (!el) continue;
     // Portrait: show everything again first, then let the mode logic below
@@ -8897,6 +8909,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
   _setEl('cfg-sash-badge-pos', p.get('sash_badge_pos') || 'center');
   _setEl('cfg-sash-chip-y', p.get('sash_chip_y') || '0.000');
+  _setEl('cfg-sash-chip-x', p.get('sash_chip_x') || '0.000');
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));

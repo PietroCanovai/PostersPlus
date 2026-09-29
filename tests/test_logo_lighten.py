@@ -116,5 +116,45 @@ class SashChipYTests(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
 
 
+class SashChipXTests(unittest.TestCase):
+    def test_parse_default_and_clamp(self):
+        self.assertEqual(main.build_request_config({}).sash_chip_x, 0.0)
+        self.assertEqual(main.build_request_config({"sash_chip_x": "0.1"}).sash_chip_x, 0.1)
+        self.assertEqual(main.build_request_config({"sash_chip_x": "1"}).sash_chip_x, 0.25)
+        self.assertEqual(main.build_request_config({"sash_chip_x": "-1"}).sash_chip_x, -0.045)
+
+    def test_default_keeps_cache_signature(self):
+        cfg = main.build_request_config({})
+        self.assertNotIn("sash_chip_x", main._render_config_signature(cfg))
+        moved = main.build_request_config({"sash_chip_x": "0.1"})
+        self.assertIn("sash_chip_x", main._render_config_signature(moved))
+
+    def _chip_cols(self, position, **kw):
+        poster = Image.new("RGBA", (500, 750), (40, 90, 140, 255))
+        out = awards.draw_award_badge(poster.copy(), "#12 Today", position=position, **kw)
+        diff = np.abs(np.asarray(out, dtype=np.int16) - np.asarray(poster, dtype=np.int16)).sum(axis=2)
+        cols = np.flatnonzero(diff.any(axis=0))
+        return int(cols[0]), int(cols[-1])
+
+    def test_chip_moves_in_from_its_corner(self):
+        for position, sign in (("left", 1), ("right", -1)):
+            with self.subTest(position=position):
+                base, moved = self._chip_cols(position), self._chip_cols(position, chip_offset_x=0.1)
+                self.assertAlmostEqual(moved[0] - base[0], 50 * sign, delta=2)
+                self.assertAlmostEqual(moved[1] - base[1], 50 * sign, delta=2)
+
+    def test_never_past_the_edge(self):
+        left, _ = self._chip_cols("left", chip_offset_x=-0.045)
+        self.assertGreaterEqual(left, 0)
+        _, right = self._chip_cols("right", chip_offset_x=-0.045)
+        self.assertLessEqual(right, 499)
+
+    def test_centre_notch_ignores_offset(self):
+        poster = Image.new("RGBA", (500, 750), (40, 90, 140, 255))
+        a = awards.draw_award_badge(poster.copy(), "Oscar Winner")
+        b = awards.draw_award_badge(poster.copy(), "Oscar Winner", chip_offset_x=0.1)
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+
+
 if __name__ == "__main__":
     unittest.main()

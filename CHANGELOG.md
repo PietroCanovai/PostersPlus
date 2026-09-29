@@ -29,12 +29,14 @@
   This replaces the old whitening, which skipped many plain black logos and
   turned coloured accents white. Landscape logos get it too.
 
-### Side notch vertical position
+### Side notch position
 
 - A notch set to Left, Right or Auto has a **Vertical Position** slider
   (`sash_chip_y`) that moves the side chip down from the corner; top badge
-  groups beside it follow. On Auto it only applies when the chip goes to
-  the side.
+  groups beside it follow. A **Horizontal Position** slider (`sash_chip_x`)
+  moves it in from its corner towards the middle, or out to the edge;
+  badge groups beside it make room. On Auto both only apply when the chip
+  goes to the side.
 
 ### Fixes
 

@@ -1645,6 +1645,7 @@ def draw_award_badge(
     position: str = "center",         # "center" | "left" | "right"
     body_opacity: float | None = None,  # black/silver/gold body opacity; None = the style's own
     chip_offset: float = 0.0,         # side chip only: moved down by this fraction of poster height
+    chip_offset_x: float = 0.0,       # side chip only: moved in from its corner by this fraction of poster width
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1760,7 +1761,7 @@ def draw_award_badge(
             _chip_badge_h, _chip_min_h, notch_inset + chip_offset,
             frost_opacity, frost_saturation, frost_reference, tint_rgb,
             style=notch_style, trim_rgb=trim_rgb if notch_style in ("silver", "gold") else None,
-            text_color=text_color, body_opacity=body_opacity,
+            text_color=text_color, body_opacity=body_opacity, offset_x=chip_offset_x,
         )
 
     if notch_style == "frosted":
@@ -1997,6 +1998,7 @@ def _draw_side_chip(
     style: str = "frosted", trim_rgb: tuple[int, int, int] | None = None,
     text_color: tuple[int, int, int] | None = None,
     body_opacity: float | None = None,
+    offset_x: float = 0.0,
 ) -> Image.Image:
     """Chip floating in from a top corner — see draw_award_badge's
     ``position``.
@@ -2011,7 +2013,10 @@ def _draw_side_chip(
     margin = px(width * _SIDE_MARGIN)
     h = max(min_badge_h, px(badge_h * _CHIP_H))
     w = px(text_w + h * _CHIP_PAD_X)
-    x = width - margin - w if right else margin
+    # offset_x moves it in from its corner (a share of the width), towards
+    # the middle; negative pulls it out to the edge, never past it.
+    inset = max(0, margin + px(width * offset_x))
+    x = width - inset - w if right else inset
     y = margin + px(height * notch_inset)
     radius, pad, shadow_dy = px(h * _CHIP_RADIUS), px(h * 0.6), px(h * 0.06)
     blur_r = max(fixed(4), px(h * 0.35))

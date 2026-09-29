@@ -1886,6 +1886,7 @@ class RequestConfig:
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
     sash_chip_y:      float = 0.0          # side chip: moved down by this fraction of poster height
+    sash_chip_x:      float = 0.0          # side chip: moved in from its corner by this fraction of poster width
     sash_badge_pad:   float = 1.0          # vertical padding scale (<1 tightens top/bottom space)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
@@ -2248,7 +2249,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "sash_badge_opacity": None,
                               "landscape_logo_pos": "left", "landscape_vignette_top": False,
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
-                              "rating_badge_kinds": "", "rating_badge_max": 0}
+                              "rating_badge_kinds": "", "rating_badge_max": 0,
+                              "sash_chip_x": 0.0}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2427,6 +2429,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_badge_inset         = _f("sash_badge_inset",         cfg.sash_badge_inset,         -0.02, 0.02)
     cfg.sash_badge_pad           = _f("sash_badge_pad",           cfg.sash_badge_pad,           0.5, 1.5)
     cfg.sash_chip_y              = _f("sash_chip_y",              cfg.sash_chip_y,              -0.02, 0.15)
+    cfg.sash_chip_x              = _f("sash_chip_x",              cfg.sash_chip_x,              -0.045, 0.25)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
     if "sash_badge_opacity" in params:
@@ -4788,7 +4791,8 @@ def _build_poster(
                                      text_color=cfg.sash_text_color,
                                      position=cfg.sash_badge_pos,
                                      body_opacity=cfg.sash_badge_opacity,
-                                     chip_offset=cfg.sash_chip_y)
+                                     chip_offset=cfg.sash_chip_y,
+                                     chip_offset_x=cfg.sash_chip_x)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
