@@ -857,7 +857,7 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
     pill_h = int(height * _BADGE_FONT * scale) + 2 * round(_BADGE_PAD_Y * scale)
     top_line = int(height * _BADGE_TOP) + pill_h / 2
 
-    for group in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3):
+    for group in graphic_badges.cfg_groups(cfg):
         unit = max(8, round(height * _GB_UNIT * group.size / DEFAULT_SIZE))
         # Spacing is a fraction of a portrait width; keyed to height here, as
         # every size on this canvas is.  At the default it is the portrait gap.

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### A fourth graphic badge group
+
+- Graphic badges can be split across four groups instead of three
+  (`badge_group4`, and `landscape_badge_group4` for landscape), each with
+  its own anchor, max, size and spacing.
+
 ### Popcorn badge for films still in cinemas
 
 - Graphic badges have a new **In Cinemas (Popcorn)** badge (`cinema` in a

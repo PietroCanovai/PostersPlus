@@ -695,6 +695,19 @@ class ConfigAndLayoutTests(unittest.TestCase):
         # No video mark without the Commons files, so top right stays empty.
         self.assertFalse(ink[:100, 250:].any())
 
+    def test_fourth_group_is_drawn(self):
+        cfg = main.build_request_config({"badge_group4": "BR:1:res",
+                                         "landscape_badge_group4": "tl:1:res", "shape": "landscape"})
+        self.assertEqual(cfg.badge_group4, "tl:1:res")
+        self.assertEqual(main.build_request_config({"badge_group4": "BR:1:res"}).badge_group4, "br:1:res")
+        ink = self.render(badge_group1="tl:1:cert", badge_group4="br:1:res", sash_mode="hidden")
+        self.assertTrue(ink[:100, :250].any())      # group 1, tl: the certificate
+        self.assertTrue(ink[650:, 250:].any())      # group 4, br: resolution
+        self.assertFalse(ink[650:, :250].any())
+        # A slot already in an earlier group stays there.
+        self.assertEqual([g.slots for g in gb.resolve_groups("tl:1:cert", "", "", "br:2:cert,res")],
+                         [("cert",), ("res",)])
+
     def test_second_group_does_not_overlap_the_first(self):
         ink = self.render(badge_group1="tr:1:cert", badge_group2="tr:1:res", sash_mode="hidden")
         rows = np.flatnonzero(ink.any(axis=1))

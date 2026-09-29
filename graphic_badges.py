@@ -1,5 +1,5 @@
 """Graphic badges (badge_display_mode 7): quality marks and the US certificate,
-in up to three groups, each a row at its own anchor (see Group; laid out by
+in up to four groups, each a row at its own anchor (see Group; laid out by
 main._draw_graphic_badges).
 
 Nothing trademarked ships in the repo.  The marks are fetched once from
@@ -621,6 +621,8 @@ SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema")
 QUALITY_SLOTS = ("video", "audio", "res")
 MAX_ITEMS = 4
 DEFAULT_GROUP1 = "chip:4:video,audio,res,cert"
+# The request parameters holding the groups, in drawing order.
+GROUP_PARAMS = ("badge_group1", "badge_group2", "badge_group3", "badge_group4")
 # A group's size is the row height in the units badge_height uses (20 matches
 # the side chip; the default is a touch larger); its spacing, the space between its badges, is a fraction of
 # the poster's width.
@@ -708,9 +710,14 @@ def format_group(group: Group | None) -> str:
     return spec if group.size == DEFAULT_SIZE else f"{spec}:{group.size}"
 
 
-def groups_use_quality(*raw: str | None) -> bool:
-    """Whether any of these groups shows a quality badge."""
-    return any(slot in QUALITY_SLOTS for g in resolve_groups(*raw) for slot in g.slots)
+def groups_use_quality(cfg) -> bool:
+    """Whether any of a request config's groups shows a quality badge."""
+    return any(slot in QUALITY_SLOTS for g in cfg_groups(cfg) for slot in g.slots)
+
+
+def cfg_groups(cfg) -> list[Group]:
+    """The groups a request config draws (resolve_groups over GROUP_PARAMS)."""
+    return resolve_groups(*(getattr(cfg, name) for name in GROUP_PARAMS))
 
 
 def resolve_groups(*raw: str | None) -> list[Group]:

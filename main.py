@@ -1716,6 +1716,7 @@ class RequestConfig:
     badge_group1:             str  = graphic_badges.DEFAULT_GROUP1
     badge_group2:             str  = ""
     badge_group3:             str  = ""
+    badge_group4:             str  = ""
     # The "cinema" slot's popcorn colour — graphic_badges.CINEMA_STYLES.
     badge_cinema_style:       str  = graphic_badges.DEFAULT_CINEMA_STYLE
 
@@ -1855,7 +1856,7 @@ class RequestConfig:
     # Graphic badges on landscape (landscape_badge_display_mode=7).  Opt-in
     # and apart from badge_display_mode: one "{shape}" URL is two configs, and
     # the portrait's badge mode must not decide the landscape's.  The groups
-    # are the split badge_group1-3 (landscape_badge_group1, ...).
+    # are the split badge_group1-4 (landscape_badge_group1, ...).
     landscape_graphic_badges: bool = False
     # Where the landscape "Genre • Year • Score" line goes: "auto" (placed
     # against the logo, see landscape.build_landscape) or a slot of its own,
@@ -1972,9 +1973,7 @@ _LANDSCAPE_SPLIT_PARAMS: tuple[str, ...] = (
     "textless",
     "sash_mode",
     # Landscape's own graphic badge groups, drawn only with landscape_badge_display_mode=7.
-    "badge_group1",
-    "badge_group2",
-    "badge_group3",
+    *graphic_badges.GROUP_PARAMS,
 )
 
 
@@ -2188,12 +2187,10 @@ def _uses_quality(cfg: "RequestConfig") -> bool:
     and studio come from TMDB alone.  Landscape draws graphic badges only, and
     only when it opts in (landscape_graphic_badges)."""
     if cfg.shape == "landscape":
-        return cfg.landscape_graphic_badges and graphic_badges.groups_use_quality(
-            cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
+        return cfg.landscape_graphic_badges and graphic_badges.groups_use_quality(cfg)
     if cfg.badge_display_mode in _QUALITY_BADGE_MODES:
         return True
-    return cfg.badge_display_mode == 7 and graphic_badges.groups_use_quality(
-        cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
+    return cfg.badge_display_mode == 7 and graphic_badges.groups_use_quality(cfg)
 
 
 def _gradient_alpha(opacity: float) -> int:
@@ -2558,7 +2555,7 @@ def build_request_config(params: dict) -> RequestConfig:
                                   _i("combined_badge_min_score", cfg.badge_min_score, 2, 6),
                                   2, 6)
     cfg.combined_badge_stacked   = _b("combined_badge_stacked",   cfg.combined_badge_stacked)
-    for _gname in ("badge_group1", "badge_group2", "badge_group3"):
+    for _gname in graphic_badges.GROUP_PARAMS:
         if _gname in params:
             setattr(cfg, _gname, graphic_badges.format_group(graphic_badges.parse_group(params[_gname])))
     _cinema_style = (params.get("badge_cinema_style") or "").strip().lower()
@@ -4084,7 +4081,7 @@ def _build_poster(
     # changed rather than re-derived from composite_logo's sizing rules.
     _logo_groups = _before_overlays is not None and any(
         g.anchor in graphic_badges.LOGO_ANCHORS
-        for g in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3))
+        for g in graphic_badges.cfg_groups(cfg))
     _before_logo = image.copy() if _logo_groups else None
 
     # --- Logo / fallback title ---
@@ -4916,7 +4913,7 @@ def _auto_notch_pos(cfg: "RequestConfig", tokens: list[str], certification: str 
         return "center"
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
     left = right = beside = False
-    for group in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3):
+    for group in graphic_badges.cfg_groups(cfg):
         # Whether it draws anything is all that matters here; any size will do.
         if not graphic_badges.row_items(tokens, certification, age_rating, 20,
                                         group.slots, show_quality, *logos)[:group.max_items]:
@@ -4976,7 +4973,7 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         notch_y = max(-badge_h, px(height * cfg.sash_badge_inset))
         top_line = (max(0, notch_y) + notch_y + badge_h) / 2
 
-    groups = graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
+    groups = graphic_badges.cfg_groups(cfg)
     for group in groups:
         g_unit = max(8, round(group.size * 1.5 * height / 750))
         g_gap = px(width * group.spacing)
@@ -9930,8 +9927,7 @@ async def get_poster(
         _cinema_badge = (
             type not in ("tv", "series")
             and (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
-            and any("cinema" in g.slots for g in graphic_badges.resolve_groups(
-                rcfg.badge_group1, rcfg.badge_group2, rcfg.badge_group3))
+            and any("cinema" in g.slots for g in graphic_badges.cfg_groups(rcfg))
         )
         if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:
             # Resolved for every title regardless of age.  There used to be an
