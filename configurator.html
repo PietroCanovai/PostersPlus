@@ -3649,6 +3649,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="sash-list" id="gb-badge-list"></div>
               </div>
+              <div class="field" id="gb-cinema-style-field" style="display:none">
+                <label class="field-label" data-tip="The popcorn shows on a film that is still in cinemas, or not out yet, without taking the sash. By Streaming Date turns it green inside a week of its digital release, amber inside two weeks, and red further off or when no date is known.">Popcorn Colour</label>
+                <select id="cfg-badge-cinema-style" onchange="build(); queuePreviewReload()">
+                  <option value="timing" selected>By Streaming Date</option>
+                  <option value="red">Red</option>
+                  <option value="black">Black</option>
+                  <option value="white">White</option>
+                  <option value="frosted">Frosted</option>
+                </select>
+              </div>
             </div>
 
             <!-- Sliders (hidden entirely when Display Mode = Hidden) -->
@@ -4604,6 +4614,10 @@ function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode')),
     .some(id => ['video', 'audio', 'res'].includes(id)));
 }
 
+function gbHasSlot(raw, id) {
+  return (gbParse(raw)?.slots || []).includes(id);
+}
+
 function updateScraperHint() {
   const qualityMode = badgeUsesQuality();
   document.getElementById('wait-quality-field').style.display = qualityMode ? '' : 'none';
@@ -4661,6 +4675,7 @@ const GB_SLOTS = [
   { id: 'cert',  label: 'Certificate' },
   { id: 'network', label: 'Network' },
   { id: 'studio',  label: 'Studio' },
+  { id: 'cinema',  label: 'In Cinemas (Popcorn)' },
 ];
 const GB_ANCHORS = ['chip', 'tl', 'tr', 'bl', 'br', 'above_logo', 'below_logo'];
 const GB_SIZE = 22, GB_SPACING = 0.028;   // graphic_badges.DEFAULT_SIZE / DEFAULT_SPACING
@@ -4788,6 +4803,7 @@ function gbRender() {
     seg.innerHTML = [['l', 'Left'], ['c', 'Centre'], ['r', 'Right']].map(([v, t]) =>
       `<span class="${v === grp.align ? 'active' : ''}" onclick="gbSetAlign(${g}, '${v}')">${t}</span>`).join('');
   });
+  document.getElementById('gb-cinema-style-field').style.display = st.assign.cinema ? '' : 'none';
   list.innerHTML = '';
   st.order.forEach((id, idx) => {
     const slot = GB_SLOTS.find(s => s.id === id);
@@ -6556,6 +6572,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const _qualityShown = (emitAll && badgeUsesQuality(badgeMode, pGroups))
     || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
   if (_qualityShown && !params.has('badge_min_score')) params.set('badge_min_score', ni('cfg-badge-min-score'));
+  // The popcorn's colour is one setting for both shapes, like the minimum.
+  const _cinemaShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'cinema')))
+    || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'cinema')));
+  if (_cinemaShown && vEl('cfg-badge-cinema-style') !== 'timing') {
+    params.set('badge_cinema_style', vEl('cfg-badge-cinema-style'));
+  }
   if (_qualityShown && c('tog-wait-quality')) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
@@ -8807,6 +8829,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('badge_group1')) _setEl('cfg-badge-group1', p.get('badge_group1'));
   if (p.has('badge_group2')) _setEl('cfg-badge-group2', p.get('badge_group2'));
   if (p.has('badge_group3')) _setEl('cfg-badge-group3', p.get('badge_group3'));
+  _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') || 'timing');
   gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that

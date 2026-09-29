@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Popcorn badge for films still in cinemas
+
+- Graphic badges have a new **In Cinemas (Popcorn)** badge (`cinema` in a
+  badge group). It shows on a film that is only in cinemas or not out yet,
+  so the poster can say so without the Cinema sash, or while the sash shows
+  something else.
+- **Popcorn Colour** (`badge_cinema_style`): By Streaming Date (default)
+  turns it green inside a week of the film's digital release, amber inside
+  two weeks, and red further off or when there is no date. Red, Black,
+  White and Frosted are fixed colours.
+
 ### Edit the studio, director and cast lists in the dashboard
 
 - The admin dashboard has a **Sash lists** view for the notable studios,

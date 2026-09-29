@@ -859,7 +859,7 @@ from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw
 from landscape import build_landscape
 import pxscale
 from pxscale import px, pxi, pxr, pxri, fixed, fixedi
-from awards import dominant_frost_rgb
+from awards import dominant_frost_rgb, _frosted_tint
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, reconcile_cached_awards
 from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_heights as notch_heights
 import graphic_badges
@@ -1716,6 +1716,8 @@ class RequestConfig:
     badge_group1:             str  = graphic_badges.DEFAULT_GROUP1
     badge_group2:             str  = ""
     badge_group3:             str  = ""
+    # The "cinema" slot's popcorn colour — graphic_badges.CINEMA_STYLES.
+    badge_cinema_style:       str  = graphic_badges.DEFAULT_CINEMA_STYLE
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -2559,6 +2561,9 @@ def build_request_config(params: dict) -> RequestConfig:
     for _gname in ("badge_group1", "badge_group2", "badge_group3"):
         if _gname in params:
             setattr(cfg, _gname, graphic_badges.format_group(graphic_badges.parse_group(params[_gname])))
+    _cinema_style = (params.get("badge_cinema_style") or "").strip().lower()
+    if _cinema_style in graphic_badges.CINEMA_STYLES:
+        cfg.badge_cinema_style = _cinema_style
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -3691,9 +3696,14 @@ def _build_poster(
     badge_logos: tuple = (None, None),   # (network, studio) graphic_badges.Logo, or None each
     ratings: dict | None = None,         # per-provider scores, for rating badges
     media_kind: str | None = None,       # "movie" | "series" | "anime", for the ribbon's label
+    cinema_run: "graphic_badges.CinemaRun | None" = None,   # the popcorn badge's facts
 ) -> Image.Image:
 
     width, height = image.size
+    # The popcorn rides with the logos into row_items.  A frosted one takes
+    # the frost colour, which isn't sampled yet: any colour does for the
+    # layout decisions made before it is.
+    badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run))
 
     # An "auto" notch takes its side from where the graphic badges go, so
     # resolve it before anything reads the position.
@@ -4297,7 +4307,8 @@ def _build_poster(
                        and cfg.trending_ribbon_style == "frosted")
     _frost_tint: tuple[float, float, float] | None = (
         dominant_frost_rgb(_frost_color_src)
-        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted) else None
+        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted
+            or (cinema_run is not None and cfg.badge_cinema_style == "frosted")) else None
     )
     # A tinted vignette and a frosted notch sample the same artwork but answer
     # different questions — the vignette asks what the band's own stretch of art is
@@ -4798,6 +4809,9 @@ def _build_poster(
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
     if _before_overlays is not None:
+        if cinema_run is not None and cfg.badge_cinema_style == "frosted" and _frost_tint is not None:
+            badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(
+                "frosted", cinema_run, _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)))
         _draw_graphic_badges(image, cfg, quality_tokens or [], certification, age_rating,
                              _before_overlays, spread_beside_chip=_auto_notch, logo_box=_logo_box,
                              logos=badge_logos)
@@ -9911,7 +9925,15 @@ async def get_poster(
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
         _status_grey = rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash
-        if _status_sash or _status_grey or rcfg.hide_unreleased_rating:
+        # The popcorn badge: a film still in cinemas (or not out at all),
+        # shown without a sash — or beside a different one.
+        _cinema_badge = (
+            type not in ("tv", "series")
+            and (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
+            and any("cinema" in g.slots for g in graphic_badges.resolve_groups(
+                rcfg.badge_group1, rcfg.badge_group2, rcfg.badge_group3))
+        )
+        if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:
             # Resolved for every title regardless of age.  There used to be an
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
@@ -9979,6 +10001,19 @@ async def get_poster(
             # skipped (and lower-priority sashes can surface) for released titles.
             if rcfg.release_status_cinema_only and _release_status not in ("Cinema", "Production"):
                 _release_status = None
+
+        # Also read before that drop, as the badge never needs a status slot.
+        # Its colour counts down to the film's first home release (digital or
+        # disc) — the day the status, and the badge, move on.
+        _cinema_run: graphic_badges.CinemaRun | None = None
+        if _cinema_badge and _release_status in ("Cinema", "Production"):
+            _home_rows = ((get_cached_movie_release_info(f"movie_{tmdb_id}") or {}) if has_tmdb_id else {},
+                          mdblist_release_dates(effective_imdb_id, type) or {})
+            _home = [d for d in (_parse_tmdb_date(r.get(k)) for r in _home_rows
+                                 for k in ("digital_date", "physical_date", "released_digital"))
+                     if d is not None and d >= datetime.now().date()]
+            _cinema_run = graphic_badges.CinemaRun(
+                _release_status, (min(_home) - datetime.now().date()).days if _home else None)
 
         # Read before the status is dropped below, which it is when only
         # hide_unreleased_rating asked for it: the status also drives the
@@ -10112,6 +10147,8 @@ async def get_poster(
                 "matched_directors": discovery_meta.matched_directors,
                 "matched_cast":      discovery_meta.matched_cast,
                 "release_status":    discovery_meta.release_status,
+                "cinema_badge":      ({"status": _cinema_run.status, "days_to_home": _cinema_run.days_to_home}
+                                      if _cinema_run else None),
                 "upcoming_release_date": discovery_meta.upcoming_release_date,
                 "upcoming_release_window": discovery_meta.upcoming_release_window,
                 "sash_priority":     _sash_priority,
@@ -10311,6 +10348,7 @@ async def get_poster(
                 await asyncio.gather(graphic_badges.ensure_logo(client, _network),
                                      graphic_badges.ensure_logo(client, _studio))
                 _bp_args["badge_logos"] = (_network, _studio)
+            _bp_args["cinema_run"] = _cinema_run
 
         # Rating badges: the per-provider scores behind them, and the marks of
         # the providers this title has a score from (each fetched once per

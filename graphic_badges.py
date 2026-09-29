@@ -345,6 +345,99 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
+# Popcorn: the film is in cinemas (or not out yet) and not at home
+# ---------------------------------------------------------------------------
+
+# How the bucket is coloured (badge_cinema_style).  "timing" picks its colour
+# from how soon the film reaches home: green inside a week, amber inside two,
+# red further off or with no date at all.
+CINEMA_STYLES = ("timing", "red", "black", "white", "frosted")
+DEFAULT_CINEMA_STYLE = "timing"
+_TIMING_DAYS = ((7, "green"), (14, "amber"))
+
+# The popcorn is Nuvio's "Cinema" hero badge (by this project's author):
+# white with a red outline there.  At badge height that outline is under a
+# pixel, so here the colour is the fill and the outline a white keyline,
+# thickened so it survives the row's size.
+_POPCORN_SVG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "badges", "popcorn.svg")
+_POPCORN_RGB = {"red": (231, 49, 37), "green": (40, 170, 84), "amber": (238, 178, 20),
+                "black": (22, 22, 24)}
+_KEYLINE_RGB = (246, 244, 240)
+_KEYLINE_W = 10   # in the SVG's path units (drawn at 3 there)
+_MONO_KEYLINE_W, _MONO_CUT_W = 14, 5   # "white": outline, and the line cut along it
+
+
+@dataclass(frozen=True)
+class CinemaRun:
+    """A film not yet out at home: "Cinema" or "Production", and the days
+    until its digital (or disc) release when one is dated."""
+    status: str
+    days_to_home: int | None = None
+
+
+def cinema_ink(style: str, run: CinemaRun | None,
+               tint: tuple[float, float, float] | None = None) -> str | None:
+    """The popcorn colour key for ``row_items``, or None when there is no
+    badge.  ``tint`` is the frosted colour; without one "frosted" is drawn red."""
+    if run is None:
+        return None
+    if style == "white":
+        return "white"
+    if style == "black":
+        return "black"
+    if style == "frosted" and tint is not None:
+        return "rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
+    if style == "timing":
+        days = run.days_to_home
+        for limit, ink in _TIMING_DAYS:
+            if days is not None and days < limit:
+                return ink
+    return "red"
+
+
+@lru_cache(maxsize=64)
+def _popcorn(ink: str, h: int) -> Image.Image | None:
+    """The popcorn, ``h`` tall, filled with ``ink`` inside a white keyline;
+    "white" is one colour throughout, like the other marks in the row."""
+    import cairosvg
+    if ink.startswith("rgb:"):
+        fill = tuple(int(c) for c in ink[4:].split(","))
+    else:
+        fill = _INK if ink == "white" else _POPCORN_RGB.get(ink, _POPCORN_RGB["red"])
+    edge = _INK if ink == "white" else _KEYLINE_RGB
+    try:
+        with open(_POPCORN_SVG, encoding="utf-8") as fh:
+            svg = fh.read()
+    except OSError as exc:
+        logger.error(f"Graphic badges: popcorn mark unreadable: {exc}")
+        return None
+    def render(fill_attr: str, stroke_attr: str, width: float = _KEYLINE_W) -> Image.Image:
+        s = (svg.replace('fill="#fff"', f'fill="{fill_attr}"')
+                .replace('stroke="#e73125"', f'stroke="{stroke_attr}"')
+                .replace('stroke-width="3"', f'stroke-width="{width}"'))
+        return Image.open(io.BytesIO(cairosvg.svg2png(bytestring=s.encode(), output_height=h * 4))).convert("RGBA")
+
+    if ink == "white":
+        # A white keyline on a white fill closes up the kernels' lines and
+        # the gap over the bucket.  Here the outline is drawn wider and a thin
+        # line cut along its middle, so the mark keeps a white rim and its
+        # inner lines — the coloured styles' look, in one colour.
+        body = np.asarray(render("#fff", "#fff", _MONO_KEYLINE_W).getchannel("A"), dtype=np.float32)
+        cut = np.asarray(render("none", "#fff", _MONO_CUT_W).getchannel("A"), dtype=np.float32)
+        im = Image.new("RGBA", (body.shape[1], body.shape[0]), (*_INK, 0))
+        im.putalpha(Image.fromarray((body * (1 - cut / 255)).astype(np.uint8)))
+    else:
+        im = render("#%02x%02x%02x" % fill, "#%02x%02x%02x" % edge)
+    # Cropped to its ink so it shares the row's top and bottom lines.
+    box = im.getchannel("A").getbbox()
+    if box:
+        im = im.crop(box)
+    out = im.resize((max(1, round(im.width * h / im.height)), h), Image.Resampling.LANCZOS)
+    out.info["open_holes"] = True   # see _shadowed
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Network and studio logos (TMDB)
 # ---------------------------------------------------------------------------
 
@@ -522,7 +615,7 @@ def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
 ANCHORS = ("chip", "tl", "tr", "bl", "br", "above_logo", "below_logo")
 # Centred on the title logo (or fallback title text), wherever it landed.
 LOGO_ANCHORS = ("above_logo", "below_logo")
-SLOTS = ("video", "audio", "res", "cert", "network", "studio")
+SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema")
 # The slots that show stream quality; the rest come from TMDB alone, so a
 # layout without any of these needs no quality source at all.
 QUALITY_SLOTS = ("video", "audio", "res")
@@ -652,10 +745,12 @@ _US_CERTS = {"G", "PG", "PG-13", "R", "NC-17",
 def row_items(tokens: list[str], certification: str | None, age_rating: int | None,
               unit_h: int, slots: tuple[str, ...] = SLOTS,
               show_quality: bool = True,
-              network: Logo | None = None, studio: Logo | None = None) -> list[tuple[str, Image.Image]]:
+              network: Logo | None = None, studio: Logo | None = None,
+              cinema: str | None = None) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
     Quality marks only when ``show_quality`` (the minimum-quality gate); the
-    certificate always.  Dolby Vision and Atmos in the same group share the
+    certificate always.  ``cinema`` is the popcorn's colour (cinema_ink), None
+    for a title that is out at home.  Dolby Vision and Atmos in the same group share the
     combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
     dolby_h = unit_h
@@ -701,7 +796,8 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
 
     build = {"video": video, "audio": audio, "res": res, "cert": cert,
              "network": lambda: _logo_mark(network, unit_h) if network else None,
-             "studio": lambda: _logo_mark(studio, unit_h) if studio else None}
+             "studio": lambda: _logo_mark(studio, unit_h) if studio else None,
+             "cinema": lambda: _popcorn(cinema, unit_h) if cinema else None}
     items = [(slot, build[slot]()) for slot in slots]
     return [(slot, im) for slot, im in items if im is not None]
 
@@ -739,9 +835,25 @@ def _shadowed(im: Image.Image) -> tuple[Image.Image, int]:
     sheet = Image.new("L", (im.width + 2 * pad, im.height + 2 * pad), 0)
     sheet.paste(im.getchannel("A").point(lambda v: v * 120 // 255), (pad, pad))
     sheet = sheet.filter(ImageFilter.GaussianBlur(max(1.0, im.height * 0.07)))
+    lift = max(1, im.height // 30)
+    if im.info.get("open_holes"):
+        # The popcorn's slots: kept clear of the shadow, so the poster shows
+        # through them rather than a dark smudge.
+        import cv2
+        clear = (np.asarray(im.getchannel("A")) < 128).astype(np.uint8)
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(clear, connectivity=4)
+        h, w = clear.shape
+        holes = np.zeros_like(clear, dtype=bool)
+        for i in range(1, n):
+            x, y, bw, bh = stats[i][:4]
+            if x > 0 and y > 0 and x + bw < w and y + bh < h:
+                holes |= labels == i
+        a = np.asarray(sheet).copy()
+        a[pad - lift:pad - lift + h, pad:pad + w][holes] = 0
+        sheet = Image.fromarray(a)
     out = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
     out.putalpha(sheet)
-    out.alpha_composite(im, (pad, pad - max(1, im.height // 30)))
+    out.alpha_composite(im, (pad, pad - lift))
     return out, pad
 
 

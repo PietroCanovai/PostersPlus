@@ -907,6 +907,7 @@ def build_landscape(
     age_rating: int | None = None,
     certification: str | None = None,
     badge_logos: tuple = (None, None),
+    cinema_run=None,
     **_ignored,
 ) -> Image.Image:
     """Render the landscape poster.  Mirrors ``build_poster``'s call shape so the
@@ -1048,6 +1049,13 @@ def build_landscape(
 
     # Drawn last because they lay themselves out around everything else.
     if graphic:
+        import graphic_badges
+        tint = None
+        if cinema_run is not None and cfg.badge_cinema_style == "frosted":
+            from awards import dominant_frost_rgb, _frosted_tint
+            tint = _frosted_tint(*(badge_source or dominant_frost_rgb(art)),
+                                 saturation=cfg.sash_badge_frost_saturation, reference=cfg.frost_reference)
+        badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run, tint))
         _draw_graphic_badges(image, before, cfg, quality_tokens or [], certification, age_rating,
                              badge_logos, logo_box, badge_position)
 
