@@ -5537,6 +5537,29 @@ function outsideClickHandler(e) {
   else document.addEventListener('click', outsideClickHandler, { once: true });
 }
 
+/** The title an imported URL names, when it isn't the one selected.  The URL
+ *  carries no name or artwork, so the card shows the id until the user
+ *  searches; the selection is saved so a reload keeps the same title. */
+function _showImportedTitle(tmdbId, imdbId, type) {
+  resolvedTmdbId = tmdbId; resolvedImdbId = imdbId; mediaType = type;
+  document.getElementById('cfg-tmdb-resolved').value = tmdbId;
+  document.getElementById('cfg-imdb').value = imdbId;
+  document.getElementById('cfg-media-type').value = type;
+  const title = tmdbId ? `TMDB ${tmdbId}` : imdbId;
+  document.getElementById('cfg-search-query').value = '';
+  saveSelection({ tmdbId, imdbId: imdbId || null, type, title, year: '', thumb: '' });
+  document.getElementById('selected-card').classList.add('visible');
+  document.getElementById('selected-thumb').style.display = 'none';
+  document.getElementById('selected-title').textContent = title;
+  document.getElementById('selected-year').textContent = '—';
+  const badge = document.getElementById('selected-type-badge');
+  badge.textContent = type.toUpperCase(); badge.className = `result-type-badge ${type}`;
+  document.getElementById('selected-tmdb-id').textContent = tmdbId || 'None — using IMDb';
+  document.getElementById('selected-imdb-id').textContent = imdbId || 'None — using TMDB';
+  document.getElementById('selected-resolving').style.display = 'none';
+  updateExternalLink();
+}
+
 async function selectResult(dataset) {
   closeResults();
   const { type, title, year, thumb } = dataset;
@@ -8542,9 +8565,10 @@ async function sendReport() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        media_type: vEl('cfg-media-type') === 'tv' ? 'tv' : 'movie',
-        tmdb_id: vEl('cfg-tmdb-resolved') || '',
-        imdb_id: vEl('cfg-imdb') || '',
+        // The identity the preview renders, not the search box's.
+        media_type: mediaType === 'tv' ? 'tv' : 'movie',
+        tmdb_id: resolvedTmdbId || '',
+        imdb_id: resolvedImdbId || '',
         title: document.getElementById('selected-title')?.textContent || '',
         category: cat,
         note: document.getElementById('report-note').value.trim(),
@@ -8662,6 +8686,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   }
 
   const p = parsed.searchParams;
+  const _keptKeys = [];   // API keys the URL carried but the fields already had
   // A landscape URL is read the way the server reads it: each "landscape_"
   // per-shape value stands in for the plain one, which older landscape URLs
   // (and presets) still use.  A dual URL keeps the plain names for the
@@ -8703,19 +8728,35 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       onPrimaryClientChange({ rebuild: false });
     }
 
-    // Only import API keys if they are real values (not placeholder tokens)
-    const tmdbKey  = p.get('tmdb_key')    || '';
-    const mdbKey   = p.get('mdblist_key') || '';
-    if (tmdbKey  && !tmdbKey.startsWith('{'))  document.getElementById('cfg-tmdb-key').value    = tmdbKey;
-    if (mdbKey   && !mdbKey.startsWith('{'))   document.getElementById('cfg-mdblist-key').value = mdbKey;
+    // A URL's API keys fill empty fields only (and never placeholder tokens):
+    // restoring your own URL in a new browser works, but a link someone else
+    // hands you can't swap your keys for theirs, which would send your
+    // lookups through their account.
+    for (const [param, id] of [['tmdb_key', 'cfg-tmdb-key'], ['mdblist_key', 'cfg-mdblist-key']]) {
+      const incoming = (p.get(param) || '').trim();
+      const field = document.getElementById(id);
+      if (!incoming || incoming.startsWith('{') || incoming === field.value) continue;
+      if (field.value) _keptKeys.push(param === 'tmdb_key' ? 'TMDB' : 'MDBList');
+      else field.value = incoming;
+    }
 
     // ── Media identity (skip template placeholders) ────────────────────────
-    const rawTmdb = p.get('tmdb_id') || '';
-    const rawImdb = p.get('imdb_id') || '';
-    const rawType = p.get('type')    || '';
-    if (rawTmdb && !rawTmdb.startsWith('{')) resolvedTmdbId = rawTmdb;
-    if (rawImdb && !rawImdb.startsWith('{')) resolvedImdbId = rawImdb;
-    if (rawType && !rawType.startsWith('{')) mediaType      = rawType;
+    // Only well-formed ids (template placeholders and anything else are
+    // left alone), and the title card and the fields the external links,
+    // artwork shortcut and Report button read follow along, so none of them
+    // stays on the previous title while the preview shows this one.
+    const rawTmdb = (p.get('tmdb_id') || '').trim();
+    const rawImdb = (p.get('imdb_id') || '').trim();
+    const rawType = (p.get('type')    || '').trim();
+    const newTmdb = /^[0-9]{1,10}$/.test(rawTmdb) ? rawTmdb : null;
+    const newImdb = /^tt[0-9]{1,10}$/.test(rawImdb) ? rawImdb : null;
+    if (newTmdb || newImdb) {
+      const type = ['movie', 'tv'].includes(rawType) ? rawType
+                 : rawType === 'series' ? 'tv' : mediaType;
+      if (newTmdb !== resolvedTmdbId || (newImdb || '') !== resolvedImdbId || type !== mediaType) {
+        _showImportedTitle(newTmdb || '', newImdb || '', type);
+      }
+    }
   }
 
   // Generated URLs leave out every parameter already at its default, so an
@@ -9071,6 +9112,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   build();
   queuePreviewReload();
   if (!silent) setStatus('Settings imported from URL.', 'ok');
+  if (!silent && _keptKeys.length) {
+    alert(`Imported. Your ${_keptKeys.join(' and ')} key${_keptKeys.length > 1 ? 's were' : ' was'} kept: `
+      + `an imported URL never replaces a key you already have. To use the URL's key, `
+      + `clear the field first and import again.`);
+  }
   return true;
 }
 

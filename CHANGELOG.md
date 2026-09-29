@@ -40,6 +40,13 @@
 
 - The configurator's Poster Resolution no longer resets to 500 when the
   page is refreshed.
+- Import URL no longer replaces API keys you already have: a URL's
+  TMDB or MDBList key only fills an empty field, and you're told when
+  yours were kept.
+- Importing a URL for another title now moves the title card, the
+  IMDb/TMDB links and the Report button to it too, instead of leaving them
+  on the previous title. Malformed title ids in an imported URL are
+  ignored.
 
 ### A fourth graphic badge group
 
