@@ -381,7 +381,15 @@ class MDBListPacingTests(unittest.IsolatedAsyncioTestCase):
             await main._mdblist_wait_for_slot()
             starts.append(loop.time())
 
-        await asyncio.gather(*(caller() for _ in range(4)))
+        # Fork: a garbage-collection pause (~5 ms) landing between the first
+        # caller's slot and its timestamp shrank one gap below the tolerance,
+        # depending only on how many objects earlier test modules left behind.
+        import gc
+        gc.disable()
+        try:
+            await asyncio.gather(*(caller() for _ in range(4)))
+        finally:
+            gc.enable()
 
         starts.sort()
         gaps = [b - a for a, b in zip(starts, starts[1:])]
