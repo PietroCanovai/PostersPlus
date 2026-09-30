@@ -331,7 +331,8 @@ function Settings({ onLogout }) {
   useEffect(() => { reload(); }, []);
   if (!s) return html`<div class="empty">Loading…</div>`;
   return html`
-    <div class="page-head"><div><h1>Settings</h1><p>Changes apply straight away; no restart needed.</p></div></div>
+    <div class="page-head"><div><h1>Settings</h1><p>Changes apply straight away; no restart needed.</p></div>
+      <button onClick=${() => { location.hash = 'activity'; }}>Go to Activity</button></div>
     <${JellyfinSettings} s=${s} reload=${reload} />
     ${s.jellyfin_url && s.jellyfin_api_key_set && html`<${LibrarySettings} />`}
     <${SyncSettings} s=${s} reload=${reload} />
@@ -369,6 +370,9 @@ function App() {
     timer.current = setTimeout(tick, 2500);
     return () => clearTimeout(timer.current);
   }, [session, status && status.progress.running]);
+  // Opening a page shows its current state, not the last poll's (e.g. right
+  // after saving the Jellyfin connection in Settings).
+  useEffect(() => { if (session && session.logged_in) refresh(); }, [route]);
 
   if (!session) return null;
   if (!session.logged_in) return html`<${Login} enabled=${session.enabled} onIn=${checkSession} /><${Toast} />`;
