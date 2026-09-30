@@ -64,6 +64,8 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 CUSTOM_ART_DIR        = "/app/cache/custom_art"
 # Preview images for the operator's configurator presets (dashboard Presets).
 PRESET_ART_DIR        = "/app/cache/preset_art"
+# Label fonts the operator uploaded in the dashboard (Fonts), with their index.
+CUSTOM_FONT_DIR       = "/app/cache/custom_fonts"
 
 # Environment
 

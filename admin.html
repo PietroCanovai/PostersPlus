@@ -897,7 +897,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || hash === 'presets' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || hash === 'presets' || hash === 'fonts' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -926,6 +926,7 @@ function renderNav() {
   html += `<a href="#artwork" data-view="artwork" class="${activeView === 'artwork' ? 'active' : ''}"><span>Artwork</span></a>`;
   html += `<a href="#reports" data-view="reports" class="${activeView === 'reports' ? 'active' : ''}"><span>Reports</span>${status && status.reports_open ? `<span class="chip pending">${status.reports_open}</span>` : ''}</a>`;
   html += `<a href="#presets" data-view="presets" class="${activeView === 'presets' ? 'active' : ''}"><span>Presets</span>${pr.data ? `<span class="count">${pr.data.presets.length}</span>` : ''}</a>`;
+  html += `<a href="#fonts" data-view="fonts" class="${activeView === 'fonts' ? 'active' : ''}"><span>Fonts</span>${ft.data && ft.data.fonts.length ? `<span class="count">${ft.data.fonts.length}</span>` : ''}</a>`;
   html += `<a href="#sash-lists" data-view="sash-lists" class="${activeView === 'sash-lists' ? 'active' : ''}"><span>Sash lists</span>${slDirtySections().length ? `<span class="chip dirty">${slDirtySections().length}</span>` : ''}</a>`;
   html += `<div class="nav-sep"></div><div class="nav-title">Settings</div>`;
   for (const g of model.groups) {
@@ -1257,6 +1258,7 @@ function renderView() {
   if (activeView === 'artwork') { main.innerHTML = renderArtwork(); if (!art.list) loadArtList(); return; }
   if (activeView === 'reports') { main.innerHTML = renderReports(); loadReports(); return; }
   if (activeView === 'presets') { main.innerHTML = renderPresets(); if (!pr.data) loadPresets(); return; }
+  if (activeView === 'fonts') { main.innerHTML = renderFonts(); if (!ft.data) loadFonts(); return; }
   if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
   main.innerHTML = g ? renderGroup(g) : '';
@@ -1542,6 +1544,92 @@ function renderPresets() {
         <button type="button" class="art-btn" onclick="prMove(${jsArg(p.id)}, 1)" ${i === d.presets.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
         <button type="button" class="art-btn danger" onclick="prDelete(${jsArg(p.id)})">Delete</button>
       </div>
+    </div></div>`;
+  });
+  return html + `</div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fonts.  Label fonts the operator uploads for fonts Posters+ can't ship; they
+// join the configurator's Font list for everyone on this instance.  The server
+// adds Inter's ★ where a font has none (the labels draw "★ 87"), turns .otf
+// outlines into TrueType ones and takes heavy hinting out.
+const ft = { data: null, busy: false, name: '', sample: { id: '693134', type: 'movie' } };
+// A notch and a big rating line: most of the poster's text in the label font.
+const FT_SAMPLE_PARAMS = 'sash_mode=notch&rating_display_mode=2&numeric_score_font_size_ratio=0.090&numeric_score_y_offset=0.91&badge_display_mode=0&top_gradient=medium';
+
+async function loadFonts() {
+  const r = await api('/admin/api/fonts');
+  if (!r.ok) { toast((r.body && r.body.detail) || 'Could not load the fonts'); return; }
+  ft.data = r.body;
+  renderNav();
+  if (activeView === 'fonts') renderView();
+}
+
+function ftSampleSrc(key) {
+  const p = new URLSearchParams(FT_SAMPLE_PARAMS);
+  p.set('tmdb_id', ft.sample.id); p.set('type', ft.sample.type); p.set('label_font', key);
+  if (ft.data.access_key) p.set('access_key', ft.data.access_key);
+  return '/poster?' + p.toString();
+}
+
+async function ftUpload(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f || ft.busy) return;
+  const name = (document.getElementById('ft-name').value || '').trim() || f.name.replace(/\.(ttf|otf)$/i, '').replace(/[-_]+/g, ' ');
+  if (f.size > ft.data.max_bytes) { toast(`That font is larger than ${Math.round(ft.data.max_bytes / 1048576)} MB`); return; }
+  // The server keys a font by a slug of its name (custom_fonts.key_for), so
+  // "House Font" and "house-font" are the same font.
+  const key = 'custom-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+  const replacing = ft.data.fonts.find(x => x.key === key);
+  if (replacing && !confirm(`Replace the font "${replacing.name}"?\n\nPosters drawn in it re-render with the new one.`)) return;
+  ft.busy = true; ft.name = name; renderView();
+  const r = await api('/admin/api/fonts?name=' + encodeURIComponent(name), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f });
+  ft.busy = false;
+  if (!r.ok) { renderView(); toast((r.body && r.body.detail) || `Upload failed (HTTP ${r.status})`); return; }
+  ft.data = r.body; ft.name = '';
+  toast(`Font "${name}" ready`);
+  renderNav(); renderView();
+}
+
+async function ftDelete(key) {
+  const f = ft.data.fonts.find(x => x.key === key);
+  if (!f || !confirm(`Delete the font "${f.name}"?\n\nPosters that use it are drawn in Inter instead.`)) return;
+  const r = await api('/admin/api/fonts?key=' + encodeURIComponent(key), { method: 'DELETE' });
+  if (!r.ok) { toast((r.body && r.body.detail) || `Delete failed (HTTP ${r.status})`); return; }
+  ft.data = r.body;
+  renderNav(); renderView();
+}
+
+function ftSample() {
+  const id = document.getElementById('ft-sample-id').value.trim();
+  if (!/^\d{1,9}$/.test(id)) { toast('A TMDB id is a number'); return; }
+  ft.sample = { id, type: document.getElementById('ft-sample-type').value === 'tv' ? 'tv' : 'movie' };
+  renderView();
+}
+
+function renderFonts() {
+  let html = `<div class="panel"><div class="panel-header"><span class="panel-title">Fonts</span><span class="panel-index">your own label fonts</span></div><div class="panel-body">`;
+  const d = ft.data;
+  if (!d) return html + `<div class="art-empty">Loading…</div></div></div>`;
+  html += `<div class="field-hint" style="margin:0 0 var(--gap-field)">Upload a font to draw poster labels in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. It joins the configurator's <strong>Font</strong> list for everyone on this instance. Use a static <code>.ttf</code> or <code>.otf</code>, one weight (Bold reads best); variable fonts and collections aren't supported. A font without a ★ gets Inter's. Make sure the font's licence lets it be used to render images on a server.</div>`;
+  const full = d.fonts.length >= d.max;
+  html += `<div class="rp-actions" style="margin:0 0 12px;align-items:center">
+    <input type="text" id="ft-name" maxlength="40" placeholder="Name (defaults to the file name)" value="${esc(ft.name)}" style="max-width:260px" ${ft.busy || full ? 'disabled' : ''}>
+    <label class="art-btn primary" ${ft.busy || full ? 'style="opacity:.45;pointer-events:none"' : ''}>${ft.busy ? 'Preparing…' : 'Upload a font'}<input type="file" accept=".ttf,.otf,font/ttf,font/otf" hidden onchange="ftUpload(this)"></label>
+    ${full ? `<span class="field-hint" style="margin:0">That's the limit of ${d.max}.</span>` : '<span class="field-hint" style="margin:0">A name already in the list replaces that font.</span>'}
+  </div>`;
+  if (!d.fonts.length) return html + `<div class="art-empty">No fonts yet.</div></div></div>`;
+  html += `<div class="rp-actions" style="margin:0 0 12px;align-items:center"><span class="field-hint" style="margin:0">Sample</span>
+    <select id="ft-sample-type"><option value="movie" ${ft.sample.type === 'movie' ? 'selected' : ''}>Movie</option><option value="tv" ${ft.sample.type === 'tv' ? 'selected' : ''}>Series</option></select>
+    <input type="text" id="ft-sample-id" value="${esc(ft.sample.id)}" placeholder="TMDB id" inputmode="numeric" style="max-width:110px">
+    <button type="button" class="art-btn" onclick="ftSample()">Show</button></div>`;
+  d.fonts.forEach(f => {
+    html += `<div class="rp-title">${prThumb(ftSampleSrc(f.key), false)}<div>
+      <div class="rp-head"><h3>${esc(f.name)}</h3><span class="rp-meta">${esc(f.family)} · ${Math.max(1, Math.round(f.size / 1024))} KB · ${fmtAgo(f.added)}</span></div>
+      <div class="rp-note">URL value <code>label_font=${esc(f.key)}</code>${f.notes.length ? ` · ${esc(f.notes.join(', '))}` : ''}</div>
+      <div class="rp-actions"><button type="button" class="art-btn danger" onclick="ftDelete(${jsArg(f.key)})">Delete</button></div>
     </div></div>`;
   });
   return html + `</div></div>`;

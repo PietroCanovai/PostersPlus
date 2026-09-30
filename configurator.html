@@ -2520,10 +2520,20 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             </div><!-- /field-row -->
             <div class="field">
-              <label class="field-label" data-tip="The font the poster's text is drawn in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. A language the chosen font has no letters for is drawn in one that has them, so Hebrew always uses Rubik and Greek or Vietnamese always uses Inter.">Font</label>
+              <label class="field-label" data-tip="The font the poster's text is drawn in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. A language the chosen font has no letters for is drawn in one that has them, so Hebrew always uses Rubik and Greek or Vietnamese always uses Inter. Fonts under This instance were added by this server's operator.">Font</label>
               <select id="cfg-label-font" onchange="build(); queuePreviewReload()">
                 <option value="inter" selected>Inter</option>
                 <option value="rubik">Rubik</option>
+                <option value="jakarta">Plus Jakarta Sans</option>
+                <option value="manrope">Manrope</option>
+                <option value="montserrat">Montserrat</option>
+                <option value="robotocondensed">Roboto Condensed</option>
+                <option value="barlowcondensed">Barlow Condensed</option>
+                <option value="oswald">Oswald</option>
+                <option value="spacegrotesk">Space Grotesk</option>
+                <option value="exo2">Exo 2</option>
+                <option value="fira">Fira Sans</option>
+                <option value="opensans">Open Sans</option>
               </select>
             </div>
             <div class="field">
@@ -4603,6 +4613,24 @@ function updateResolutionAvailability() {
   if (sel.value !== best) { sel.value = best; build(); }
 }
 
+// The operator's own label fonts (dashboard Fonts) at the foot of the Font
+// list.  Once the caps answer, a choice the instance no longer has is Inter.
+function syncCustomFonts(list) {
+  const sel = document.getElementById('cfg-label-font');
+  const want = sel.value;
+  let group = document.getElementById('cfg-label-font-custom');
+  if (!group) {
+    group = document.createElement('optgroup');
+    group.id = 'cfg-label-font-custom';
+    group.label = 'This instance';
+    sel.appendChild(group);
+  }
+  group.replaceChildren(...list.map(f => Object.assign(document.createElement('option'), { value: f.key, textContent: f.name })));
+  group.hidden = !list.length;
+  if ([...sel.options].some(o => o.value === want)) sel.value = want;
+  else if (want.startsWith('custom-') && serverCapsLoaded) { sel.value = 'inter'; build(); }
+}
+
 async function fetchServerCaps() {
   try {
     const ak = vEl('cfg-access-key');
@@ -4630,6 +4658,7 @@ async function fetchServerCaps() {
     updateExternalLink();   // the artwork edit link waits on the caps
     updateImdbSourceAvailability();
     updateResolutionAvailability();
+    syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
     document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
     // Only the sources this instance offers; a restored choice it doesn't
     // offer falls back to TMDB.
@@ -9322,7 +9351,14 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     const _moOpt = [...document.getElementById('cfg-meta-order').options].some(o => o.value === _mo);
     _setEl('cfg-meta-order', _moOpt ? _mo : '');
   }
-  _setEl('cfg-label-font', ['rubik'].includes(p.get('label_font')) ? p.get('label_font') : 'inter');
+  {
+    const _lf = (p.get('label_font') || '').toLowerCase();
+    // The operator's fonts come with /server-caps, which a startup restore
+    // runs ahead of: the choice is held on a placeholder until they arrive.
+    if (!serverCapsLoaded && /^custom-[a-z0-9-]+$/.test(_lf)) syncCustomFonts([{ key: _lf, name: _lf }]);
+    const _lfOpt = [...document.getElementById('cfg-label-font').options].some(o => o.value === _lf);
+    _setEl('cfg-label-font', _lfOpt ? _lf : 'inter');
+  }
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.

@@ -962,6 +962,7 @@ import anime
 import art_overrides
 import reports
 import presets
+import custom_fonts
 import fanart
 import cinemeta
 
@@ -1754,7 +1755,8 @@ class RequestConfig:
     # Secondary preferred language ("custom").  Only consulted when the logo
     # priority lists "custom"; blank elsewhere (and blank there just skips it).
     logo_language_secondary: str = ""
-    # Font the labels are drawn in: a fonts.LABEL_FONTS key.  A font that has
+    # Font the labels are drawn in: a fonts.LABEL_FONTS key, or an uploaded
+    # font's "custom-…" key (custom_fonts).  A font that has
     # no glyphs for logo_language's labels gives way to one that does (Hebrew
     # is drawn in Rubik whatever is chosen).
     label_font: str = fonts.DEFAULT_LABEL_FONT
@@ -2265,6 +2267,10 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
     # Posters that draw the badge are refreshed by render revision 16.
     if fields.get("badge_cinema_style") == "auto":
         fields["badge_cinema_style"] = "timing"
+    # An operator's font keeps its key when it is replaced; its file is named
+    # by content hash, so a new upload re-renders the posters drawn in it.
+    if str(fields.get("label_font", "")).startswith(custom_fonts.KEY_PREFIX):
+        fields["label_font_file"] = custom_fonts.file_of(fields["label_font"])
     return json.dumps(fields, sort_keys=True, default=_stable)
 
 
@@ -2628,7 +2634,7 @@ def build_request_config(params: dict) -> RequestConfig:
         params.get("logo_language_secondary"), cfg.logo_language_secondary
     )
     _lf = (params.get("label_font") or "").strip().lower()
-    if _lf in fonts.LABEL_FONTS:
+    if fonts.is_label_font(_lf):
         cfg.label_font = _lf
     _lp = parse_logo_priority(params.get("logo_priority"))
     if _lp:
@@ -6743,6 +6749,8 @@ async def server_caps(request: Request, access_key: str = ""):
         "report_categories":     reports.CATEGORIES,
         # The operator's own presets, shown beside the shipped ones.
         "operator_presets":      presets.public_list(),
+        # The operator's own label fonts (dashboard Fonts), for the Font list.
+        "custom_fonts":          custom_fonts.public_list(),
     }
 
 
@@ -7669,6 +7677,69 @@ async def admin_presets_image(request: Request, x_admin_key: str = Header(defaul
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not store the image: {exc}")
     return _admin._json({"image": name, "url": f"/preset-art/{name}"})
+
+
+# ---------------------------------------------------------------------------
+# Operator fonts: label fonts uploaded in the dashboard (custom_fonts), for
+# fonts Posters+ can't ship.  Everyone who can open the configurator can pick
+# them.
+# ---------------------------------------------------------------------------
+
+def _fonts_payload() -> dict:
+    return {
+        "fonts": custom_fonts.admin_list(),
+        "max": custom_fonts.MAX_FONTS,
+        "max_bytes": custom_fonts.MAX_FONT_BYTES,
+        # For the dashboard's sample renders (<img> can't send the admin
+        # header); it is in every poster URL the instance hands out.
+        "access_key": _cfg.ACCESS_KEY or "",
+    }
+
+
+@app.get("/admin/api/fonts")
+async def admin_fonts(request: Request, x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    return _admin._json(_fonts_payload())
+
+
+@app.post("/admin/api/fonts")
+async def admin_fonts_upload(request: Request, name: str, x_admin_key: str = Header(default="")):
+    """The .ttf or .otf file itself as the body; its display name as a query
+    parameter.  A name already in use replaces that font."""
+    await _admin._authorise(request, x_admin_key)
+    try:
+        custom_fonts.key_for(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > custom_fonts.MAX_FONT_BYTES:
+        raise HTTPException(status_code=413, detail="The font is too large")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > custom_fonts.MAX_FONT_BYTES:
+            raise HTTPException(status_code=413, detail="The font is too large")
+        chunks.append(chunk)
+    try:
+        entry = await asyncio.to_thread(custom_fonts.store, b"".join(chunks), name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't use that font: {exc}")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not store the font: {exc}")
+    logger.info(f"Admin: font uploaded as {entry['key']} ({entry['family']!r}, {', '.join(entry['notes']) or 'as is'})")
+    return _admin._json(_fonts_payload())
+
+
+@app.delete("/admin/api/fonts")
+async def admin_fonts_delete(request: Request, key: str, x_admin_key: str = Header(default="")):
+    await _admin._authorise(request, x_admin_key)
+    try:
+        removed = await asyncio.to_thread(custom_fonts.delete, key)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not delete the font: {exc}")
+    if removed:
+        logger.info(f"Admin: font {key} deleted")
+    return _admin._json(_fonts_payload())
 
 
 @app.get("/preset-art/{name}")

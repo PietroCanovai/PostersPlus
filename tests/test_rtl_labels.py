@@ -54,8 +54,10 @@ class LabelFontTests(unittest.TestCase):
     def test_an_unknown_choice_is_the_default(self):
         self.assertEqual(fonts.resolve_label_font("comic-sans", "en"), INTER)
 
-    def test_rubik_has_the_star_the_labels_draw(self):
-        self.assertTrue(fonts.covers(RUBIK, "★"))
+    def test_every_label_font_has_the_star_the_labels_draw(self):
+        for choice, name in fonts.LABEL_FONTS.items():
+            with self.subTest(choice):
+                self.assertTrue(fonts.covers(os.path.join(fonts.FONTS_DIR, name), "★•·"))
 
     def test_a_title_the_genre_font_cannot_draw_takes_a_label_font(self):
         bebas = os.path.join(fonts.FONTS_DIR, "BebasNeue-Bold.ttf")

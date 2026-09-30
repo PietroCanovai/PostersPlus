@@ -102,6 +102,8 @@ The **Artwork** tab lets you choose a title's poster or logo for everyone on the
 
 The **Presets** tab adds your own looks to the configurator's **Load preset** gallery. Paste a poster URL from the configurator, name it, and give it a picture (render a title or upload an image). Users see them under **Operator**, beside the **Core** presets that ship with Posters+ and **Mine**, the presets each user saves in their own browser. Keys and the title are stripped from the URL when a preset is saved.
 
+The **Fonts** tab adds your own label fonts to the configurator's **Font** list, for fonts Posters+ can't ship. Upload a static `.ttf` or `.otf` (one weight; Bold reads best) and give it a name. A font without a ★ gets Inter's, since the rating line draws one. You're responsible for having a licence that allows the font to be used for rendering images on a server.
+
 Good to know:
 
 - Saved settings live in `settings.json` in the cache volume and take priority over environment variables. Your compose file is never touched.
