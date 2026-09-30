@@ -1,6 +1,6 @@
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { api, toast, go } from './common.js';
-import { StyleControls, GROUPS } from './controls.js';
+import { StyleControls, GROUPS, THUMB_GROUPS } from './controls.js';
 
 // The editor's shared controls, plus what only makes sense library-wide.
 const EXTRA = {
@@ -31,6 +31,7 @@ export function Style({ refreshStatus }) {
   const [s, setS] = useState(null);
   const [params, setParams] = useState(null);
   const [before, setBefore] = useState(false);
+  const [kind, setKind] = useState('poster');
   const [ts, setTs] = useState(Date.now());
   const [raw, setRaw] = useState(null);
   const [url, setUrl] = useState('');
@@ -80,14 +81,20 @@ export function Style({ refreshStatus }) {
             <button class=${!before ? 'on' : ''} onClick=${() => setBefore(false)}>${s.has_draft ? 'Draft' : 'Current'}</button>
             <button class=${before ? 'on' : ''} onClick=${() => setBefore(true)} disabled=${!s.has_draft}>Before</button>
           </div>
+          <div class="seg small">
+            <button class=${kind === 'poster' ? 'on' : ''} onClick=${() => setKind('poster')}>Posters</button>
+            <button class=${kind === 'thumb' ? 'on' : ''} onClick=${() => setKind('thumb')}>Thumbs</button>
+          </div>
           <button class="link" onClick=${async () => { const d = await api('/style/samples', { method: 'POST', body: {} }); setS({ ...s, samples: d.samples }); }}>Other titles</button>
         </div>
-        <div class="sample-grid">${s.samples.map(x => html`<figure key=${x.jf_id}>
-          <img loading="lazy" alt="" src=${`/studio/api/preview/${x.jf_id}?w=500${!before && s.has_draft ? '&style=draft' : ''}&_=${ts}`} onClick=${() => go(`title/${x.jf_id}`)} />
+        <div class="sample-grid ${kind}">${s.samples.map(x => html`<figure key=${x.jf_id}>
+          <img loading="lazy" alt="" onError=${e => { e.target.closest('figure').style.display = 'none'; }}
+            src=${kind === 'thumb' ? `/studio/api/preview-art/${x.jf_id}/thumb?landscape=true${!before && s.has_draft ? '&style=draft' : ''}&_=${ts}`
+              : `/studio/api/preview/${x.jf_id}?w=500${!before && s.has_draft ? '&style=draft' : ''}&_=${ts}`} onClick=${() => go(`title/${x.jf_id}`)} />
           <figcaption>${x.name}</figcaption></figure>`)}</div>
       </section>
       <section>
-        <${StyleControls} values=${params} inherited=${s.defaults} from="default" onSet=${set} groups=${LIBRARY_GROUPS} />
+        <${StyleControls} values=${params} inherited=${s.defaults} from="default" onSet=${set} groups=${kind === 'thumb' ? THUMB_GROUPS : LIBRARY_GROUPS} />
         <div class="row" style="margin-bottom:12px"><button onClick=${() => go('notch')}>Notch labels →</button></div>
         <details class="labels">
           <summary>Advanced</summary>

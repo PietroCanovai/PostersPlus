@@ -24,7 +24,31 @@ export const GROUPS = [
   ]],
 ];
 
-const fmt = (c, v) => (c.pct ? `${Math.round(+v * 100)}%` : v);
+const CORNERS = [['top_left', 'Top left'], ['top_right', 'Top right'], ['bottom_left', 'Bottom left'], ['bottom_right', 'Bottom right']];
+// The Thumb (landscape) render's own settings: posters ignore them.
+export const THUMB_GROUPS = [
+  ['Thumb', [
+    { k: 'landscape_art', t: 'select', label: 'Art', options: [['textless', 'No text + logo'], ['original', 'Its own title']] },
+    { k: 'landscape_logo_pos', t: 'select', label: 'Logo', options: [['left', 'Bottom left'], ['center', 'Bottom centre'], ['right', 'Bottom right'],
+      ['top_left', 'Top left'], ['top_center', 'Top centre'], ['top_right', 'Top right']] },
+    { k: 'landscape_vignette_poster_color_bottom', t: 'bool', label: 'Tinted band' },
+    { k: 'landscape_vignette_top', t: 'bool', label: 'Top band' },
+  ]],
+  ['Info', [
+    { k: 'landscape_info_pos', t: 'select', label: 'Line', options: [['auto', 'By the logo'], ...CORNERS] },
+    { k: 'landscape_info_scale', t: 'range', label: 'Size', min: 0.6, max: 1.6, step: 0.05, x: true },
+    { k: 'landscape_hide_genre', t: 'bool', label: 'Genre', inv: true },
+    { k: 'landscape_hide_year', t: 'bool', label: 'Year', inv: true },
+    { k: 'landscape_hide_rating', t: 'bool', label: 'Score', inv: true },
+    { k: 'landscape_score_out_of_10', t: 'bool', label: 'Score /10' },
+  ]],
+  ['Badge', [
+    { k: 'landscape_badge_pos', t: 'select', label: 'Position', options: [...CORNERS, ['logo', 'On the logo']] },
+    { k: 'landscape_badge_scale', t: 'range', label: 'Size', min: 0.6, max: 1.6, step: 0.05, x: true },
+  ]],
+];
+
+const fmt = (c, v) => (c.pct ? `${Math.round(+v * 100)}%` : c.x ? `${(+v).toFixed(2)}×` : v);
 
 /**
  * values:   this level's own settings {param: value}
@@ -48,7 +72,9 @@ export function StyleControls({ values, inherited, from, onSet, pickColor, group
         input = html`<select value=${v} onChange=${e => onSet(c.k, e.target.value)}>
           ${c.options.map(([o, l]) => html`<option value=${o}>${l}</option>`)}</select>`;
       } else if (c.t === 'bool') {
-        input = html`<input type="checkbox" class="toggle" checked=${v !== 'false'} onChange=${e => onSet(c.k, e.target.checked ? 'true' : 'false')} />`;
+        const on = c.inv ? v !== 'true' : v !== 'false' && v !== '';
+        input = html`<input type="checkbox" class="toggle" checked=${on}
+          onChange=${e => onSet(c.k, (e.target.checked !== !!c.inv) ? 'true' : 'false')} />`;
       } else if (c.t === 'text') {
         input = html`<input type="text" maxlength="40" value=${own ? values[c.k] : ''} placeholder=${inherited[c.k] || c.placeholder}
           onInput=${e => onSet(c.k, e.target.value.trim() ? e.target.value : null)} />`;

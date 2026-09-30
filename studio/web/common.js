@@ -53,8 +53,10 @@ export const nav = { ids: [], label: '' };
 const isStage = p => /^https:\/\/([^/]+\.)?stagemedia\.me\//i.test(p);
 const stageThumb = (p, w) => `/studio/api/stage-thumb?w=${w}&url=${encodeURIComponent(p)}`;
 
+const frameUrl = (p, h) => { const [, item, n] = p.split(':'); return `/studio/api/thumb/${item}?type=Chapter/${n}&h=${h}`; };
 export function fullImageUrl(path) {
   if (!path) return '';
+  if (path.startsWith('jf-chapter:')) return frameUrl(path, 900);
   if (path.startsWith('custom:')) return '/custom-art/' + path.slice(7);
   if (isStage(path)) return stageThumb(path, 800);
   if (/^https?:/.test(path)) return path;
@@ -62,6 +64,7 @@ export function fullImageUrl(path) {
 }
 export function thumbUrl(path, kind = 'posters') {
   if (!path) return '';
+  if (path.startsWith('jf-chapter:')) return frameUrl(path, 300);
   if (path.startsWith('custom:')) return '/custom-art/' + path.slice(7);
   if (isStage(path)) return stageThumb(path, 342);
   if (/^https?:/.test(path)) {

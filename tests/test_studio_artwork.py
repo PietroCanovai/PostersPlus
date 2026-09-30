@@ -46,6 +46,49 @@ class PickingTests(unittest.TestCase):
         self.assertNotIn("bogus", out["backdrop"])
         self.assertEqual(out["thumb"]["source"], "landscape")
 
+    def test_frames_are_art_like_any_other(self):
+        frame = "jf-chapter:" + "a" * 32 + ":3"
+        self.assertTrue(artwork.is_frame(frame))
+        self.assertFalse(artwork.is_frame("jf-chapter:../x:1"))
+        stored = []
+        orig_fetch = artwork.fetch
+
+        async def fetch(path):
+            return b"frame-bytes"
+        import sys
+        import types
+        fake = types.SimpleNamespace(
+            store_custom_image=lambda data, kind: stored.append((data, kind)) or "custom:landscape/f.jpg",
+            custom_art_bytes=lambda p: b"x" if stored else None)
+        real = sys.modules.get("art_overrides")
+        sys.modules["art_overrides"] = fake
+        artwork.fetch = fetch
+        try:
+            p = asyncio.run(artwork.realize({"art_poster": frame, "art_crop": "0.5,0.5,1"}))
+            self.assertEqual(p["art_poster"], "custom:landscape/f.jpg")
+            asyncio.run(artwork.realize({"art_poster": frame}))
+            self.assertEqual(len(stored), 1)                              # copied once, then reused
+            self.assertEqual(asyncio.run(artwork.realize({"art_poster": "/t.jpg"}))["art_poster"], "/t.jpg")
+            from studio import uploads
+            self.assertIn("custom:landscape/f.jpg", uploads.studio_custom_paths())   # safe from clean-up
+            self.assertEqual(db.query("SELECT * FROM uploads"), [])                  # not in your images
+        finally:
+            artwork.fetch = orig_fetch
+            if real is None:
+                sys.modules.pop("art_overrides", None)
+            else:
+                sys.modules["art_overrides"] = real
+
+    def test_posters_never_carry_thumb_settings(self):
+        row = {"tmdb_id": "1", "jf_type": "Movie"}
+        url = engine.poster_url(row, "landscape_logo_pos=right&bottom_gradient=low", resolution=500, with_quality=False,
+                                extra={"landscape_art": "original"})
+        self.assertNotIn("landscape_", url)
+        self.assertIn("bottom_gradient=low", url)
+        url = engine.poster_url(row, "landscape_logo_pos=right", resolution=500, with_quality=False,
+                                extra={"shape": "landscape"})
+        self.assertIn("landscape_logo_pos=right", url)
+
     def test_choices(self):
         k = "tmdb:movie:1"
         self.assertEqual(artwork.choice(k, "logo")["mode"], "auto")

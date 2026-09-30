@@ -43,11 +43,13 @@ A **look** is a poster plus its logo, frame and style. Under the strip:
 - **Logo**: automatic, the title as text, any candidate or your own PNGs. **All** puts a logo on every look.
 - **Style**: *This poster* or *Whole title*: logo size and position, fades, notch, colours (**⌖** picks a colour from the preview). Each control shows the value it inherits until you change it; ↺ goes back. *Notch labels for this title* switches individual labels off.
 
-**Frames** are stills: TMDB's episode stills for shows, and the chapter images Jellyfin extracted from your files. **Add to backdrops** makes one usable like any backdrop. For films, FilmGrab and Movie-Screencaps (linked in the tab) have curated stills: copy an image link into the link box.
+**Frames** are stills: TMDB's episode stills for shows, and the chapter images Jellyfin extracted from your files. They work like any other image: frame, Pin, ↻, or pin as the Backdrop or Thumb. For films, FilmGrab and Movie-Screencaps (linked in the tab) have curated stills: copy an image link into the link box.
+
+Backdrops are listed with the ones meeting your Settings rule (e.g. at least 1920×1080, 16:9) first, then those of unknown size (yours, frames), then the rest (*Below rule*).
 
 ### Backdrop, Logo, Thumb
 
-*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
+*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render) has its own style right in the Thumb tab for the title, and on the Style page (**Thumbs**) for the library: art, logo position, bands, the info line and badge. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
 
 Titles Jellyfin couldn't match show a **Which title is this?** panel; the match is kept in Studio only.
 

@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS jf_art (
     updated_at REAL NOT NULL,
     PRIMARY KEY (title_key, kind)
 );
+CREATE TABLE IF NOT EXISTS frame_cache (
+    src      TEXT PRIMARY KEY,   -- jf-chapter:<item>:<n>
+    custom   TEXT NOT NULL,      -- its hidden custom: copy, what the renderer reads
+    added_at REAL
+);
 CREATE TABLE IF NOT EXISTS item_images (
     jf_id       TEXT NOT NULL,
     kind        TEXT NOT NULL,

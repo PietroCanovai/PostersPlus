@@ -88,6 +88,9 @@ async def title_notch(jf_id: str):
         from . import seasons
         params = await seasons.params_for(row, params)
     import config as _cfg
+
+    from . import artwork
+    params = await artwork.realize(params)
     style = prefs.get("style_applied")
     url = engine.poster_url(row, style, resolution=500, with_quality=False, access_key=_cfg.ACCESS_KEY or "",
                             extra={**params, "debug": "1"})

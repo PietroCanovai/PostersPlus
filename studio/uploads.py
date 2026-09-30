@@ -93,6 +93,7 @@ def studio_custom_paths() -> set[str]:
     """Every custom image Studio uses (for art_overrides' clean-up, which
     otherwise only knows the Artwork tab's own choices)."""
     paths = {r["path"] for r in db.query("SELECT path FROM uploads WHERE path LIKE 'custom:%'")}
+    paths |= {r["custom"] for r in db.query("SELECT custom FROM frame_cache")}
     for r in db.query("SELECT poster, logo FROM looks"):
         for p in (r["poster"], r["logo"]):
             if p and p.startswith("custom:"):

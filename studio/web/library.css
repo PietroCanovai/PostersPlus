@@ -141,6 +141,8 @@ details.labels summary { cursor: pointer; font-weight: 580; min-height: 32px; di
 .sample-grid figure { margin: 0; }
 .sample-grid img { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; background: var(--surface-2);
   border: 1px solid var(--border); cursor: pointer; display: block; }
+.sample-grid.thumb { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sample-grid.thumb img { aspect-ratio: 16/9; }
 .sample-grid figcaption { font-size: 12.5px; color: var(--text-2); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sash-list { margin-top: 8px; max-height: 420px; overflow: auto; }
 .sash-list.tall { max-height: 640px; }

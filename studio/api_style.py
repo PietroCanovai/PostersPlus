@@ -55,10 +55,22 @@ CONTROLLED = ("logo_max_w_ratio", "logo_max_h_ratio", "logo_bottom_ratio", "logo
               "logo_color", "logo_color_mode", "fade_color", "tint_color", "notch_text_color", "notch_label")
 
 
+# The Thumb's own controls (landscape renders only; portraits never get them).
+THUMB_CONTROLLED = ("landscape_art", "landscape_logo_pos", "landscape_info_pos", "landscape_info_scale",
+                    "landscape_badge_pos", "landscape_badge_scale", "landscape_hide_genre", "landscape_hide_year",
+                    "landscape_hide_rating", "landscape_score_out_of_10", "landscape_vignette_poster_color_bottom",
+                    "landscape_vignette_top")
+
+
 def _defaults() -> dict:
     import main
     cfg = main.build_request_config({})
     out = {}
+    lcfg = main.build_request_config({"shape": "landscape"})
+    for k in THUMB_CONTROLLED:
+        name = k[len("landscape_"):] if k[len("landscape_"):] in main._LANDSCAPE_SPLIT_PARAMS else k
+        v = getattr(lcfg, name, None)
+        out[k] = ("true" if v else "false") if isinstance(v, bool) else ("" if v is None else str(v))
     for k in CONTROLLED:
         v = getattr(cfg, k, None)
         if isinstance(v, tuple):   # a parsed colour

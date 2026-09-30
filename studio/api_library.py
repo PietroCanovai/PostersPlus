@@ -47,6 +47,10 @@ def _siblings(key: str) -> list[dict]:
 
 def _validate_path(path: str) -> None:
     import art_overrides
+
+    from . import artwork
+    if artwork.is_frame(path):
+        return
     art_overrides.provider_of(path)
 
 
@@ -58,7 +62,8 @@ def _validator(key: str):
 
     def check(path: str) -> None:
         from . import stage
-        if path.startswith("custom:") or stage.valid_poster(path):
+        from . import artwork
+        if path.startswith("custom:") or stage.valid_poster(path) or artwork.is_frame(path):
             return
         raise ValueError("Not an image link Studio can use")
     return check
@@ -395,6 +400,12 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
     draft = db.get_setting("style_draft") if style == "draft" else None
     style = draft or prefs.get("style_applied")
     import config as _cfg
+    if not engine.is_stage(row):
+        from . import artwork
+        try:
+            params = await artwork.realize(params)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Couldn't get that frame: {exc}")
     url = engine.poster_url(row, style, resolution=w if w in PREVIEW_WIDTHS else 500,
                             with_quality=engine._style_uses_quality(style), access_key=_cfg.ACCESS_KEY or "",
                             extra=params)
@@ -445,7 +456,8 @@ async def set_art(jf_id: str, kind: str, request: Request):
 
 
 @router.get("/preview-art/{jf_id}/{kind}")
-async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str = "", crop: str = ""):
+async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str = "", crop: str = "",
+                      style: str = "applied", landscape: bool = False):
     """What Studio would send as this item's Backdrop / Logo / Thumb (the saved
     choice, or an unsaved one given as mode/path/crop)."""
     from . import artwork
@@ -454,7 +466,8 @@ async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str 
     row = _item(jf_id)
     draft = {"mode": mode, "path": path, "crop": crop} if mode else None
     try:
-        res = await artwork.resolve(row, kind, draft=draft)
+        style_str = (db.get_setting("style_draft") or None) if style == "draft" else None
+        res = await artwork.resolve(row, kind, draft=draft, style_str=style_str, landscape=landscape)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
     if res is None:

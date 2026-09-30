@@ -207,6 +207,10 @@ def poster_url(row: dict, style: str, *, resolution: int, with_quality: bool, ac
     """*extra* is the title's own parameters (rules.resolve); they win over the style."""
     params = dict(parse_qsl(style, keep_blank_values=True))
     params.update(extra or {})
+    if params.get("shape") != "landscape":
+        # Thumb (landscape) settings live in the same styles; a poster ignores
+        # them, and leaving them out keeps its render cache key unchanged.
+        params = {k: v for k, v in params.items() if not k.startswith("landscape_")}
     tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
     if tmdb_id:
         params["tmdb_id"] = tmdb_id
@@ -381,6 +385,8 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
                 db.log_run_item(run_id, jf_id, name, "skipped", str(exc))
                 return "skipped"
         else:
+            from . import artwork
+            params = await artwork.realize(params)
             image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
                                                          access_key=access_key, extra=params))
         image_hash = hashlib.sha256(image).hexdigest()

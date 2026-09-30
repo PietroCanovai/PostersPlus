@@ -14,9 +14,11 @@ A kind is only managed once switched on in Settings.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
+import re
 import time
 from urllib.parse import parse_qsl, urlencode
 
@@ -59,6 +61,35 @@ def set_library_rules(new: dict) -> dict:
                 cur[kind][k] = v
     db.set_setting("jf_art", cur)
     return cur
+
+
+FRAME_RE = re.compile(r"^jf-chapter:[0-9a-f]{32}:\d{1,3}$")
+
+
+def is_frame(path) -> bool:
+    return isinstance(path, str) and bool(FRAME_RE.match(path))
+
+
+async def realize_path(path: str) -> str:
+    """A frame as a path the renderer can read: a hidden custom: copy, made
+    the first time it's used (not in the title's own images)."""
+    if not is_frame(path):
+        return path
+    import art_overrides
+    row = db.query_one("SELECT custom FROM frame_cache WHERE src = ?", (path,))
+    if row and art_overrides.custom_art_bytes(row["custom"]) is not None:
+        return row["custom"]
+    data = await fetch(path)
+    custom = await asyncio.to_thread(art_overrides.store_custom_image, data, kind="landscape")
+    db.execute("INSERT OR REPLACE INTO frame_cache (src, custom, added_at) VALUES (?, ?, ?)", (path, custom, time.time()))
+    return custom
+
+
+async def realize(params: dict) -> dict:
+    """Render parameters with any frame swapped for its renderable copy."""
+    if is_frame(params.get("art_poster")):
+        return {**params, "art_poster": await realize_path(params["art_poster"])}
+    return params
 
 
 # ── Per-title choices ───────────────────────────────────────────────────────
@@ -176,9 +207,12 @@ def _frame(data: bytes, crop: str, aspect: float, max_w: int = 3840) -> tuple[by
     return out.getvalue(), "image/jpeg"
 
 
-async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None = None) -> tuple[bytes, str] | None:
+async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None = None,
+                  style_str: str | None = None, landscape: bool = False) -> tuple[bytes, str] | None:
     """The image Studio would send for this item and kind, or None to leave
-    Jellyfin's.  *draft* ({mode, path, crop}) previews an unsaved choice."""
+    Jellyfin's.  *draft* ({mode, path, crop}) previews an unsaved choice;
+    *style_str* a library style other than the applied one (the Style page's
+    draft) and *landscape* the landscape thumb whatever the Thumb source."""
     from . import engine
     key = rules.title_key(row)
     c = draft or choice(key, kind)
@@ -191,7 +225,8 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     if row.get("jf_type") == "Season":
         return None
     import config as _cfg
-    style = dict(parse_qsl(prefs.get("style_applied"), keep_blank_values=True))
+    style_str = style_str if style_str is not None else prefs.get("style_applied")
+    style = dict(parse_qsl(style_str, keep_blank_values=True))
     media = "tv" if row["jf_type"] == "Series" else "movie"
     tmdb_id = row.get("manual_tmdb_id") or row["tmdb_id"]
     if kind == "logo":
@@ -206,14 +241,15 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         if r.status_code != 200:
             return None
         return r.content, r.headers.get("content-type", "image/png").split(";")[0]
-    if kind == "thumb" and library_rules()["thumb"]["source"] == "landscape":
+    if kind == "thumb" and (landscape or library_rules()["thumb"]["source"] == "landscape"):
         res = rules.resolve(key)
         extra = {k: v for k, v in res.params.items() if not k.startswith("art_")}
         extra["shape"] = "landscape"
         # The landscape layout has its own rating switch: follow a style that hides ratings.
-        if style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style:
+        if (style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style
+                and "landscape_hide_rating" not in extra):
             extra["landscape_hide_rating"] = "true"
-        url = engine.poster_url(row, prefs.get("style_applied"), resolution=500, with_quality=False,
+        url = engine.poster_url(row, style_str, resolution=500, with_quality=False,
                                 access_key=_cfg.ACCESS_KEY or "", extra=extra)
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
             return await engine.render(http, url)

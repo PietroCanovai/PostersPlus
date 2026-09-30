@@ -109,7 +109,10 @@ async def posters(show_id: str, *, force: bool = False) -> list[str]:
 
 
 async def image_bytes(url: str) -> bytes:
-    """A StageMedia (or other public) image, cached on disk."""
+    """A StageMedia (or other public) image, cached on disk; also a frame."""
+    from . import artwork
+    if artwork.is_frame(url):
+        return await artwork.fetch(url)
     if url.startswith("custom:"):
         import art_overrides
         data = await asyncio.to_thread(art_overrides.custom_art_bytes, url)

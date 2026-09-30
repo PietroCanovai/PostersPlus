@@ -2,7 +2,7 @@ import { html, useState, useEffect, useRef, useCallback } from './vendor/preact-
 import { api, toast, go, nav, thumbUrl, fullImageUrl, ago } from './common.js';
 import { chipsFor } from './library.js';
 import { sashName } from './notch.js';
-import { StyleControls, GROUPS } from './controls.js';
+import { StyleControls, GROUPS, THUMB_GROUPS } from './controls.js';
 
 const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours', stagemedia: 'StageMedia', frame: 'Frame' };
 // Curated sites without an API: opened in a new tab, their images added by link.
@@ -18,6 +18,10 @@ const lookStyle = l => {
   return { ...out, ...(l.style || {}) };
 };
 const ownTitle = (c, kind) => kind === 'posters' && (c.provider === 'custom' ? !!c.own_title : !!c.language);
+const fitRank = (c, r) => (!c.width ? 1 : c.width >= r.min_w && c.height >= r.min_h
+  && (!r.wide_only || Math.abs(c.width / c.height - 16 / 9) < 0.02) ? 0 : 2);
+const byFit = (list, r) => list.map((c, i) => [fitRank(c, r), i, c]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+const isFrame = c => c.provider === 'frame' || !!c.frame;
 const cropToObj = s => (s ? Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +s.split(',')[i]])) : null);
 const cropToStr = c => (c ? `${c.x},${c.y},${c.zoom}` : '');
 
@@ -303,16 +307,13 @@ export function Editor({ id, review }) {
   });
   const removeUpload = c => confirm('Delete this image?') && call(`/title/${id}/uploads?path=${encodeURIComponent(c.path)}`, { method: 'DELETE' });
   const setOwnTitle = (c, on) => call(`/title/${id}/uploads`, { method: 'PUT', body: { path: c.path, own_title: on } });
-  const importFrame = async f => {
-    const r = await call(`/title/${id}/frames/import`, { method: 'POST', body: { path: f.path, name: f.name } }, 'Frame added to backdrops');
-    if (r) setArt('backdrops');
-  };
 
   // ── Jellyfin's other images ──
   const setArtChoice = (k, body) => call(`/title/${id}/art/${k}`, { method: 'PUT', body });
   function frameArt(c, k) {
     setCrop({ src: fullImageUrl(c.path), aspect: 16 / 9, initial: null,
-      actions: [{ label: 'Pin', primary: true, run: v => setArtChoice(k, { mode: 'pinned', path: c.path, crop: cropToStr(v) }) }] });
+      actions: [{ label: 'Preview', run: v => setFocus({ art: c, crop: cropToStr(v) }) },
+        { label: 'Pin', primary: true, run: v => setArtChoice(k, { mode: 'pinned', path: c.path, crop: cropToStr(v) }) }] });
   }
 
   // ── Style ──
@@ -320,10 +321,11 @@ export function Editor({ id, review }) {
   const savedStyle = styleTarget === 'look' ? lookStyle(editLook) : t.title.style;
   const values = draft && draft.target === styleTarget && (styleTarget === 'title' || draft.look === editLook.look_id) ? draft.values : savedStyle;
   const inherited = styleTarget === 'look' ? { ...libEff, ...t.title.style } : libEff;
-  function setStyleKey(k, v) {
-    const next = { ...values };
+  const titleValues = draft && draft.target === 'title' ? draft.values : t.title.style;
+  function setStyleKey(k, v, target = styleTarget) {
+    const next = { ...(target === 'title' ? titleValues : values) };
     if (v === null || v === undefined) delete next[k]; else next[k] = String(v);
-    const d = { target: styleTarget, look: editLook && editLook.look_id, values: next };
+    const d = { target, look: editLook && editLook.look_id, values: next };
     setDraft(d);
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -396,7 +398,9 @@ export function Editor({ id, review }) {
   // ── Poster: Art ──
   const artTabs = [['textless', 'No text'], ['titled', 'With title'], ['backdrops', 'Backdrops'], ['frames', 'Frames'], ['yours', `Yours${mine('poster').length ? ` ${mine('poster').length}` : ''}`]];
   let list = [], listKind = 'posters';
-  if (art === 'backdrops') { list = [...mine('backdrop'), ...all.backdrops]; listKind = 'backdrops'; }
+  const rule = t.art.rules.backdrop;
+  if (art === 'backdrops') { list = byFit([...mine('backdrop'), ...all.backdrops], rule); listKind = 'backdrops'; }
+  else if (art === 'frames') { list = (frames || []).map(f => ({ ...f, frame: true })); listKind = 'backdrops'; }
   else if (art === 'yours') list = mine('poster');
   else if (art === 'titled') list = all.posters.filter(c => c.language);
   else if (art === 'textless') list = all.posters.filter(c => !c.language);
@@ -425,12 +429,7 @@ export function Editor({ id, review }) {
       ${(art === 'frames' ? FRAME_SITES : POSTER_SITES).map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
         href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
     </div>`}
-    ${art === 'frames'
-      ? (frames === null ? html`<div class="empty">Loading…</div>`
-        : frames.length ? html`<div class="cands backdrops">${frames.map(f => html`<${Card} key=${f.path} c=${f} kind="backdrops" badges=${[]} onFocus=${() => importFrame(f)}>
-            <button onClick=${() => importFrame(f)} disabled=${busy}>Add to backdrops</button></${Card}>`)}</div>`
-        : html`<div class="empty">No frames here. Jellyfin makes them when chapter image extraction is on for the library; the sites above have curated stills.</div>`)
-      : !cands ? html`<div class="empty">Loading…</div>`
+    ${(art === 'frames' ? frames === null : !cands) ? html`<div class="empty">Loading…</div>`
       : list.length ? html`<div class="cands ${listKind}">${list.map(c => {
           const isNever = never.poster.has(c.path), inRot = rotation.some(l => l.poster === c.path);
           return html`<${Card} key=${c.path} c=${c} kind=${listKind} focused=${isFocused(c)} badges=${posterBadges(c)}
@@ -441,10 +440,11 @@ export function Editor({ id, review }) {
             <button class=${inRot ? 'on' : ''} onClick=${() => toggleRotation(c, listKind)} disabled=${busy || isNever} title="Daily rotation">↻</button>
             ${c.provider === 'custom'
               ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`
-              : html`<button class=${isNever ? 'on-bad' : ''} onClick=${() => toggleNever('poster', c.path)} disabled=${busy} title=${isNever ? 'Allow again' : 'Never use'}>⊘</button>`}
+              : !isFrame(c) && html`<button class=${isNever ? 'on-bad' : ''} onClick=${() => toggleNever('poster', c.path)} disabled=${busy} title=${isNever ? 'Allow again' : 'Never use'}>⊘</button>`}
           </${Card}>`;
         })}</div>`
-      : html`<div class="empty">${art === 'yours' ? 'Upload, paste a link or drop images here.' : 'None.'}</div>`}`;
+      : html`<div class="empty">${art === 'yours' ? 'Upload, paste a link or drop images here.'
+        : art === 'frames' ? 'No frames. Jellyfin makes them when chapter image extraction is on for the library; the sites above have curated stills.' : 'None.'}</div>`}`;
 
   // ── Poster: Logo ──
   const logos = [...mine('logo'), ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
@@ -497,24 +497,27 @@ export function Editor({ id, review }) {
   // ── Other images ──
   function otherPane(k) {
     const ch = t.art[k];
-    const pool = k === 'logo' ? [...mine('logo'), ...all.logos]
-      : [...mine('backdrop'), ...all.backdrops, ...(frames || [])];
     const r = t.art.rules.backdrop;
-    const fits = c => k !== 'backdrop' || !c.width
-      || (c.width >= r.min_w && c.height >= r.min_h && (!r.wide_only || Math.abs(c.width / c.height - 16 / 9) < 0.02));
+    // Theatre has no backdrops of its own: StageMedia's art is offered too, framed to 16:9.
+    const stageArt = t.stage ? all.posters.map(c => ({ ...c, needsFrame: true })) : [];
+    const pool = k === 'logo' ? [...mine('logo'), ...all.logos]
+      : byFit([...mine('backdrop'), ...all.backdrops, ...(frames || []).map(f => ({ ...f, frame: true })), ...stageArt], r);
+    const thumbStyled = k === 'thumb' && ch.mode === 'auto' && !t.stage && t.art.rules.thumb.source === 'landscape';
     return html`
       <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
         options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
-      ${ch.mode === 'auto' && !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`}
+      ${ch.mode === 'auto' && (t.stage ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
+        : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
+      ${thumbStyled && lib && html`<${StyleControls} values=${titleValues} inherited=${libEff} from="library"
+        onSet=${(key, v) => setStyleKey(key, v, 'title')} groups=${THUMB_GROUPS} />`}
       <div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
         const b = [];
         if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
-        if (k === 'backdrop' && c.width && !fits(c)) b.push(['Too small', 'warn']);
-        const isFrame = c.path.startsWith('jf-chapter:');
+        if (k !== 'logo' && fitRank(c, r) === 2) b.push(['Below rule', 'warn']);
+        if (isFrame(c)) b.push(['Frame', '']);
         return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
-          onFocus=${() => setFocus({ art: c, crop: '' })} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
-          <button onClick=${() => setArtChoice(k, { mode: 'pinned', path: c.path })} disabled=${busy}>Pin</button>
-          ${isFrame && html`<button onClick=${() => importFrame(c)} disabled=${busy} title="Also add to your backdrops">+</button>`}
+          onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
+          <button onClick=${() => (c.needsFrame ? frameArt(c, k) : setArtChoice(k, { mode: 'pinned', path: c.path }))} disabled=${busy}>Pin</button>
         </${Card}>`;
       })}</div>`;
   }
@@ -558,7 +561,7 @@ export function Editor({ id, review }) {
       </aside>
 
       <section class="ed-main">
-        <${Seg} value=${slot} onChange=${v => { setSlot(v); setFocus(null); }} options=${t.stage ? [SLOTS[0]] : SLOTS} />
+        <${Seg} value=${slot} onChange=${v => { setSlot(v); setFocus(null); }} options=${SLOTS} />
 
         ${t.seasons.length > 0 && slot === 'poster' && html`<div class="strip">${t.seasons.map(s => html`<button class="strip-item" onClick=${() => go(`title/${s.jf_id}`)} title=${s.name}>
           <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.jf_image_tag || '')}`} alt="" />
