@@ -68,9 +68,10 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
   .nav { width: auto; height: auto; position: sticky; top: 0; z-index: 5; background: var(--bg);
          flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0;
          border-bottom: 1px solid var(--border); overflow-x: auto; }
-  .brand { padding: 0 10px 0 4px; font-size: 15px; white-space: nowrap; }
+  .brand { display: none; }
+  .nav { padding: 8px; gap: 2px; justify-content: space-between; }
   .nav .spacer, .nav .foot { display: none; }
-  .nav a { padding: 8px 12px; white-space: nowrap; }
+  .nav a { padding: 8px 10px; white-space: nowrap; font-size: 15px; }
   .main { padding: 20px 16px 48px; }
   h1 { font-size: 22px; }
 }

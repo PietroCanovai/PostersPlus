@@ -134,9 +134,10 @@ details.labels { background: var(--surface); border: 1px solid var(--border); bo
 details.labels summary { cursor: pointer; font-weight: 580; min-height: 32px; display: flex; align-items: center; }
 
 /* ── Style / Notch pages ─────────────────────────────────────────────── */
+.style-layout > * { min-width: 0; }
 .style-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
 .style-previews { position: sticky; top: 16px; }
-.sample-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.sample-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .sample-grid figure { margin: 0; }
 .sample-grid img { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; background: var(--surface-2);
   border: 1px solid var(--border); cursor: pointer; display: block; }
@@ -151,7 +152,11 @@ button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }
 .rule-row input[type=number] { width: 90px; min-height: 36px; font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 8px; }
 .rule-row select { min-height: 36px; }
-@media (max-width: 760px) { .rule-row { padding-left: 0; } }
+@media (max-width: 760px) {
+  .rule-row { padding-left: 0; }
+  .lib-row { flex-wrap: wrap; }
+  .lib-row select { width: 100%; }
+}
 
 /* ── Dialogs ─────────────────────────────────────────────────────────── */
 .veil { position: fixed; inset: 0; background: #000a; z-index: 40; display: grid; place-items: center; padding: 12px; }

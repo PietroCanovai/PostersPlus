@@ -129,7 +129,7 @@ export function Notch({ refreshStatus }) {
   }
   return html`
     <div class="page-head">
-      <div><h1>Notch</h1><p>The label at the top of a poster: the first label on this list that applies to the title. Each title can also switch labels off or set its own text in its editor.</p></div>
+      <div><h1>Notch</h1><p>A poster shows the first label here that applies. Titles can override it in their editor.</p></div>
       ${s.has_draft && html`<div class="row"><button onClick=${() => go('style')}>See the previews</button><button class="primary" onClick=${apply}>Apply to library</button></div>`}
     </div>
     ${s.has_draft && html`<div class="notice warn"><p><strong>Not live yet.</strong> Label changes are part of the style draft: Jellyfin gets them when you apply it.</p></div>`}

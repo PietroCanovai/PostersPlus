@@ -27,37 +27,33 @@ Copies of the same film in two libraries (a 4K and a 1080p, say) share one set o
 
 ## Editing a title
 
-The preview on the left is exactly what Jellyfin will get; **clicking any image previews it** without saving. Everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**.
+The preview on the left is what Jellyfin will get. **Clicking any image previews it** without saving; everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**. **Hands off** makes Studio leave the title alone; **Reset title** forgets every choice. ← → move to the previous or next title.
 
-Tabs for each Jellyfin image: **Poster** (composed with your style, below), **Backdrop**, **Logo** and **Thumb**. For the last three: *Automatic* (the rules in Settings → Jellyfin images), *Pinned* (any image, backdrops and thumbs framed with ⤢), or *Keep Jellyfin's*.
+One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 
-**Frames**: real frames from your files (the chapter images Jellyfin extracted) show under Poster → Art → *Frames* and in the Backdrop/Thumb tabs. Add one to your backdrops to frame it into a poster.
+### Poster
 
-**Style** (Poster → Style): *This poster* or *Whole title*. Each control shows the value it inherits (from the title, or the library's Style page) until you change it; ↺ goes back.
-
-**How the title picks its poster**
-
-- **Automatic**: PostersPlus's best textless poster, skipping anything you marked **Never**.
+- **Automatic**: PostersPlus's best textless poster, skipping anything marked Never.
 - **Pinned**: always the same *look*.
-- **Daily rotation**: a different look each night, shuffled, with no repeats until every look has had its day.
+- **Daily rotation**: a different look each night, shuffled, no repeats until every look has had its day. The strip shows the looks (*Today*, *Next*); click one to edit it.
 
-A **look** is a poster plus everything that goes with it: its own logo, colours, frame and layout. In a rotation, click a look in the strip to edit it.
+A **look** is a poster plus its logo, frame and style. Under the strip:
 
-**Posters** tab: every candidate from TMDB, Fanart and TVDB, split into *No text*, *With title* (used as they are, no logo on top), *Backdrops* (you frame a poster-shaped part) and *Yours*. On each: **Pin**, **↻ Rotate** (add to or remove from the rotation) and **Never**.
+- **Art**: *No text*, *With title* (used as they are, no logo on top), *Backdrops*, *Frames* and *Yours*. On each image: **Pin**, **↻** (in or out of the rotation), **⊘** Never, and **⤢** to frame it (posters and backdrops alike). Add your own with **Upload** (several at once), an image link, or by dropping files; they stay until you delete them (✕). Tick **Has title** on an uploaded poster that already shows the title.
+- **Logo**: automatic, the title as text, any candidate or your own PNGs. **All** puts a logo on every look.
+- **Style**: *This poster* or *Whole title*: logo size and position, fades, notch, colours (**⌖** picks a colour from the preview). Each control shows the value it inherits until you change it; ↺ goes back. *Notch labels for this title* switches individual labels off.
 
-**Your own images**: **Upload posters** / **Upload backdrops** (several files at once), paste a link (ThePosterDB download links work), or drop files on the upload row. Every image you add stays in the title's library (*Yours* for posters, at the front of *Backdrops* for backdrops, first in *Logos* for logos) until you delete it with ✕, and you use it like any other: Pin it, put it in the rotation, frame a backdrop. Tick **Has its title** on an uploaded poster that already shows the title, so Studio doesn't put a logo on it.
+**Frames** are stills: TMDB's episode stills for shows, and the chapter images Jellyfin extracted from your files. **Add to backdrops** makes one usable like any backdrop. For films, FilmGrab and Movie-Screencaps (linked in the tab) have curated stills: copy an image link into the link box.
 
-**Logos** tab: the logo for the current look: automatic, the title as text, any candidate, or your own PNGs (**Upload logos**, links or drag and drop). **Never** keeps a logo out of the automatic pick.
+### Backdrop, Logo, Thumb
 
-**Colours & layout** tab: notch colour, fade colour, notch text colour and logo colour (solid, or keeping the logo's shading). **Pick** takes a colour straight from the preview. Logo size and position, the bottom fade, the notch on or off, and your own notch text.
+*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
 
-**Hands off** makes Studio leave the title's poster in Jellyfin alone. **Reset this title** forgets every choice.
-
-Titles Jellyfin couldn't match show a **Find this title on TMDB** panel; the match is kept in Studio only.
+Titles Jellyfin couldn't match show a **Which title is this?** panel; the match is kept in Studio only.
 
 ## Poster style
 
-The look every poster gets (**Style** in the menu): logo size and language, fades, the notch (shape, look, size, which labels it may show and in what order), rating and quality badges, and the background for titles with no art. **Advanced** takes raw settings, or a poster URL from the PostersPlus configurator.
+The look every poster gets (**Style** in the menu), with the same controls as a title's Style tab plus the library-wide ones: logo language and baseline, the notch's shape and size, rating and quality badges, and the background for titles with no art. Which labels the notch shows is on the **Notch** page. **Advanced** takes raw settings, or a poster URL from the PostersPlus configurator.
 
 Changes are a **draft**: they show in the previews on six of your titles (*Other titles* picks new ones; *Before* compares). Jellyfin keeps the current style until you press **Apply to library**, which updates every poster; **Discard changes** throws the draft away and **Undo last apply** brings the previous style back as a draft.
 
@@ -69,13 +65,13 @@ The label at the top of a poster (**Notch** in the menu). A poster shows the fir
 
 - **Labels**: every label with what triggers it and where the data comes from (MDBList for Oscar/Emmy awards, Metacritic, cult and true-story; PostersPlus's own data for Golden Globes and festival prizes; TMDB for trending, seasons and release status; your lists for notable studios, directors and cast). Switch labels on or off and move them up. This is part of the style, so it's a draft until you **Apply** it.
 - **Notable lists**: who counts as a notable director, studio or cast member, and what the notch prints for them (e.g. "Ghibli" for Studio Ghibli). Search TMDB to add someone; names must match TMDB's. **Save** updates posters in the next run; **Back to the built-in list** undoes your list.
-- **Per title**, in the editor's *Colours & layout* tab: what the notch says now, every label the title qualifies for, a switch to turn any of them off for that title only, and **Notch text** to write your own.
+- **Per title**, in the editor's *Style* tab: **Notch text** to write your own, and *Notch labels for this title*: what it says now, every label the title qualifies for, and a switch to turn any of them off for that title only.
 
 ## Theatre (StageMedia)
 
 Recordings imported by the Encora plugin have no TMDB entry, only a StageMedia show id. Add your **StageMedia API key** in Settings (and switch the Theatre library on), and Studio makes their posters from StageMedia's artwork, or your uploads. Every recording of the same show shares one set of rules.
 
-Two designs, chosen per show under *Colours & layout → Design*:
+Two designs, chosen per show under *Style → Theatre → Design*:
 
 - **Posters+ style**: the global style over the art, with your logo or the show's name.
 - **Playbill**: the yellow PLAYBILL header with the venue (taken from the recording's name, editable), the art below.
@@ -94,7 +90,7 @@ The nightly run happens at the time set in Settings (04:00 by default). If the s
 
 ## Settings
 
-Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), the StageMedia key, and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
+Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops with a minimum size, 16:9 and textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
 
 ## Updating
 

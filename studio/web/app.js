@@ -142,7 +142,7 @@ function Activity({ status, refresh }) {
       <div><h1>Activity</h1>
         <p>${status.schedule_enabled
           ? html`Next nightly run: <strong>${next.toLocaleString(undefined, { weekday: 'long', hour: '2-digit', minute: '2-digit' })}</strong>`
-          : 'The nightly run is off.'} Library last read ${ago(status.last_scan_at)}.</p></div>
+          : 'The nightly run is off.'} · Library read ${ago(status.last_scan_at)}</p></div>
       <div class="row">
         <button onClick=${() => start(true)} disabled=${busy || p.running || !status.configured}
           title="Renders everything and shows what would change, without touching Jellyfin">Preview run</button>
@@ -205,7 +205,7 @@ function JellyfinSettings({ s, reload }) {
     catch (ex) { toast(ex.message, true); }
     setBusy(false);
   }
-  return html`<${Section} title="Jellyfin" sub="Where your library lives. Studio talks to it from the server; your browser never sees the key.">
+  return html`<${Section} title="Jellyfin" sub="The key stays on the server.">
     <div class="field"><label for="jf-url">Server address</label>
       <input id="jf-url" type="url" placeholder="http://192.168.1.55:8096" value=${url} onInput=${e => setUrl(e.target.value)} /></div>
     <div class="field"><label for="jf-key">API key</label>
@@ -230,13 +230,13 @@ function LibrarySettings() {
     try { await api('/libraries', { method: 'PUT', body: { libraries: body } }); toast('Libraries saved. The next run reads them again.'); }
     catch (ex) { toast(ex.message, true); }
   }
-  return html`<${Section} title="Libraries" sub="Which Jellyfin libraries Studio manages, and what to do with titles no database knows (like YouTube concert videos).">
+  return html`<${Section} title="Libraries" sub="What Studio manages, and what happens to titles no database knows.">
     ${err ? html`<p class="error">${err}</p>` : !libs ? html`<div class="empty">Loading…</div>` : html`
-      <div class="list" style="margin-bottom:14px">${libs.map(l => html`<div class="list-row">
+      <div class="list" style="margin-bottom:14px">${libs.map(l => html`<div class="list-row lib-row">
         <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked=${l.enabled} onChange=${e => update(l.id, { enabled: e.target.checked })} />
           <span><span class="t">${l.name}</span><span class="d" style="display:block">${l.type}${l.items ? ` · ${n(l.items)} titles` : ''}</span></span></label>
         <select disabled=${!l.enabled} value=${l.unmatched} onChange=${e => update(l.id, { unmatched: e.target.value })} aria-label="Unmatched titles in ${l.name}">
-          <option value="flag">Unmatched: show under Needs attention</option>
+          <option value="flag">Unmatched: needs attention</option>
           <option value="leave">Unmatched: leave alone</option>
         </select></div>`)}</div>
       <button class="primary" onClick=${save}>Save libraries</button>`}
@@ -285,7 +285,7 @@ function StageSettings({ s, reload }) {
       toast(value ? 'StageMedia key saved. Run a preview from Activity to pick up your theatre titles.' : 'StageMedia key removed');
     } catch (ex) { toast(ex.message, true); }
   }
-  return html`<${Section} title="Theatre (StageMedia)" sub="Recordings the Encora plugin imports have no TMDB entry. With a StageMedia key, Studio makes their posters from StageMedia's artwork.">
+  return html`<${Section} title="Theatre (StageMedia)" sub="Posters for Encora recordings, from StageMedia's art.">
     <div class="field"><label for="sm-key">StageMedia API key</label>
       <input id="sm-key" type="password" autocomplete="off" value=${key} onInput=${e => setKey(e.target.value)}
         placeholder=${s.stagemedia_key_set ? `Saved (${s.stagemedia_key_hint}) — type to replace` : 'The key your Encora plugin uses'} />
@@ -303,7 +303,7 @@ function ArtRules({ s, reload }) {
   }
   const sw = (kind, label, sub) => html`<label class="switch"><input type="checkbox" checked=${r[kind].enabled} onChange=${e => put(kind, { enabled: e.target.checked })} />
     <span><span class="t">${label}</span>${sub && html`<span class="d" style="display:block">${sub}</span>`}</span></label>`;
-  return html`<${Section} title="Jellyfin images" sub="Automatic picks besides the poster. Off: Jellyfin keeps its own unless you pin one in a title.">
+  return html`<${Section} title="Jellyfin images" sub="Off: Jellyfin keeps its own, unless a title pins one.">
     ${sw('backdrop', 'Backdrops')}
     ${r.backdrop.enabled && html`<div class="rule-row">
       <label>At least <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_w} onChange=${e => put('backdrop', { min_w: +e.target.value })} />
@@ -329,18 +329,12 @@ function BackupSettings() {
       toast(`Restored ${r.titles} titles and ${r.looks} looks`);
     } catch (ex) { toast(ex.message, true); }
   }
-  return html`<${Section} title="Backup" sub="Everything you decided in Studio: pins, rotations, Never lists, colours and the style. API keys are never included.">
+  return html`<${Section} title="Backup" sub="Every rule and the style. No API keys.">
     <div class="row">
       <a href="/studio/api/backup" download><button>Download a backup</button></a>
       <label class="btn">Restore from a file<input type="file" accept="application/json,.json" hidden onChange=${e => restore(e.target.files[0])} /></label>
     </div>
     <p class="hint-sm">Studio also saves one automatically after every nightly run and keeps the last 14${list && list.files.length ? ` (${list.files.length} so far, in the cache volume's studio-backups folder)` : ''}.</p>
-  <//>`;
-}
-
-function StyleSettings() {
-  return html`<${Section} title="Poster style" sub="The look every poster gets, with live previews on your own titles.">
-    <button onClick=${() => { location.hash = 'style'; }}>Open the style editor</button>
   <//>`;
 }
 
@@ -362,17 +356,16 @@ function Settings({ onLogout }) {
   useEffect(() => { reload(); }, []);
   if (!s) return html`<div class="empty">Loading…</div>`;
   return html`
-    <div class="page-head"><div><h1>Settings</h1><p>Changes apply straight away; no restart needed.</p></div>
-      <button onClick=${() => { location.hash = 'activity'; }}>Go to Activity</button></div>
+    <div class="page-head"><div><h1>Settings</h1><p>Changes apply straight away.</p></div>
+      <button onClick=${() => { location.hash = 'activity'; }}>Activity</button></div>
     <${JellyfinSettings} s=${s} reload=${reload} />
     ${s.jellyfin_url && s.jellyfin_api_key_set && html`<${LibrarySettings} />`}
     <${SyncSettings} s=${s} reload=${reload} />
     <${ArtRules} s=${s} reload=${reload} />
     <${StageSettings} s=${s} reload=${reload} />
-    <${StyleSettings} />
     <${BackupSettings} />
     <${VersionCard} />
-    <${Section} title="Advanced" sub="The original PostersPlus pages, for everything Studio doesn't cover yet.">
+    <${Section} title="Advanced" >
       <div class="row"><a href="/admin" target="_blank"><button>Admin dashboard</button></a>
         <a href="/" target="_blank"><button>Configurator</button></a>
         <button class="danger" onClick=${onLogout}>Log out</button></div>

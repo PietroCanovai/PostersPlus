@@ -1,6 +1,6 @@
 # PostersPlus Studio — plan
 
-Status (2026-09-30): **Phases 0–5 done and live** (theatre needs the user's StageMedia key; season posters are behind a Settings switch). **Phase 6**: bulk actions, backups and the user guide (STUDIO.md) done; remote access through the Cloudflare tunnel waits for the user (see section 12). Execute phase by phase; each phase ends with something testable on the real server.
+Status (2026-10-01): **Phases 0–8 done and live**, upstream merged to `814f5f9`. Left for the user: the Cloudflare Access application and `sudo systemctl restart cloudflared` (section 12); switching on Jellyfin images / season posters in Settings when wanted. Execute phase by phase; each phase ends with something testable on the real server.
 
 Deviations from the plan as written:
 - Staging ran in the main container with uploads switched off (Studio's default) rather than a second `postersplus-dev` container: read-only toward Jellyfin, same effect, no duplicate cache.
