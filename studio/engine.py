@@ -77,7 +77,7 @@ async def scan(client: Client) -> dict:
             continue
         counts["libraries"] += 1
         for item in await client.library_items(lib):
-            if not item.id or item.type not in ("Movie", "Series", "Video"):
+            if not item.id or item.type not in ("Movie", "Series", "Video", "MusicVideo"):
                 continue
             seen.add(item.id)
             counts["items"] += 1
@@ -100,7 +100,7 @@ def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
         "name": item.name, "year": item.year, "tmdb_id": item.tmdb_id, "imdb_id": item.imdb_id,
         "tvdb_id": item.tvdb_id, "stage_show_id": item.stage_show_id, "jf_image_tag": item.image_tag,
     })
-    if item.type == "Movie" or item.type == "Video":
+    if item.type != "Series":
         row["quality"] = ",".join(quality_tokens(item.raw))
     row["status"] = _item_status(row, policy)
     if old is None:

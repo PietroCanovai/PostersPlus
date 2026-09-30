@@ -113,8 +113,9 @@ class Client:
                 return
 
     async def library_items(self, library: Library) -> list[Item]:
-        """The top-level titles of a library: shows for TV, films/videos otherwise."""
-        types = "Series" if library.collection_type == "tvshows" else "Movie,Video"
+        """The top-level titles of a library: shows for TV, music videos for a
+        music-video library (how Jellyfin files concerts), films/videos otherwise."""
+        types = {"tvshows": "Series", "musicvideos": "MusicVideo"}.get(library.collection_type, "Movie,Video")
         return [item_from_json(d) async for d in self._paged(
             "/Items", ParentId=library.id, Recursive="true", IncludeItemTypes=types, Fields=ITEM_FIELDS)]
 

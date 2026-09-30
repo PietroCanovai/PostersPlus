@@ -186,8 +186,19 @@ async def cancel_run():
 
 # ── Settings ────────────────────────────────────────────────────────────────
 
+def _server_max_resolution() -> int:
+    """PostersPlus's own ceiling (MAX_POSTER_RESOLUTION): a bigger request is
+    quietly served at this size."""
+    try:
+        import config as _cfg
+        return int(_cfg.MAX_POSTER_RESOLUTION)
+    except Exception:
+        return 2000
+
+
 def _settings_payload() -> dict:
     return {
+        "server_max_resolution": _server_max_resolution(),
         "jellyfin_url": prefs.get("jellyfin_url"),
         "jellyfin_api_key_set": bool(prefs.get("jellyfin_api_key")),
         "jellyfin_api_key_hint": _secret_hint(prefs.get("jellyfin_api_key")),

@@ -304,6 +304,9 @@ function SyncSettings({ s, reload }) {
           ${s.resolutions.map(r => html`<option value=${r}>${r} × ${r * 1.5}${r === 1000 ? ' (recommended)' : ''}</option>`)}
         </select></div>
     </div>
+    ${s.resolution > s.server_max_resolution && html`<div class="notice warn" style="margin-top:10px"><p>
+      The server only allows posters up to <strong>${s.server_max_resolution} wide</strong>, so they come out at that size.
+      Set <code>MAX_POSTER_RESOLUTION=${s.resolution}</code> in the server's compose file and run the update script.</p></div>`}
   <//>`;
 }
 

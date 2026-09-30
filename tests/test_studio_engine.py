@@ -21,14 +21,15 @@ class FakeJellyfin:
         self.libraries = [
             {"Name": "Movies", "ItemId": "lib-m", "CollectionType": "movies"},
             {"Name": "TV", "ItemId": "lib-t", "CollectionType": "tvshows"},
-            {"Name": "Concerts", "ItemId": "lib-c", "CollectionType": "movies"},
+            {"Name": "Concerts", "ItemId": "lib-c", "CollectionType": "musicvideos"},
             {"Name": "Music", "ItemId": "lib-x", "CollectionType": "music"},
         ]
         self.items = {
             "lib-m": [self._item("m1", "Movie", "Heat", tmdb="949", imdb="tt0113277"),
                       self._item("m2", "Movie", "Unknown Home Video")],
             "lib-t": [self._item("s1", "Series", "Dark", tmdb="70523")],
-            "lib-c": [self._item("c1", "Video", "Live at Wembley (YouTube)")],
+            "lib-c": [self._item("c1", "MusicVideo", "Live at Wembley (YouTube)"),
+                      self._item("c2", "MusicVideo", "Stop Making Sense", tmdb="24128")],
             "lib-x": [],
         }
         self.uploads: list[tuple[str, bytes, str]] = []
@@ -59,7 +60,8 @@ class FakeJellyfin:
             it = self.find(q["Ids"])
             return httpx.Response(200, json={"Items": [it] if it else [], "TotalRecordCount": 1 if it else 0})
         if path == "/Items":
-            rows = self.items.get(q.get("ParentId"), [])
+            wanted = set(q.get("IncludeItemTypes", "").split(","))
+            rows = [r for r in self.items.get(q.get("ParentId"), []) if r["Type"] in wanted]
             start = int(q.get("StartIndex", 0))
             return httpx.Response(200, json={"Items": rows[start:], "TotalRecordCount": len(rows)})
         if path.endswith("/Images/Primary") and request.method == "POST":
@@ -73,7 +75,7 @@ class FakeJellyfin:
 
 class FakeRenderer:
     def __init__(self):
-        self.version = {"949": b"heat-v1", "70523": b"dark-v1"}
+        self.version = {"949": b"heat-v1", "70523": b"dark-v1", "24128": b"sms-v1"}
         self.requests: list[dict] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -108,21 +110,21 @@ class EngineTests(unittest.TestCase):
     def test_uploads_off_means_preview(self):
         run = self.run_sync()
         self.assertTrue(run["dry_run"])
-        self.assertEqual(self.counts(run).get("would_upload"), 2)
+        self.assertEqual(self.counts(run).get("would_upload"), 3)
         self.assertEqual(self.jf.uploads, [])
 
     def test_first_upload_then_unchanged(self):
         prefs.set("uploads_enabled", True)
         run = self.run_sync()
         self.assertEqual(run["status"], "done")
-        self.assertEqual(self.counts(run), {"uploaded": 2, "skipped": 2})
-        self.assertEqual({u[0] for u in self.jf.uploads}, {"m1", "s1"})
+        self.assertEqual(self.counts(run), {"uploaded": 3, "skipped": 2})
+        self.assertEqual({u[0] for u in self.jf.uploads}, {"m1", "s1", "c2"})
         self.assertTrue(all(u[2] == "image/jpeg" for u in self.jf.uploads))
-        self.assertEqual(self.jf.uploads[0][1] in (b"heat-v1", b"dark-v1"), True)
+        self.assertEqual(sorted(u[1] for u in self.jf.uploads), [b"dark-v1", b"heat-v1", b"sms-v1"])
         # Nothing changed: the second run uploads nothing.
         run = self.run_sync()
-        self.assertEqual(self.counts(run), {"unchanged": 2, "skipped": 2})
-        self.assertEqual(len(self.jf.uploads), 2)
+        self.assertEqual(self.counts(run), {"unchanged": 3, "skipped": 2})
+        self.assertEqual(len(self.jf.uploads), 3)
 
     def test_changed_poster_is_uploaded(self):
         prefs.set("uploads_enabled", True)
@@ -160,6 +162,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(heat["primary_client"], "jellyfin")
         dark = next(q for q in self.pp.requests if q["tmdb_id"] == "70523")
         self.assertEqual(dark["type"], "tv")
+        concert = next(q for q in self.pp.requests if q["tmdb_id"] == "24128")
+        self.assertEqual(concert["type"], "movie")   # concerts (MusicVideo) render as films
 
     def test_force_reuploads(self):
         prefs.set("uploads_enabled", True)

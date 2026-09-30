@@ -13,6 +13,8 @@ services:
       # Jellyfin gets real JPEGs (the default is WebP).
       - IMAGE_FORMAT=jpeg
       - JPEG_QUALITY=92
+      # Studio renders 1000x1500 for Jellyfin; PostersPlus caps sizes at 500 unless raised.
+      - MAX_POSTER_RESOLUTION=1000
     ports:
       - "8183:8000"
     volumes:
