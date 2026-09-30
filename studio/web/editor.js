@@ -546,6 +546,10 @@ export function Editor({ id, review }) {
   const logos = [...mine('logo'), ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
   const many = looks.length > 1;
   const logoPane = html`
+    ${editLook && editLook.poster && html`<label class="own-row logo-force">
+      <input type="checkbox" class="toggle" checked=${!editLook.own_title} disabled=${busy}
+        onChange=${e => call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { own_title: !e.target.checked } })} />
+      <span>Draw the logo${editLook.own_title ? html` <span class="hint-sm">· off: this art shows its own title</span>` : ''}</span></label>`}
     <div class="own-row">
       <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic</button>
       <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
@@ -614,7 +618,7 @@ export function Editor({ id, review }) {
     })}</div>`;
     const logoGrid = html`
       <div class="own-row">
-        ${[['', 'Poster’s'], ['text', 'Title as text'], ['none', 'None']].map(([v, l]) => html`<button class=${(ch.logo || '') === v ? 'on' : ''}
+        ${[['', 'Poster’s'], ['text', 'Title as text'], ['none', 'None (art has its title)']].map(([v, l]) => html`<button class=${(ch.logo || '') === v ? 'on' : ''}
           onClick=${() => setArtChoice(k, { logo: v })} disabled=${busy} title=${v === 'none' ? 'The art already shows the title' : ''}>${l}</button>`)}
       </div>
       <div class="cands logos">${[...mine('logo'), ...all.logos].map(c => html`<${Card} key=${c.path} c=${c} kind="logos"
