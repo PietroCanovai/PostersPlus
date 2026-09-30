@@ -34,6 +34,28 @@ class RenderSignatureTests(unittest.TestCase):
         self.assertNotEqual(self._sig(), self._sig(shape="landscape"))
 
 
+class NewSettingsKeepOldKeysTests(unittest.TestCase):
+    """Settings added (or renamed) after composites were cached leave the key
+    of a request that doesn't use them as it was."""
+
+    def _sig(self, **params):
+        return main._render_config_signature(main.build_request_config(params))
+
+    def test_defaults_are_left_out_or_written_as_before(self):
+        sig = self._sig()
+        for name in ("sash_edge_y", "meta_order"):
+            self.assertNotIn(f'"{name}"', sig)
+        # The cinema badge's default was keyed as the popcorn's "timing".
+        self.assertIn('"badge_cinema_style": "timing"', sig)
+        self.assertEqual(sig, self._sig(badge_cinema_style="timing"))
+
+    def test_using_them_changes_the_key(self):
+        base = self._sig()
+        self.assertNotEqual(base, self._sig(meta_order="year,genre,rating"))
+        self.assertNotEqual(base, self._sig(sash_edge_y="0.3"))
+        self.assertNotEqual(base, self._sig(badge_cinema_style="frosted"))
+
+
 class ReplayQueryTests(unittest.TestCase):
     def setUp(self):
         self._access_key = main._cfg.ACCESS_KEY

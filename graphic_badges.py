@@ -28,6 +28,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import date
 from functools import lru_cache
 
 import numpy as np
@@ -345,96 +346,248 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# Popcorn: the film is in cinemas (or not out yet) and not at home
+# Cinema badge: the film is in cinemas (or not out yet) and not at home
 # ---------------------------------------------------------------------------
 
-# How the bucket is coloured (badge_cinema_style).  "timing" picks its colour
-# from how soon the film reaches home: green inside a week, amber inside two,
-# red further off or with no date at all.
-CINEMA_STYLES = ("timing", "red", "black", "white", "frosted")
-DEFAULT_CINEMA_STYLE = "timing"
-_TIMING_DAYS = ((7, "green"), (14, "amber"))
+# One disc the row's height: the day the film reaches home ("OCT" over "16")
+# when that is dated; otherwise a popcorn bucket for a film in cinemas, or a
+# clapperboard for one still in production.
+#
+# Its look (badge_cinema_style): "auto" takes its tone from what it lands on,
+# as a dark-on-dark logo is lightened — white to silver over dark art, black
+# to grey over light — and "frosted" is the frosted notch's glass, the poster
+# under it blurred beneath the frost tint.  The old popcorn colours (timing,
+# red, black, white) are read as "auto".
+CINEMA_STYLES = ("auto", "frosted")
+DEFAULT_CINEMA_STYLE = "auto"
+_LEGACY_CINEMA_STYLES = ("timing", "red", "black", "white")
 
-# The popcorn is Nuvio's "Cinema" hero badge (by this project's author):
-# white with a red outline there.  At badge height that outline is under a
-# pixel, so here the colour is the fill and the outline a white keyline,
-# thickened so it survives the row's size.
-_POPCORN_SVG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "badges", "popcorn.svg")
-_POPCORN_RGB = {"red": (231, 49, 37), "green": (40, 170, 84), "amber": (238, 178, 20),
-                "black": (22, 22, 24)}
-_KEYLINE_RGB = (246, 244, 240)
-_KEYLINE_W = 10   # in the SVG's path units (drawn at 3 there)
-_MONO_KEYLINE_W, _MONO_CUT_W = 14, 5   # "white": outline, and the line cut along it
+_DISC_LIGHT = ((252, 252, 252), (184, 187, 194), (26, 26, 30))    # top, bottom, face
+_DISC_DARK = ((74, 74, 80), (12, 12, 14), (242, 242, 242))
+# Mean luma under the disc below which it takes the light tone.
+_DISC_LIGHT_BELOW = 128
+_ICON = 0.56   # the popcorn or clapper, of the disc's size
+
+
+# English whatever the poster's language: three capitals read at badge size
+# in any script the row is drawn in.
+_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def cinema_style(value: str | None) -> str | None:
+    """badge_cinema_style as given, legacy colours as "auto"; None if unknown."""
+    v = (value or "").strip().lower()
+    if v in _LEGACY_CINEMA_STYLES:
+        return "auto"
+    return v if v in CINEMA_STYLES else None
 
 
 @dataclass(frozen=True)
 class CinemaRun:
-    """A film not yet out at home: "Cinema" or "Production", and the days
-    until its digital (or disc) release when one is dated."""
+    """A film not yet out at home: "Cinema" or "Production", and the day of
+    its first digital (or disc) release when one is dated."""
     status: str
-    days_to_home: int | None = None
+    home_date: date | None = None
 
 
 def cinema_ink(style: str, run: CinemaRun | None,
                tint: tuple[float, float, float] | None = None) -> str | None:
-    """The popcorn colour key for ``row_items``, or None when there is no
-    badge.  ``tint`` is the frosted colour; without one "frosted" is drawn red."""
+    """The badge's key for ``row_items`` ("disc|<look>|<face>"), or None when
+    there is no badge.  The look is "auto" or the frost tint ("rgb:r,g,b"),
+    "auto" too for a frosted disc whose tint isn't sampled yet (the layout
+    pass: same size either way).  The face is the date ("OCT 16"), else
+    "popcorn" or "clapper"."""
     if run is None:
         return None
-    if style == "white":
-        return "white"
-    if style == "black":
-        return "black"
-    if style == "frosted" and tint is not None:
-        return "rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
-    if style == "timing":
-        days = run.days_to_home
-        for limit, ink in _TIMING_DAYS:
-            if days is not None and days < limit:
-                return ink
-    return "red"
+    look = ("rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
+            if style == "frosted" and tint is not None else "auto")
+    if run.home_date is not None:
+        face = f"{_MONTHS[run.home_date.month - 1]} {run.home_date.day}"
+    else:
+        face = "clapper" if run.status == "Production" else "popcorn"
+    return f"disc|{look}|{face}"
+
+
+def wants_frost(style: str) -> bool:
+    """Whether the cinema badge needs the frost tint sampled."""
+    return style == "frosted"
+
+
+@lru_cache(maxsize=16)
+def _disc_mask(h: int) -> Image.Image:
+    ss = 4
+    m = Image.new("L", (h * ss, h * ss), 0)
+    ImageDraw.Draw(m).ellipse([0, 0, h * ss - 1, h * ss - 1], fill=255)
+    return m.resize((h, h), Image.Resampling.LANCZOS)
+
+
+@lru_cache(maxsize=8)
+def _popcorn_alpha(size: int) -> Image.Image:
+    """A popcorn bucket ``size`` square: a tapered bucket with two stripes
+    cut down it under a heap of kernels.  Drawn for this size rather than
+    traced from the full popcorn mark, whose fine lines grey over below
+    ~20 px: the gaps are held to at least a pixel and the level edges put
+    on whole pixels (drawn 4x on the final grid and box-reduced)."""
+    ss = 4
+    u = size / 100
+    px1 = 100 / size                             # one final pixel, in units
+
+    def snap(v):
+        return round(v * u) * ss
+
+    def P(pts):
+        return [(x * u * ss, y * u * ss) for x, y in pts]
+
+    im = Image.new("L", (size * ss, size * ss), 0)
+    d = ImageDraw.Draw(im)
+    # Kernels: overlapping rounds heaped over the bucket's mouth.
+    for cx, cy, r in ((22, 34, 13), (40, 22, 14), (60, 22, 14), (78, 34, 13), (50, 34, 14)):
+        d.ellipse([(cx - r) * u * ss, (cy - r) * u * ss, (cx + r) * u * ss, (cy + r) * u * ss], fill=255)
+    rim = snap(42) / ss / u
+    gap = max(4, px1)
+    # A clear line between the heap and the bucket.
+    d.rectangle([0, snap(42) - max(ss, snap(gap)), size * ss, snap(42) - 1], fill=0)
+    d.rectangle([0, snap(42), size * ss, size * ss], fill=0)
+    bottom = snap(98) / ss / u
+    d.polygon(P([(12, rim), (88, rim), (76, bottom), (24, bottom)]), fill=255)
+    # Two stripes, following the taper.
+    w = max(5, px1 * 1.1) / 2
+    for top_x, bot_x in ((37, 42), (63, 58)):
+        d.polygon(P([(top_x - w, rim), (top_x + w, rim), (bot_x + w, bottom), (bot_x - w, bottom)]), fill=0)
+    return im.reduce(ss)
+
+
+@lru_cache(maxsize=8)
+def _clapper_alpha(size: int) -> Image.Image:
+    """A clapperboard ``size`` square: a board under a striped hinge bar, its
+    striped arm raised off it.  Its level edges are put on whole pixels (it
+    is drawn 4x on the final grid and box-reduced, never resampled), so only
+    the slants are soft."""
+    import math
+    ss = 4
+    u = size / 100                              # final pixels per unit
+
+    def snap(v):                                # a unit value onto the pixel grid, in 4x
+        return round(v * u) * ss
+
+    im = Image.new("L", (size * ss, size * ss), 0)
+    d = ImageDraw.Draw(im)
+
+    def P(pts):
+        return [(x * u * ss, y * u * ss) for x, y in pts]
+
+    # Fewer, wider stripes when small, so each still clears a pixel.
+    step = 22 if size >= 24 else 30
+    starts = range(6 + step - 6, 94, step)
+
+    left, right = snap(6) / ss / u, snap(94) / ss / u
+    # Board.
+    d.rounded_rectangle([snap(6), snap(54), snap(94) - 1, snap(92) - 1], radius=max(ss, snap(7)), fill=255)
+    # Hinge bar, stripes slanting right.
+    top, bot = snap(38) / ss / u, snap(50) / ss / u
+    d.rectangle([snap(6), snap(38), snap(94) - 1, snap(50) - 1], fill=255)
+    for x in starts:
+        d.polygon(P([(x, top), (x + 9, top), (x + 3, bot), (x - 6, bot)]), fill=0)
+    # Arm, raised about its left end.
+    t = math.radians(-18)
+    ox, oy = left, 34
+
+    def rot(pts):
+        return [(ox + (x - ox) * math.cos(t) - (y - oy) * math.sin(t),
+                 oy + (x - ox) * math.sin(t) + (y - oy) * math.cos(t)) for x, y in pts]
+
+    d.polygon(P(rot([(left, 22), (right, 22), (right, 34), (left, 34)])), fill=255)
+    for x in starts:
+        d.polygon(P(rot([(x, 22), (x + 9, 22), (x + 3, 34), (x - 6, 34)])), fill=0)
+    return im.reduce(ss)
 
 
 @lru_cache(maxsize=64)
-def _popcorn(ink: str, h: int) -> Image.Image | None:
-    """The popcorn, ``h`` tall, filled with ``ink`` inside a white keyline;
-    "white" is one colour throughout, like the other marks in the row."""
-    import cairosvg
-    if ink.startswith("rgb:"):
-        fill = tuple(int(c) for c in ink[4:].split(","))
-    else:
-        fill = _INK if ink == "white" else _POPCORN_RGB.get(ink, _POPCORN_RGB["red"])
-    edge = _INK if ink == "white" else _KEYLINE_RGB
-    try:
-        with open(_POPCORN_SVG, encoding="utf-8") as fh:
-            svg = fh.read()
-    except OSError as exc:
-        logger.error(f"Graphic badges: popcorn mark unreadable: {exc}")
-        return None
-    def render(fill_attr: str, stroke_attr: str, width: float = _KEYLINE_W) -> Image.Image:
-        s = (svg.replace('fill="#fff"', f'fill="{fill_attr}"')
-                .replace('stroke="#e73125"', f'stroke="{stroke_attr}"')
-                .replace('stroke-width="3"', f'stroke-width="{width}"'))
-        return Image.open(io.BytesIO(cairosvg.svg2png(bytestring=s.encode(), output_height=h * 4))).convert("RGBA")
+def _disc_face(face: str, h: int, ink: tuple[int, int, int]) -> Image.Image:
+    """What the disc says, ``h`` square, in ``ink``: the month over the day,
+    or the popcorn / clapper glyph."""
+    if face in ("popcorn", "clapper"):
+        size = max(1, round(h * _ICON))
+        alpha = _popcorn_alpha(size) if face == "popcorn" else _clapper_alpha(size)
+        out = Image.new("RGBA", (h, h), (*ink, 0))
+        # Trimmed to its ink and placed on whole pixels, never resampled.
+        alpha = alpha.crop(alpha.getbbox() or (0, 0, alpha.width, alpha.height))
+        glyph = Image.new("RGBA", alpha.size, (*ink, 0))
+        glyph.putalpha(alpha)
+        out.alpha_composite(glyph, ((h - alpha.width) // 2, (h - alpha.height) // 2))
+        return out
+    month, day = face.split(" ")
+    ss = 4
+    d_ss = h * ss
+    im = Image.new("RGBA", (d_ss, d_ss), (*ink, 0))
+    d = ImageDraw.Draw(im)
+    font_path = os.path.join(_FONTS_DIR, "Inter-Bold.ttf")
+    mon_font = ImageFont.truetype(font_path, px(h * 0.24) * ss or ss)
+    day_font = ImageFont.truetype(font_path, px(h * 0.49) * ss or ss)
+    # The two lines as one block centred on the disc, by their ink (caps and
+    # figures, so no descenders): month cap-height, a gap, then the day.
+    mon_h = -d.textbbox((0, 0), month, font=mon_font, anchor="ls")[1]
+    day_h = -d.textbbox((0, 0), day, font=day_font, anchor="ls")[1]
+    gap = h * 0.05 * ss
+    top = (d_ss - (mon_h + gap + day_h)) / 2
+    # Letter-spaced a touch, as small caps usually are.
+    track = h * 0.02 * ss
+    widths = [d.textlength(ch, font=mon_font) for ch in month]
+    x = (d_ss - (sum(widths) + track * (len(month) - 1))) / 2
+    for ch, cw in zip(month, widths):
+        d.text((x, top + mon_h), ch, font=mon_font, fill=(*ink, 245), anchor="ls")
+        x += cw + track
+    d.text((d_ss / 2, top + mon_h + gap + day_h), day, font=day_font, fill=(*ink, 250), anchor="ms")
+    return im.resize((h, h), Image.Resampling.LANCZOS)
 
-    if ink == "white":
-        # A white keyline on a white fill closes up the kernels' lines and
-        # the gap over the bucket.  Here the outline is drawn wider and a thin
-        # line cut along its middle, so the mark keeps a white rim and its
-        # inner lines — the coloured styles' look, in one colour.
-        body = np.asarray(render("#fff", "#fff", _MONO_KEYLINE_W).getchannel("A"), dtype=np.float32)
-        cut = np.asarray(render("none", "#fff", _MONO_CUT_W).getchannel("A"), dtype=np.float32)
-        im = Image.new("RGBA", (body.shape[1], body.shape[0]), (*_INK, 0))
-        im.putalpha(Image.fromarray((body * (1 - cut / 255)).astype(np.uint8)))
-    else:
-        im = render("#%02x%02x%02x" % fill, "#%02x%02x%02x" % edge)
-    # Cropped to its ink so it shares the row's top and bottom lines.
-    box = im.getchannel("A").getbbox()
-    if box:
-        im = im.crop(box)
-    out = im.resize((max(1, round(im.width * h / im.height)), h), Image.Resampling.LANCZOS)
-    out.info["open_holes"] = True   # see _shadowed
-    return out
+
+@lru_cache(maxsize=64)
+def _gradient_disc(face: str, h: int, light: bool) -> Image.Image:
+    top, bottom, ink = _DISC_LIGHT if light else _DISC_DARK
+    t = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    rgb = (np.array(top, np.float32) * (1 - t) + np.array(bottom, np.float32) * t).repeat(h, axis=1)
+    im = Image.fromarray(rgb.astype(np.uint8)).convert("RGBA")
+    im.putalpha(_disc_mask(h))
+    im.alpha_composite(_disc_face(face, h, ink))
+    return im
+
+
+def _cinema_disc(look: str, face: str, h: int) -> Image.Image:
+    """The placeholder the row is laid out with (the dark disc); draw_row
+    swaps in the real one once it knows what is underneath (_resolve_disc)."""
+    im = _gradient_disc(face, h, False).copy()
+    im.info["cinema_disc"] = (look, face)
+    return im
+
+
+def _resolve_disc(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.Image:
+    """The cinema disc for where it lands at (x, y) on ``image``."""
+    look, face = im.info["cinema_disc"]
+    h = im.height
+    box = (max(0, x), max(0, y), min(image.width, x + h), min(image.height, y + h))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return im
+    under = image.crop(box).convert("RGB")
+    if look.startswith("rgb:"):
+        from awards import _frost_ink
+        tint = tuple(int(c) for c in look[4:].split(","))
+        glass = Image.new("RGBA", (h, h), (0, 0, 0, 0))
+        glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
+                    (box[0] - x, box[1] - y))
+        frost = Image.new("RGBA", (h, h), (*tint, 0))
+        frost.putalpha(Image.new("L", (h, h), round(255 * 0.78)))
+        glass = Image.alpha_composite(glass, frost)
+        glass.putalpha(_disc_mask(h))
+        glass.alpha_composite(_disc_face(face, h, _frost_ink(*tint)))
+        return glass
+    luma = float(np.asarray(under.convert("L"), dtype=np.float32).mean())
+    return _gradient_disc(face, h, luma < _DISC_LIGHT_BELOW)
+
+
+def _cinema_mark(key: str, h: int) -> Image.Image | None:
+    """The cinema slot's mark for a cinema_ink key."""
+    _, look, face = key.split("|", 2)
+    return _cinema_disc(look, face, h)
 
 
 # ---------------------------------------------------------------------------
@@ -756,7 +909,7 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
               cinema: str | None = None) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
     Quality marks only when ``show_quality`` (the minimum-quality gate); the
-    certificate always.  ``cinema`` is the popcorn's colour (cinema_ink), None
+    certificate always.  ``cinema`` is the cinema badge's key (cinema_ink), None
     for a title that is out at home.  Dolby Vision and Atmos in the same group share the
     combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
@@ -804,7 +957,7 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
     build = {"video": video, "audio": audio, "res": res, "cert": cert,
              "network": lambda: _logo_mark(network, unit_h) if network else None,
              "studio": lambda: _logo_mark(studio, unit_h) if studio else None,
-             "cinema": lambda: _popcorn(cinema, unit_h) if cinema else None}
+             "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None}
     items = [(slot, build[slot]()) for slot in slots]
     return [(slot, im) for slot, im in items if im is not None]
 
@@ -843,21 +996,6 @@ def _shadowed(im: Image.Image) -> tuple[Image.Image, int]:
     sheet.paste(im.getchannel("A").point(lambda v: v * 120 // 255), (pad, pad))
     sheet = sheet.filter(ImageFilter.GaussianBlur(max(1.0, im.height * 0.07)))
     lift = max(1, im.height // 30)
-    if im.info.get("open_holes"):
-        # The popcorn's slots: kept clear of the shadow, so the poster shows
-        # through them rather than a dark smudge.
-        import cv2
-        clear = (np.asarray(im.getchannel("A")) < 128).astype(np.uint8)
-        n, labels, stats, _ = cv2.connectedComponentsWithStats(clear, connectivity=4)
-        h, w = clear.shape
-        holes = np.zeros_like(clear, dtype=bool)
-        for i in range(1, n):
-            x, y, bw, bh = stats[i][:4]
-            if x > 0 and y > 0 and x + bw < w and y + bh < h:
-                holes |= labels == i
-        a = np.asarray(sheet).copy()
-        a[pad - lift:pad - lift + h, pad:pad + w][holes] = 0
-        sheet = Image.fromarray(a)
     out = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
     out.putalpha(sheet)
     out.alpha_composite(im, (pad, pad - lift))
@@ -870,6 +1008,8 @@ def draw_row(image: Image.Image, items: list[tuple[str, Image.Image]], *,
     is the caller's job (see fit)."""
     x = left_x
     for _, im in items:
+        if "cinema_disc" in im.info:
+            im = _resolve_disc(image, im, round(x), int(round(center_y - im.height / 2)))
         shadow, pad = _shadowed(im)
         sx, sy = round(x) - pad, int(round(center_y - im.height / 2)) - pad
         cl, ct = max(0, -sx), max(0, -sy)

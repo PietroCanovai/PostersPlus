@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Edge notch, label order, release-date badge
+
+- The notch can hang off the **Left Edge** or **Right Edge** of the poster,
+  its label running along the side, with an **Edge Position** slider to move
+  it up and down.
+- **Labels → Order** sets the order genre, year and rating print in, in
+  every rating mode (and landscape) that prints more than one of them.
+- The Cinema graphic badge is now a small disc with the day the film
+  reaches home, month over day. Without a date it shows a popcorn bucket
+  (in cinemas) or a clapperboard (in production). **Cinema Badge Style** is
+  Auto, light or dark to suit the art under it, or Frosted; it replaces the
+  popcorn's colours, which old URLs read as Auto.
+  Series that haven't aired yet get it too, with their premiere date.
+- A film that opens in cinemas and streams on the same day (a streamer's
+  film with a small cinema run) now has a dated sash reading as a streaming
+  release, not "Cinema". Films TMDB still lists as unreleased look up their
+  release dates once they have a future release date, instead of assuming
+  that date is a cinema opening.
+- The Text Colour control is hidden for the frosted notch, which picks its
+  own label colour and never used it.
+
 ### Presets in three kinds
 
 - **Load preset** now has three tabs. **Core** holds the presets that ship

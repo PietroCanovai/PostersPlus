@@ -698,8 +698,11 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                      logo_left: int | None = None,
                      bounds: tuple[float, float] | None = None,
                      baseline: int | None = None,
-                     top: int | None = None) -> tuple[int, int, int, int] | None:
+                     top: int | None = None,
+                     order: str = "") -> tuple[int, int, int, int] | None:
     """`Genre • Year • 87`, right-aligned on the shared baseline.
+
+    ``order`` (meta_order) rearranges the three, "year,genre,rating" and so on.
 
     ``align`` is the side it hangs from: "right" beside a left logo (the
     default), "left" beside a right one, "center" under a centred one.
@@ -752,15 +755,19 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     # The score takes the same weight as the genre and the year rather than a
     # score-banded colour.  Here the three are one line of metadata, and one
     # member of it changing hue per title breaks the row instead of ranking it.
-    parts: list[tuple[str, tuple[int, int, int, int]]] = []
-    if genre_label:
-        parts.append((genre_label, _MUTED))
-    if release_year:
-        parts.append((str(release_year), _MUTED))
-    if score_text:
-        parts.append((score_text, _MUTED))
+    fields = {"genre": genre_label or None, "year": str(release_year) if release_year else None,
+              "score": score_text}
+    keys = ["genre", "year", "score"]
+    if order:
+        rank = order.replace("rating", "score").split(",")
+        keys.sort(key=rank.index)
+    # Each entry kept by field, told apart by identity: a year and a score
+    # can read the same.
+    part_of = {k: (fields[k], _MUTED) for k in keys if fields[k]}
+    parts: list[tuple[str, tuple[int, int, int, int]]] = list(part_of.values())
     if not parts:
         return None
+    score_part = part_of.get("score")
 
     sep = "  •  "
     star_sep = "  ★ "
@@ -768,8 +775,9 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     def segments(items) -> list[tuple[str, tuple[int, int, int, int]]]:
         # The row as drawn, separators included, left to right.
         out = []
-        for i, (text, fill) in enumerate(items):
-            if star and score_text and i == len(items) - 1:
+        for i, part in enumerate(items):
+            text, fill = part
+            if star and part is score_part:
                 out.append(("★ " if i == 0 else star_sep, _MUTED))
             elif i:
                 out.append((sep, _SEPARATOR))
@@ -796,7 +804,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         left = width * (_SIDE_PAD + _LOGO_MAX_W) if logo_right is None else logo_right
         limit = width * (1 - _RIGHT_PAD) - left - width * 0.03
     while len(parts) > 1 and total(parts) > limit:
-        parts.pop(0)
+        # The genre goes first, then the year, wherever they stand.
+        shed = next(part_of[k] for k in ("genre", "year", "score")
+                    if k in part_of and any(p is part_of[k] for p in parts))
+        parts = [p for p in parts if p is not shed]
 
     # Drawn on a layer of its own so the strip's ink can cast one shadow —
     # the same pool the logo gets, for the same reason: the band is the
@@ -988,7 +999,7 @@ def build_landscape(
             scale=getattr(cfg, "landscape_info_scale", 1.0),
             out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
             star=getattr(cfg, "landscape_score_star", False),
-            align=info_col, **where)
+            align=info_col, order=getattr(cfg, "meta_order", ""), **where)
 
     info_box = None
     logo_baseline = None
@@ -1058,7 +1069,7 @@ def build_landscape(
     if graphic:
         import graphic_badges
         tint = None
-        if cinema_run is not None and cfg.badge_cinema_style == "frosted":
+        if cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style):
             from awards import dominant_frost_rgb, _frosted_tint
             tint = _frosted_tint(*(badge_source or dominant_frost_rgb(art)),
                                  saturation=cfg.sash_badge_frost_saturation, reference=cfg.frost_reference)

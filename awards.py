@@ -1646,9 +1646,16 @@ def draw_award_badge(
     body_opacity: float | None = None,  # black/silver/gold body opacity; None = the style's own
     chip_offset: float = 0.0,         # side chip only: moved down by this fraction of poster height
     chip_offset_x: float = 0.0,       # side chip only: moved in from its corner by this fraction of poster width
+    edge_y: float = 0.5,              # edge notch only: its centre, as a fraction of poster height
+    _geom: tuple[int, int] | None = None,   # edge notch: the poster's (width, height), sizes come from it
+    _along: float | None = None,            # edge notch: centre along the (turned) top edge, in pixels
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
+
+    ``position`` "edge_left" / "edge_right" hangs the same notch off a side
+    edge instead, its label turned to run along it (bottom to top on the left,
+    top to bottom on the right), centred at ``edge_y`` down the poster.
 
     ``position`` moves it off centre to free the middle of the top edge:
     left/right float a fully rounded chip in from that corner, sized to the
@@ -1673,7 +1680,23 @@ def draw_award_badge(
     Uses Cairo (sub-pixel AA, gradient) with PIL fallback. 3× LANCZOS downscale,
     except frosted, which is drawn at 1× (see that branch).
     """
-    width, height = image.size
+    if position in ("edge_left", "edge_right"):
+        # The poster is turned so that edge is the top, the ordinary notch is
+        # drawn there, and it is turned back.  Sized from the poster's own
+        # width and height, so it matches a top notch; no top inset, which is
+        # for clients that crop the top edge, not the sides.
+        left = position == "edge_left"
+        turn, back = ((Image.Transpose.ROTATE_270, Image.Transpose.ROTATE_90) if left
+                      else (Image.Transpose.ROTATE_90, Image.Transpose.ROTATE_270))
+        y = image.height * edge_y
+        drawn = draw_award_badge(
+            image.transpose(turn), label, sash_type, size_ratio_w, size_ratio_h, notch_style,
+            0.0, notch_pad_ratio, font_size_ratio, frost_opacity, frost_saturation,
+            frost_reference, tint_rgb, star, text_color, "center", body_opacity,
+            _geom=image.size, _along=(image.height - y) if left else y)
+        return drawn.transpose(back)
+
+    width, height = _geom or image.size
 
     SS = 3  # render at 3× then LANCZOS-downscale for crisp text and edges
 
@@ -1739,6 +1762,8 @@ def draw_award_badge(
     border_w = max(fixed(1), px(badge_h * 0.055))
     # ── Position: always centred horizontally, inset controls top-edge offset ─
     bx = px((width - badge_w) / 2)
+    if _along is not None:
+        bx = min(max(0, _along - badge_w / 2), image.width - badge_w)
     by_composite = max(-badge_h, px(height * notch_inset))
 
     # Everything above is in 500-wide units (whole pixels at 500); from here on

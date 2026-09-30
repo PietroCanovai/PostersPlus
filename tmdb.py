@@ -2817,16 +2817,37 @@ def _release_info_is_current(info: dict) -> bool:
     return any(info.get(k) for k in ("theatrical_date", "digital_date", "physical_date"))
 
 
+def _never_looked(info: dict) -> bool:
+    """A row written by the pre-release shortcut, without asking TMDB for
+    dates: marked since this change, and before it, a row with no dates
+    that isn't marked as having looked."""
+    if info.get("pre_release_shortcut"):
+        return True
+    return (not info.get("dates_checked")
+            and not any(info.get(k) for k in ("theatrical_date", "digital_date",
+                                               "physical_date", "premiere_date")))
+
+
 async def fetch_movie_release_info(
     client: httpx.AsyncClient,
     tmdb_id: str,
     tmdb_key: str,
     tmdb_status: str | None,
+    primary_release_date: str | None = None,
 ) -> dict | None:
-    """Cached TMDB movie release-date facts used by release-status and freshness sashes."""
+    """Cached TMDB movie release-date facts used by release-status and freshness sashes.
+
+    A film TMDB still calls unreleased (Planned, In Production, ...) normally
+    skips /release_dates: there is nothing out to date.  Given its primary
+    release date, though, and that date still ahead, the dates are fetched
+    after all — that date alone doesn't say whether the film opens in
+    cinemas or streams (Animals: US theatrical and Netflix both Oct 9)."""
     cache_key = f"movie_{tmdb_id}"
+    _primary = _parse_tmdb_date(primary_release_date)
+    _look_anyway = _primary is not None and _primary > _date.today()
     cached = get_cached_movie_release_info(cache_key)
-    if cached and _release_info_is_current(cached):
+    if (cached and _release_info_is_current(cached)
+            and not (_look_anyway and _never_looked(cached))):
         cached["status"] = _compute_movie_status_from_dates(
             _parse_tmdb_date(cached.get("theatrical_date")),
             _parse_tmdb_date(cached.get("digital_date")),
@@ -2846,8 +2867,10 @@ async def fetch_movie_release_info(
     }
 
     _pre_release = {"In Production", "Post Production", "Planned", "Rumored"}
-    if tmdb_status in _pre_release:
+    if tmdb_status in _pre_release and not _look_anyway:
         info["status"] = "Production"
+        # Marked, so a caller with a dated primary release can still look.
+        info["pre_release_shortcut"] = True
         set_cached_movie_release_info(cache_key, info)
         return info
     if tmdb_status == "Cancelled":
@@ -2917,6 +2940,7 @@ async def fetch_movie_release_info(
         "physical_date": earliest_physical.isoformat() if earliest_physical else None,
         "digital_latest_date": latest_digital.isoformat() if latest_digital else None,
         "premiere_date": earliest_premiere.isoformat() if earliest_premiere else None,
+        "dates_checked": True,
     }
     set_cached_movie_release_info(cache_key, info, _release_info_expiry(info))
     return info
@@ -2967,6 +2991,9 @@ _RELEASE_WINDOW_STATUS = {
 }
 
 
+_SAME_DAY_RANK = {"Streaming": 0, "Physical": 1, "Cinema": 2}
+
+
 async def fetch_upcoming_movie_release(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -2990,7 +3017,8 @@ async def fetch_upcoming_movie_release(
     """
     if status not in ("Cinema", "Production"):
         return None
-    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status) or {}
+    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status,
+                                          primary_release_date=primary_release_date) or {}
     keys = (
         ("theatrical_date", "digital_date", "physical_date")
         if status == "Production" else ("digital_date", "physical_date")
@@ -3007,7 +3035,10 @@ async def fetch_upcoming_movie_release(
             upcoming.append((primary, "Cinema"))
     if not upcoming:
         return None
-    soonest, window = min(upcoming)
+    # Two windows on the same day (a streamer's film opening in a few cinemas
+    # the day it streams): the film reaches home that day, so the home window
+    # names it, streaming first — not whichever sorts first alphabetically.
+    soonest, window = min(upcoming, key=lambda u: (u[0], _SAME_DAY_RANK[u[1]]))
     return soonest.isoformat(), window
 
 

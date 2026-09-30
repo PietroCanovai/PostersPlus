@@ -124,41 +124,53 @@ class RowItemTests(unittest.TestCase):
 
 
 class CinemaBadgeTests(unittest.TestCase):
-    def test_timing_counts_down_to_the_home_release(self):
-        ink = lambda days: gb.cinema_ink("timing", gb.CinemaRun("Cinema", days))
-        self.assertEqual([ink(0), ink(6), ink(7), ink(13), ink(14), ink(90), ink(None)],
-                         ["green", "green", "amber", "amber", "red", "red", "red"])
+    def test_the_disc_shows_the_home_date_else_an_icon(self):
+        import datetime
+        dated = gb.CinemaRun("Cinema", datetime.date(2026, 10, 16))
+        self.assertEqual(gb.cinema_ink("auto", dated), "disc|auto|OCT 16")
+        # Dated wins even in production.
+        self.assertEqual(gb.cinema_ink("auto", gb.CinemaRun("Production", datetime.date(2027, 1, 2))),
+                         "disc|auto|JAN 2")
+        self.assertEqual(gb.cinema_ink("auto", gb.CinemaRun("Cinema")), "disc|auto|popcorn")
+        self.assertEqual(gb.cinema_ink("auto", gb.CinemaRun("Production")), "disc|auto|clapper")
+        self.assertEqual(gb.cinema_ink("frosted", dated, (10.4, 20, 30)), "disc|rgb:10,20,30|OCT 16")
+        # Frosted before the tint is sampled: laid out as auto (same size).
+        self.assertEqual(gb.cinema_ink("frosted", dated), "disc|auto|OCT 16")
+        self.assertIsNone(gb.cinema_ink("auto", None))
 
-    def test_fixed_styles_and_no_badge_once_out(self):
-        run = gb.CinemaRun("Production", 3)
-        self.assertEqual(gb.cinema_ink("black", run), "black")
-        self.assertEqual(gb.cinema_ink("white", run), "white")
-        self.assertEqual(gb.cinema_ink("red", run), "red")
-        self.assertEqual(gb.cinema_ink("frosted", run, (10.4, 20, 30)), "rgb:10,20,30")
-        self.assertEqual(gb.cinema_ink("frosted", run), "red")   # no tint sampled
-        self.assertIsNone(gb.cinema_ink("timing", None))
-
-    def test_popcorn_holds_the_row_height_and_its_slot(self):
-        for ink in ("red", "white", "rgb:90,140,200"):
-            self.assertEqual(gb._popcorn(ink, 33).height, 33)
-        slots = [s for s, _ in gb.row_items([], "R", None, 30, ("cinema", "cert"), cinema="green")]
+    def test_every_face_holds_the_row_height_and_its_slot(self):
+        for face in ("OCT 16", "popcorn", "clapper"):
+            with self.subTest(face=face):
+                mark = gb._cinema_mark(f"disc|auto|{face}", 33)
+                self.assertEqual(mark.size, (33, 33))
+                # The face is drawn: more than a bare disc.
+                face_px = np.asarray(mark.convert("L"), dtype=np.int16)
+                self.assertGreater(int((face_px > 150).sum()), 20)
+        slots = [s for s, _ in gb.row_items([], "R", None, 30, ("cinema", "cert"), cinema="disc|auto|popcorn")]
         self.assertEqual(slots, ["cinema", "cert"])
         self.assertEqual([s for s, _ in gb.row_items([], "R", None, 30, ("cinema", "cert"))], ["cert"])
 
-    def test_the_slots_show_the_poster_not_the_shadow(self):
-        mark = gb._popcorn("red", 60)
-        shadowed, pad = gb._shadowed(mark)
-        plain = mark.copy()   # same mark without the flag: shadow fills its holes
-        plain.info.pop("open_holes", None)
-        filled, _ = gb._shadowed(plain)
-        a, b = np.asarray(shadowed)[..., 3], np.asarray(filled)[..., 3]
-        self.assertTrue((a <= b).all())
-        self.assertGreater(int((b - a).max()), 30)
+    def test_the_disc_takes_its_tone_from_the_art(self):
+        def drawn(bg, key="disc|auto|OCT 16"):
+            poster = Image.new("RGBA", (200, 100), (*bg, 255))
+            gb.draw_row(poster, [("cinema", gb._cinema_mark(key, 40))], left_x=80, center_y=50, gap=0)
+            return np.asarray(poster.convert("L"), dtype=np.float32)[40:60, 85:115].mean()
+        self.assertGreater(drawn((10, 10, 12)), 150)     # light disc on dark art
+        self.assertLess(drawn((240, 240, 240)), 100)     # dark disc on light art
+        # Pale glass over dark blue art (bg luma ~55), under a solid dark glyph.
+        self.assertGreater(drawn((20, 60, 160), "disc|rgb:200,210,240|popcorn"), 90)
+        # No border: the rim is the body's tone, not a white keyline.
+        rim = gb._gradient_disc("OCT 16", 40, False)
+        self.assertLess(np.asarray(rim.convert("RGB"))[20, 1].max(), 120)
 
     def test_the_slot_parses_and_the_style_is_read(self):
         self.assertEqual(gb.parse_group("tr:2:cinema,cert").slots, ("cinema", "cert"))
-        self.assertEqual(main.build_request_config({"badge_cinema_style": "Frosted"}).badge_cinema_style, "frosted")
-        self.assertEqual(main.build_request_config({"badge_cinema_style": "pink"}).badge_cinema_style, "timing")
+        read = lambda v: main.build_request_config({"badge_cinema_style": v}).badge_cinema_style
+        self.assertEqual(read("Frosted"), "frosted")
+        # The popcorn's old colours still parse, as the disc's auto look.
+        for old in ("timing", "red", "black", "white"):
+            self.assertEqual(read(old), "auto")
+        self.assertEqual(read("pink"), "auto")
 
 
 class MarkTests(unittest.TestCase):

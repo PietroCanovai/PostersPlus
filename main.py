@@ -1683,6 +1683,10 @@ class RequestConfig:
     bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"|"palette_custom"
     bar_score_out_of_10:     bool  = False
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
+    # The order genre, year and rating print in, in every mode that prints
+    # more than one of them: "genre,year,rating" and so on.  "" is each
+    # mode's own order.
+    meta_order:              str   = ""
 
     # Rating provider badges (Clean, Minimalist and Bar): each listed
     # provider's own score behind its logo, in place of the ★ and the weighted
@@ -1719,7 +1723,7 @@ class RequestConfig:
     badge_group2:             str  = ""
     badge_group3:             str  = ""
     badge_group4:             str  = ""
-    # The "cinema" slot's popcorn colour — graphic_badges.CINEMA_STYLES.
+    # The "cinema" slot's disc look — graphic_badges.CINEMA_STYLES.
     badge_cinema_style:       str  = graphic_badges.DEFAULT_CINEMA_STYLE
 
     movie_weights: dict | None = None
@@ -1882,12 +1886,13 @@ class RequestConfig:
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
     sash_mode: str = "sash"               # "sash" (diagonal) | "notch"
     sash_badge_style:  str   = "frosted" # "silver" | "gold" | "frosted"
-    sash_badge_pos:    str   = "center"  # notch: "center" | "left" | "right" | "auto" | "auto_hug"
+    sash_badge_pos:    str   = "center"  # notch: "center" | "left" | "right" | "auto" | "auto_hug" | "edge_left" | "edge_right"
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
     sash_chip_y:      float = 0.0          # side chip: moved down by this fraction of poster height
     sash_chip_x:      float = 0.0          # side chip: moved in from its corner by this fraction of poster width
+    sash_edge_y:      float = 0.5          # edge notch: its centre, as a fraction of poster height
     sash_badge_pad:   float = 1.0          # vertical padding scale (<1 tightens top/bottom space)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
@@ -2207,6 +2212,18 @@ def _gradient_alpha(opacity: float) -> int:
     return int(opacity)
 
 
+META_FIELDS = ("genre", "year", "rating")
+
+
+def _meta_sorted(cfg: "RequestConfig", keys) -> list[str]:
+    """``keys`` (from META_FIELDS, in the mode's own order) in the order
+    meta_order asks for; unchanged when it asks for none."""
+    if not cfg.meta_order:
+        return list(keys)
+    order = cfg.meta_order.split(",")
+    return sorted(keys, key=order.index)
+
+
 def _sash_holds_left(cfg: "RequestConfig") -> bool:
     """Whether the sash or notch occupies the top-left corner, so a Corner
     Bookmark quality badge should take the top right instead."""
@@ -2237,6 +2254,12 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
     for name, default in _SIGNATURE_OMIT_AT_DEFAULT.items():
         if fields.get(name) == default:
             del fields[name]
+    # The cinema badge's default look was the popcorn's "timing" colour when
+    # composites were first keyed with it; written that way still, so the
+    # rename to "auto" doesn't re-key (and re-render) every cached poster.
+    # Posters that draw the badge are refreshed by render revision 16.
+    if fields.get("badge_cinema_style") == "auto":
+        fields["badge_cinema_style"] = "timing"
     return json.dumps(fields, sort_keys=True, default=_stable)
 
 
@@ -2251,7 +2274,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_logo_pos": "left", "landscape_vignette_top": False,
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
                               "rating_badge_kinds": "", "rating_badge_max": 0,
-                              "sash_chip_x": 0.0}
+                              "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": ""}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2431,6 +2454,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_badge_pad           = _f("sash_badge_pad",           cfg.sash_badge_pad,           0.5, 1.5)
     cfg.sash_chip_y              = _f("sash_chip_y",              cfg.sash_chip_y,              -0.02, 0.15)
     cfg.sash_chip_x              = _f("sash_chip_x",              cfg.sash_chip_x,              -0.045, 0.25)
+    cfg.sash_edge_y              = _f("sash_edge_y",              cfg.sash_edge_y,              0.05, 0.95)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
     if "sash_badge_opacity" in params:
@@ -2445,7 +2469,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _style_raw in ("silver", "gold", "frosted", "black"):
         cfg.sash_badge_style = _style_raw
     _pos_raw = (params.get("sash_badge_pos") or "").strip().lower()
-    if _pos_raw in ("center", "left", "right", "auto", "auto_hug"):
+    if _pos_raw in ("center", "left", "right", "auto", "auto_hug", "edge_left", "edge_right"):
         cfg.sash_badge_pos = _pos_raw
     cfg.sash_length_ratio       = _f("sash_length_ratio",      cfg.sash_length_ratio,      0.8, 1.5)
     cfg.sash_height_ratio       = _f("sash_height_ratio",      cfg.sash_height_ratio,      0.06, 0.20)
@@ -2545,6 +2569,9 @@ def build_request_config(params: dict) -> RequestConfig:
     _bap = (params.get("bar_append") or "").strip().lower()
     if _bap in ("rating_year", "rating", "year", "sash"):
         cfg.bar_append = _bap
+    _mo = [t.strip().lower() for t in (params.get("meta_order") or "").split(",") if t.strip()]
+    if sorted(_mo) == sorted(META_FIELDS):
+        cfg.meta_order = ",".join(_mo)
 
     cfg.logo_max_w_ratio   = _f("logo_max_w_ratio",   cfg.logo_max_w_ratio,  0.0, 1.5)
     cfg.logo_max_h_ratio   = _f("logo_max_h_ratio",   cfg.logo_max_h_ratio,  0.0, 1.0)
@@ -2565,8 +2592,8 @@ def build_request_config(params: dict) -> RequestConfig:
     for _gname in graphic_badges.GROUP_PARAMS:
         if _gname in params:
             setattr(cfg, _gname, graphic_badges.format_group(graphic_badges.parse_group(params[_gname])))
-    _cinema_style = (params.get("badge_cinema_style") or "").strip().lower()
-    if _cinema_style in graphic_badges.CINEMA_STYLES:
+    _cinema_style = graphic_badges.cinema_style(params.get("badge_cinema_style"))
+    if _cinema_style:
         cfg.badge_cinema_style = _cinema_style
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
@@ -3700,13 +3727,13 @@ def _build_poster(
     badge_logos: tuple = (None, None),   # (network, studio) graphic_badges.Logo, or None each
     ratings: dict | None = None,         # per-provider scores, for rating badges
     media_kind: str | None = None,       # "movie" | "series" | "anime", for the ribbon's label
-    cinema_run: "graphic_badges.CinemaRun | None" = None,   # the popcorn badge's facts
+    cinema_run: "graphic_badges.CinemaRun | None" = None,   # the cinema badge's facts
 ) -> Image.Image:
 
     width, height = image.size
-    # The popcorn rides with the logos into row_items.  A frosted one takes
-    # the frost colour, which isn't sampled yet: any colour does for the
-    # layout decisions made before it is.
+    # The cinema disc rides with the logos into row_items.  A frosted one
+    # takes the frost colour, which isn't sampled yet: it is laid out as the
+    # plain disc, the same size, until it is.
     badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run))
 
     # An "auto" notch takes its side from where the graphic badges go, so
@@ -4312,7 +4339,7 @@ def _build_poster(
     _frost_tint: tuple[float, float, float] | None = (
         dominant_frost_rgb(_frost_color_src)
         if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted
-            or (cinema_run is not None and cfg.badge_cinema_style == "frosted")) else None
+            or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))) else None
     )
     # A tinted vignette and a frosted notch sample the same artwork but answer
     # different questions — the vignette asks what the band's own stretch of art is
@@ -4381,9 +4408,8 @@ def _build_poster(
                 sash_result if (_append_sash and sash_result) else (None, None)
             )
 
-            _pre_sash = [genre_label] if genre_label else []
-            if _append_year and release_year:
-                _pre_sash.append(str(release_year))
+            _pre = {"genre": genre_label, "year": str(release_year) if (_append_year and release_year) else None}
+            _pre_sash = [_pre[k] for k in _meta_sorted(cfg, ("genre", "year")) if _pre[k]]
             _label_main = " · ".join(_pre_sash)
 
             if _sash_text_for_label:
@@ -4441,8 +4467,11 @@ def _build_poster(
             # is hidden too, which is a valid way to ask for a bare poster.
             # A missing score reads the same way: "★ N/A" says nothing the
             # absence of a star doesn't.
+            _rating_first = _meta_sorted(cfg, ("genre", "rating"))[0] == "rating"
             if cfg.hide_rating or score in ("N/A", None):
                 label = genre_label
+            elif genre_label and _rating_first:
+                label = f"★ {_score_text} · {genre_label}"
             elif genre_label:
                 label = f"{genre_label} ★ {_score_text}"
             else:
@@ -4459,9 +4488,14 @@ def _build_poster(
                 # Genre, then each provider's badge and score where "★ 87" was.
                 def _measure(text: str) -> float:
                     return draw.textlength(text, font=font_meta)
-                _lead = [("text", genre_label), ("gap", font_size * 0.48)] if genre_label else []
-                _run = _lead + _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
-                                       rating_badges.run_width(_lead, _measure))
+                if genre_label and _rating_first:
+                    _tail = [("gap", font_size * 0.48), ("text", genre_label)]
+                    _run = _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
+                                   rating_badges.run_width(_tail, _measure)) + _tail
+                else:
+                    _lead = [("text", genre_label), ("gap", font_size * 0.48)] if genre_label else []
+                    _run = _lead + _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
+                                           rating_badges.run_width(_lead, _measure))
                 _, ty = _text_center(draw, "0", font_meta, width / 2, rating_cy)  # type: ignore
                 rating_badges.draw_run(image, draw, _run,
                                        (width - rating_badges.run_width(_run, _measure)) / 2,
@@ -4531,7 +4565,6 @@ def _build_poster(
                 _score_str = "10" if int(score) >= 100 else f"{int(score) / 10:.1f}"
             else:
                 _score_str = str(score)
-            parts = [(genre_label, None)] if genre_label else []
             left_parts: list[tuple[str, str | None]] = []
             # With rating badges the printed score is a run of badge + score
             # pairs, the first badge standing where the ★ (or other rating
@@ -4542,30 +4575,52 @@ def _build_poster(
                 # Filled in below, once the rest of the line is known.
                 _has_score = True
                 _score_seg, _score_sep = [], "badge"
-            if cfg.minimalist_append_mode == 0:
-                if release_year:
-                    # Year mode carries the score in the separator's colour, so
-                    # that slot has to drop back to a plain field separator when
-                    # the rating is hidden — otherwise the one cue this layout
-                    # shows the score with would survive the switch.
-                    parts.append((str(release_year),
-                                  None if not parts else "field" if cfg.hide_rating else "rfield"))
-                elif cfg.hide_year and _has_score:
-                    # No year to colour the separator before, so the score
-                    # is printed as Rating mode would print it.
-                    parts.append((_score_seg, _score_sep if parts else None))
-            elif cfg.minimalist_append_mode == 1:
-                if _has_score:
-                    parts.append((_score_seg, _score_sep if parts else None))
-            elif cfg.minimalist_append_mode == 3:   # Split
-                if release_year:
-                    parts.append((str(release_year), "field" if parts else None))
-                left_parts, parts = parts, ([(_score_seg, None)] if _has_score else [])
-            else:  # 2 — Both
-                if release_year:
-                    parts.append((str(release_year), "field" if parts else None))
-                if _has_score:
-                    parts.append((_score_seg, _score_sep if parts else None))
+            # What each layout prints, then in meta_order's order.  Year
+            # mode prints the score only with no year to colour the separator
+            # before, as Rating mode would print it.
+            _mode = cfg.minimalist_append_mode
+            _segs: dict = {}
+            if genre_label:
+                _segs["genre"] = genre_label
+            if release_year and _mode in (0, 2, 3):
+                _segs["year"] = str(release_year)
+            if _has_score and (_mode in (1, 2, 3) or (_mode == 0 and not release_year and cfg.hide_year)):
+                _segs["rating"] = _score_seg
+            _keys = _meta_sorted(cfg, [k for k in META_FIELDS if k in _segs])
+
+            def _chain(keys: list[str]) -> list[tuple]:
+                out = []
+                for i, k in enumerate(keys):
+                    seg = _segs[k]
+                    if i == 0:
+                        sep = None
+                        # A score leading the line has nothing before it to be
+                        # its ★, so it carries one of its own.
+                        if (k == "rating" and len(keys) > 1 and isinstance(seg, str)
+                                and cfg.minimalist_rating_separator == "star"):
+                            seg = f"★ {seg}"
+                    elif k == "rating":
+                        sep = _score_sep
+                    elif _mode == 0 and {k, keys[i - 1]} == {"genre", "year"}:
+                        # Year mode carries the score in the separator's colour, so
+                        # that slot has to drop back to a plain field separator when
+                        # the rating is hidden — otherwise the one cue this layout
+                        # shows the score with would survive the switch.
+                        sep = "field" if cfg.hide_rating else "rfield"
+                    else:
+                        sep = "field"
+                    out.append((seg, sep))
+                return out
+
+            if _mode == 3:   # Split: the score on the far margin, left unless it comes first
+                _group = [k for k in _keys if k != "rating"]
+                if "rating" in _segs and _keys[0] == "rating" and _group:
+                    left_parts, parts = [(_segs["rating"], None)], _chain(_group)
+                else:
+                    left_parts = _chain(_group)
+                    parts = [(_segs["rating"], None)] if "rating" in _segs else []
+            else:
+                parts = _chain(_keys)
 
             pip_gap = px(font_size * 0.55)
             pip_w   = max(fixed(4), px(font_size * 0.18))
@@ -4694,12 +4749,13 @@ def _build_poster(
                 _score_str = ""
             _year_str  = str(release_year) if release_year else ""
             _bar_sash, _ = sash_result if sash_result else (None, None)
-            if cfg.bar_append == "rating_year":
-                _parts = [_year_str, genre_label or "", f"★ {_score_str}" if _score_str else ""]
-            elif cfg.bar_append == "rating":
-                _parts = [genre_label or "", f"★ {_score_str}" if _score_str else ""]
-            elif cfg.bar_append == "year":
-                _parts = [_year_str, genre_label or ""]
+            _fields = {"year": _year_str, "genre": genre_label or "",
+                       "rating": f"★ {_score_str}" if _score_str else ""}
+            _bar_keys = {"rating_year": ("year", "genre", "rating"), "rating": ("genre", "rating"),
+                         "year": ("year", "genre")}.get(cfg.bar_append)
+            if _bar_keys:
+                _bar_keys = _meta_sorted(cfg, _bar_keys)
+                _parts = [_fields[k] for k in _bar_keys]
             else:  # "sash"
                 _parts = [genre_label or "", translate_sash(_bar_sash, cfg.logo_language) if _bar_sash else ""]
             _parts = [p for p in _parts if p]
@@ -4730,6 +4786,11 @@ def _build_poster(
                         return runs[:n]
                     # No "·" before the first badge: the badge itself reads as
                     # the break, and a dot beside it looks like two separators.
+                    # Rating first (meta_order): the badges lead instead.
+                    if _bar_keys and _bar_keys[0] == "rating":
+                        tail = [("gap", font_size * 0.62), ("text", _lead_sep.join(_lead_parts))]
+                        return [_rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
+                                        rating_badges.run_width(tail, measure)) + tail]
                     lead = [("text", _lead_sep.join(_lead_parts)), ("gap", font_size * 0.62)]
                     return [lead + _rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
                                            rating_badges.run_width(lead, measure))]
@@ -4793,7 +4854,8 @@ def _build_poster(
                                      position=cfg.sash_badge_pos,
                                      body_opacity=cfg.sash_badge_opacity,
                                      chip_offset=cfg.sash_chip_y,
-                                     chip_offset_x=cfg.sash_chip_x)
+                                     chip_offset_x=cfg.sash_chip_x,
+                                     edge_y=cfg.sash_edge_y)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
@@ -4815,9 +4877,10 @@ def _build_poster(
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
     if _before_overlays is not None:
-        if cinema_run is not None and cfg.badge_cinema_style == "frosted" and _frost_tint is not None:
+        if cinema_run is not None and _frost_tint is not None and graphic_badges.wants_frost(cfg.badge_cinema_style):
             badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(
-                "frosted", cinema_run, _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)))
+                cfg.badge_cinema_style, cinema_run,
+                _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)))
         _draw_graphic_badges(image, cfg, quality_tokens or [], certification, age_rating,
                              _before_overlays, spread_beside_chip=_auto_notch, logo_box=_logo_box,
                              logos=badge_logos)
@@ -4841,7 +4904,8 @@ def _sash_beside_rank(cfg: "RequestConfig") -> "RequestConfig":
         free = "left" if _rank_on_right(cfg) else "right"
         if cfg.sash_mode == "sash":
             return dataclasses.replace(cfg, sash_side=free)
-        if cfg.sash_mode == "notch":
+        if cfg.sash_mode == "notch" and not cfg.sash_badge_pos.startswith("edge_"):
+            # An edge notch is clear of both top corners already.
             return dataclasses.replace(cfg, sash_badge_pos=free)
     return cfg
 
@@ -4972,10 +5036,14 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
     clear = pxi(width * 0.028)
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
 
+    # An edge notch leaves the top to the groups: they take the side chip's
+    # line where it would be, unmoved.
+    _edge = cfg.sash_mode == "notch" and cfg.sash_badge_pos.startswith("edge_")
     band_top, band_h = side_chip_band(width, height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
-                                      cfg.sash_badge_pad, cfg.sash_badge_inset + cfg.sash_chip_y)
+                                      cfg.sash_badge_pad,
+                                      cfg.sash_badge_inset + (0.0 if _edge else cfg.sash_chip_y))
     top_line = band_top + band_h / 2
-    if cfg.sash_mode == "notch" and cfg.sash_badge_pos not in ("left", "right"):
+    if cfg.sash_mode == "notch" and cfg.sash_badge_pos not in ("left", "right") and not _edge:
         # A centred notch hangs from the top edge; share its line.
         _, badge_h, _, _ = notch_heights(height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
                                          cfg.sash_badge_pad)
@@ -6891,6 +6959,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     _RenderRevision(
         rev=15,
         applies=lambda cfg: cfg.shape != "landscape" and "pplus" in cfg.rating_badges.split(","),
+        stale=lambda cfg, facts: True,
+    ),    # 16: The cinema badge is a disc (home date, popcorn or clapper) in
+    #    place of the coloured popcorn.
+    _RenderRevision(
+        rev=16,
+        applies=lambda cfg: any("cinema" in g.slots for g in graphic_badges.cfg_groups(cfg)),
         stale=lambda cfg, facts: True,
     ),
 )
@@ -10102,11 +10176,12 @@ async def get_poster(
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
         _status_grey = rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash
-        # The popcorn badge: a film still in cinemas (or not out at all),
+        # The cinema badge: a film still in cinemas (or not out at all),
         # shown without a sash — or beside a different one.
+        # A series gets it too while it waits to premiere: its premiere date,
+        # or the clapper with none.
         _cinema_badge = (
-            type not in ("tv", "series")
-            and (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
+            (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
             and any("cinema" in g.slots for g in graphic_badges.cfg_groups(rcfg))
         )
         if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:
@@ -10179,17 +10254,25 @@ async def get_poster(
                 _release_status = None
 
         # Also read before that drop, as the badge never needs a status slot.
-        # Its colour counts down to the film's first home release (digital or
-        # disc) — the day the status, and the badge, move on.
+        # It shows the film's first home release (digital or disc) — the day
+        # the status, and the badge, move on.
         _cinema_run: graphic_badges.CinemaRun | None = None
-        if _cinema_badge and _release_status in ("Cinema", "Production"):
+        if _cinema_badge and type in ("tv", "series"):
+            # Only a show that hasn't aired: a renewal or a return date is a
+            # different promise ("Mar 4 Season 3"), and the disc can't say which.
+            if _release_status == "Production":
+                _premiere = (_parse_tmdb_date(_tv_upcoming_date)
+                             if _tv_upcoming_window == "Premiere" else None)
+                _cinema_run = graphic_badges.CinemaRun(
+                    "Production",
+                    _premiere if _premiere is not None and _premiere >= datetime.now().date() else None)
+        elif _cinema_badge and _release_status in ("Cinema", "Production"):
             _home_rows = ((get_cached_movie_release_info(f"movie_{tmdb_id}") or {}) if has_tmdb_id else {},
                           mdblist_release_dates(effective_imdb_id, type) or {})
             _home = [d for d in (_parse_tmdb_date(r.get(k)) for r in _home_rows
                                  for k in ("digital_date", "physical_date", "released_digital"))
                      if d is not None and d >= datetime.now().date()]
-            _cinema_run = graphic_badges.CinemaRun(
-                _release_status, (min(_home) - datetime.now().date()).days if _home else None)
+            _cinema_run = graphic_badges.CinemaRun(_release_status, min(_home) if _home else None)
 
         # Read before the status is dropped below, which it is when only
         # hide_unreleased_rating asked for it: the status also drives the
@@ -10323,7 +10406,8 @@ async def get_poster(
                 "matched_directors": discovery_meta.matched_directors,
                 "matched_cast":      discovery_meta.matched_cast,
                 "release_status":    discovery_meta.release_status,
-                "cinema_badge":      ({"status": _cinema_run.status, "days_to_home": _cinema_run.days_to_home}
+                "cinema_badge":      ({"status": _cinema_run.status,
+                                       "home_date": _cinema_run.home_date.isoformat() if _cinema_run.home_date else None}
                                       if _cinema_run else None),
                 "upcoming_release_date": discovery_meta.upcoming_release_date,
                 "upcoming_release_window": discovery_meta.upcoming_release_window,

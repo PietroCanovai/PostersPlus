@@ -3034,6 +3034,18 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep" id="rating-labels-group">
               <span class="group-title">Labels</span>
+              <div class="field" id="meta-order-field">
+                <label class="field-label" data-tip="The order the genre, year and rating are printed in, in every mode and shape that prints more than one of them. A field a mode doesn't print is skipped. Default keeps each mode's own order. In Minimalist's Split layout the rating keeps its own margin: the right one, or the left one when it comes first.">Order</label>
+                <select id="cfg-meta-order" onchange="build(); queuePreviewReload()">
+                  <option value="" selected>Default</option>
+                  <option value="genre,year,rating">Genre · Year · Rating</option>
+                  <option value="genre,rating,year">Genre · Rating · Year</option>
+                  <option value="year,genre,rating">Year · Genre · Rating</option>
+                  <option value="year,rating,genre">Year · Rating · Genre</option>
+                  <option value="rating,genre,year">Rating · Genre · Year</option>
+                  <option value="rating,year,genre">Rating · Year · Genre</option>
+                </select>
+              </div>
               <div class="toggle-row" id="hide-genre-row">
                 <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
                 <label class="toggle-switch">
@@ -3262,13 +3274,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field portrait-only" id="sash-badge-pos-field" style="display:none;">
-              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
+              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there. Left/Right Edge hang the notch off that side of the poster instead of the top, its label running along the edge; Edge Position moves it up and down.">Position</label>
               <select id="cfg-sash-badge-pos" onchange="updateBadgeStyleFields(); build(); queuePreviewReload()">
                 <option value="center" selected>Centre</option>
                 <option value="left">Left</option>
                 <option value="right">Right</option>
                 <option value="auto">Auto</option>
                 <option value="auto_hug">Auto, Beside Notch</option>
+                <option value="edge_left">Left Edge</option>
+                <option value="edge_right">Right Edge</option>
               </select>
             </div>
             <div class="field portrait-only" id="sash-text-color-field" style="display:none;">
@@ -3479,6 +3493,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-sash-chip-y" min="-0.020" max="0.150" step="0.005" value="0.000" oninput="updateRange(this,'rng-scy'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-scy">0.000</span>
+                </div>
+              </div>
+              <div class="field" id="sash-edge-y-field" style="display:none;">
+                <label class="field-label" data-tip="Where the edge notch sits down the side of the poster, as a share of its height, measured to the notch's middle.">Edge Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-edge-y" min="0.05" max="0.95" step="0.01" value="0.50" oninput="updateRange(this,'rng-sey'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sey">0.50</span>
                 </div>
               </div>
               <div class="field" id="sash-chip-x-field" style="display:none;">
@@ -3741,12 +3762,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="sash-list" id="gb-badge-list"></div>
               </div>
               <div class="field" id="gb-cinema-style-field" style="display:none">
-                <label class="field-label" data-tip="The popcorn shows on a film that is still in cinemas, or not out yet, without taking the sash. By Streaming Date turns it green inside a week of its digital release, amber inside two weeks, and red further off or when no date is known.">Popcorn Colour</label>
+                <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint.">Cinema Badge Style</label>
                 <select id="cfg-badge-cinema-style" onchange="build(); queuePreviewReload()">
-                  <option value="timing" selected>By Streaming Date</option>
-                  <option value="red">Red</option>
-                  <option value="black">Black</option>
-                  <option value="white">White</option>
+                  <option value="auto" selected>Auto (Light / Dark)</option>
                   <option value="frosted">Frosted</option>
                 </select>
               </div>
@@ -4811,7 +4829,7 @@ const GB_SLOTS = [
   { id: 'cert',  label: 'Certificate' },
   { id: 'network', label: 'Network' },
   { id: 'studio',  label: 'Studio' },
-  { id: 'cinema',  label: 'In Cinemas (Popcorn)' },
+  { id: 'cinema',  label: 'In Cinemas (Release Date)' },
 ];
 const GB_ANCHORS = ['chip', 'tl', 'tr', 'bl', 'br', 'above_logo', 'below_logo'];
 const GB_SIZE = 22, GB_SPACING = 0.028;   // graphic_badges.DEFAULT_SIZE / DEFAULT_SPACING
@@ -6640,6 +6658,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // One value for both shapes: whether a title is out does not depend on
   // which layout is drawing it.
   params.set('hide_unreleased_rating', c('tog-hide-unreleased-rating') ? 'true' : 'false');
+  // Also one value for both shapes.
+  if (vEl('cfg-meta-order')) params.set('meta_order', vEl('cfg-meta-order'));
 
   // Landscape draws its one badge its own way: the mode only decides whether
   // it is drawn, the priority list what it says.  Everything else here is
@@ -6647,7 +6667,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (showSash && emitAll) {
     if (c('tog-sash-winner-star')) params.set('sash_winner_star', 'true');
     const _stc = document.getElementById('cfg-sash-text-color').value.trim();
-    if (/^[0-9a-fA-F]{6}$/i.test(_stc)) params.set('sash_text_color', _stc);
+    const _frostedNotch = sashMode === 'notch' && vEl('cfg-sash-badge-style') === 'frosted';
+    if (/^[0-9a-fA-F]{6}$/i.test(_stc) && !_frostedNotch) params.set('sash_text_color', _stc);
     if (sashMode === 'notch') {
       params.set('sash_badge_style',         vEl('cfg-sash-badge-style') || 'silver');
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
@@ -6664,8 +6685,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       // Every notch style can float off centre (it was frosted only).
       const _pos = vEl('cfg-sash-badge-pos') || 'center';
       if (_pos !== 'center') params.set('sash_badge_pos', _pos);
-      if (_pos !== 'center' && n('cfg-sash-chip-y') !== 0) params.set('sash_chip_y', n('cfg-sash-chip-y').toFixed(3));
-      if (_pos !== 'center' && n('cfg-sash-chip-x') !== 0) params.set('sash_chip_x', n('cfg-sash-chip-x').toFixed(3));
+      const _edge = _pos.startsWith('edge_');
+      if (_pos !== 'center' && !_edge && n('cfg-sash-chip-y') !== 0) params.set('sash_chip_y', n('cfg-sash-chip-y').toFixed(3));
+      if (_pos !== 'center' && !_edge && n('cfg-sash-chip-x') !== 0) params.set('sash_chip_x', n('cfg-sash-chip-x').toFixed(3));
+      if (_edge && n('cfg-sash-edge-y') !== 0.5) params.set('sash_edge_y', n('cfg-sash-edge-y').toFixed(2));
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -6736,12 +6759,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const _qualityShown = (emitAll && badgeUsesQuality(badgeMode, pGroups))
     || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
   if (_qualityShown && !params.has('badge_min_score')) params.set('badge_min_score', ni('cfg-badge-min-score'));
-  // The popcorn's colour is one setting for both shapes, like the minimum.
+  // The cinema badge's style is one setting for both shapes, like the minimum.
   const _cinemaShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'cinema')))
     || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'cinema')));
-  if (_cinemaShown && vEl('cfg-badge-cinema-style') !== 'timing') {
-    params.set('badge_cinema_style', vEl('cfg-badge-cinema-style'));
-  }
+  if (_cinemaShown && vEl('cfg-badge-cinema-style') === 'frosted') params.set('badge_cinema_style', 'frosted');
   if (_qualityShown && c('tog-wait-quality')) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
@@ -7723,14 +7744,22 @@ function updateBadgeStyleFields() {
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-pos-field').style.display =
     (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch') ? '' : 'none';
+  const _npos = vEl('cfg-sash-badge-pos') || 'center';
+  const _chipPos = _npos !== 'center' && !_npos.startsWith('edge_');
   document.getElementById('sash-chip-y-field').style.display =
-    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch'
-     && (vEl('cfg-sash-badge-pos') || 'center') !== 'center') ? '' : 'none';
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch' && _chipPos) ? '' : 'none';
   document.getElementById('sash-chip-x-field').style.display =
-    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch'
-     && (vEl('cfg-sash-badge-pos') || 'center') !== 'center') ? '' : 'none';
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch' && _chipPos) ? '' : 'none';
+  document.getElementById('sash-edge-y-field').style.display =
+    (!c('tog-landscape') && vEl('cfg-sash-mode') === 'notch' && _npos.startsWith('edge_')) ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
+  // A frosted notch picks its own label ink (dark or light, by the tint), so
+  // a text colour does nothing there.
+  if (!c('tog-landscape')) {
+    document.getElementById('sash-text-color-field').style.display =
+      (vEl('cfg-sash-mode') !== 'hidden' && !isFrosted) ? '' : 'none';
+  }
   // A frosted notch takes over the colour controls, so refresh the Rating
   // section's own toggle/slider (they hide while a frosted notch is shown).
   _updateBarRatingRows();
@@ -8020,7 +8049,7 @@ function updateShapeFields() {
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
                     'sash-badge-saturation-field', 'sash-badge-pos-field', 'sash-chip-y-field',
-                    'sash-chip-x-field']) {
+                    'sash-chip-x-field', 'sash-edge-y-field']) {
     const el = document.getElementById(id);
     if (!el) continue;
     // Portrait: show everything again first, then let the mode logic below
@@ -8324,6 +8353,9 @@ function _ratingLabelParts() {
     badges: mode === 2 || (mode === 3 && (minAppend !== 0 || c('tog-hide-year')))
             || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating')),
     barScore: mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating'),
+    // A score printed as part of the text line, which the order can move.
+    printedScore: mode === 2 || (mode === 3 && (minAppend !== 0 || c('tog-hide-year')))
+                  || (mode === 4 && (barAppend === 'rating_year' || barAppend === 'rating')),
   };
 }
 
@@ -8337,6 +8369,10 @@ function _updateLabelRows() {
   show('hide-year-row', parts.year);
   show('hide-rating-row', parts.score);
   show('hide-unreleased-rating-row', parts.score);
+  // Only where a mode prints two of the three (the Rating Bar's score is the
+  // bar itself, not part of the line).
+  const printed = [parts.genre, parts.year, parts.printedScore].filter(Boolean).length;
+  show('meta-order-field', printed >= 2);
   const group = document.getElementById('rating-labels-group');
   if (group) group.style.display = (landscape || parts.genre) ? '' : 'none';
 }
@@ -8839,7 +8875,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'cfg-language', 'cfg-language-secondary', 'cfg-logo-priority',
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
-  'tog-hide-unreleased-rating',
+  'tog-hide-unreleased-rating', 'cfg-meta-order',
   'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
@@ -9272,6 +9308,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('release_status_dates')) _setEl('tog-release-dates', p.get('release_status_dates'));
   if (p.has('hide_unreleased_rating')) _setEl('tog-hide-unreleased-rating', p.get('hide_unreleased_rating'));
+  {
+    const _mo = (p.get('meta_order') || '').toLowerCase().replace(/\s+/g, '');
+    const _moOpt = [...document.getElementById('cfg-meta-order').options].some(o => o.value === _mo);
+    _setEl('cfg-meta-order', _moOpt ? _mo : '');
+  }
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.
@@ -9282,6 +9323,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-sash-badge-pos', p.get('sash_badge_pos') || 'center');
   _setEl('cfg-sash-chip-y', p.get('sash_chip_y') || '0.000');
   _setEl('cfg-sash-chip-x', p.get('sash_chip_x') || '0.000');
+  _setEl('cfg-sash-edge-y', p.get('sash_edge_y') || '0.50');
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
@@ -9428,7 +9470,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('badge_group2')) _setEl('cfg-badge-group2', p.get('badge_group2'));
   if (p.has('badge_group3')) _setEl('cfg-badge-group3', p.get('badge_group3'));
   if (p.has('badge_group4')) _setEl('cfg-badge-group4', p.get('badge_group4'));
-  _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') || 'timing');
+  // The old popcorn colours (timing, red, black, white) all read as Auto.
+  _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') === 'frosted' ? 'frosted' : 'auto');
   gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that

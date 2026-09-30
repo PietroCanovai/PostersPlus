@@ -80,7 +80,7 @@ class ReleaseStatusSashTests(unittest.TestCase):
 
 class UpcomingReleaseDateTests(unittest.TestCase):
     def _run(self, status, info, primary=None):
-        async def _fake(client, tmdb_id, key, tmdb_status):
+        async def _fake(client, tmdb_id, key, tmdb_status, primary_release_date=None):
             return info
         with patch.object(tmdb, "fetch_movie_release_info", _fake):
             return asyncio.run(tmdb.fetch_upcoming_movie_release(
@@ -94,6 +94,15 @@ class UpcomingReleaseDateTests(unittest.TestCase):
         info = {"theatrical_date": _iso(20, date.today()),
                 "digital_date": _iso(30, date.today()), "physical_date": None}
         self.assertEqual(self._run("Production", info), (_iso(20, date.today()), "Cinema"))
+
+    def test_a_same_day_cinema_and_streaming_release_is_a_streaming_one(self):
+        # A streamer's film opening in a few cinemas the day it streams
+        # (Animals: US theatrical and Netflix both Oct 9) reaches home that day.
+        day = _iso(9, date.today())
+        info = {"theatrical_date": day, "digital_date": day, "physical_date": None}
+        self.assertEqual(self._run("Production", info), (day, "Streaming"))
+        info = {"theatrical_date": day, "digital_date": None, "physical_date": day}
+        self.assertEqual(self._run("Production", info), (day, "Physical"))
 
     def test_cinema_ignores_its_own_theatrical_date(self):
         info = {"theatrical_date": _iso(-10, date.today()),
@@ -119,6 +128,55 @@ class UpcomingReleaseDateTests(unittest.TestCase):
         for status in ("Streaming", "Physical", "Cancelled", None):
             with self.subTest(status=status):
                 self.assertIsNone(self._run(status, {"digital_date": _iso(9, date.today())}))
+
+
+class PreReleaseShortcutTests(unittest.TestCase):
+    """A film TMDB calls Planned / In Production skips /release_dates, unless
+    its primary release date is ahead: then the dates say what that day is."""
+
+    def _fetch(self, cached, primary, tmdb_status="Planned"):
+        calls, stored = [], {}
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                day = _iso(9, date.today())
+                return {"results": [{"iso_3166_1": "US", "release_dates": [
+                    {"type": 2, "release_date": day}, {"type": 4, "release_date": day}]}]}
+
+        class _Client:
+            async def get(self, url, params=None):
+                calls.append(url)
+                return _Resp()
+
+        with patch.object(tmdb, "get_cached_movie_release_info", lambda k: cached), \
+             patch.object(tmdb, "set_cached_movie_release_info",
+                          lambda k, info, *a: stored.update(info)):
+            info = asyncio.run(tmdb.fetch_movie_release_info(
+                _Client(), "1", "k", tmdb_status, primary_release_date=primary))
+        return info, calls
+
+    def test_no_future_primary_date_keeps_the_shortcut(self):
+        info, calls = self._fetch(None, None)
+        self.assertEqual((info["status"], calls), ("Production", []))
+        self.assertTrue(info["pre_release_shortcut"])
+
+    def test_a_future_primary_date_looks_and_finds_the_streaming_day(self):
+        info, calls = self._fetch(None, _iso(9, date.today()))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(info["digital_date"], _iso(9, date.today()))
+        self.assertTrue(info["dates_checked"])
+
+    def test_a_shortcut_row_is_looked_past_but_a_checked_one_is_kept(self):
+        shortcut = {"status": "Production", "theatrical_date": None, "digital_date": None,
+                    "physical_date": None, "premiere_date": None, "pre_release_shortcut": True}
+        _, calls = self._fetch(shortcut, _iso(9, date.today()))
+        self.assertEqual(len(calls), 1)
+        checked = dict(shortcut, pre_release_shortcut=False, dates_checked=True)
+        _, calls = self._fetch(checked, _iso(9, date.today()))
+        self.assertEqual(calls, [])
 
 
 class ReleasedFlagTests(unittest.TestCase):
@@ -217,7 +275,7 @@ class ReleaseDateTranslationTests(unittest.TestCase):
 
 class JustAddedDigitalDateTests(unittest.TestCase):
     def _run(self, info):
-        async def _fake(client, tmdb_id, key, tmdb_status):
+        async def _fake(client, tmdb_id, key, tmdb_status, primary_release_date=None):
             return info
         with patch.object(tmdb, "fetch_movie_release_info", _fake):
             return asyncio.run(tmdb.fetch_recent_movie_digital_release_date(
