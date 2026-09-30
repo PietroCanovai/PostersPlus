@@ -1948,6 +1948,7 @@ class RequestConfig:
     fade_color:        tuple[int, int, int] | None = None   # colour of a tinted vignette
     logo_color:        tuple[int, int, int] | None = None   # recolour the logo
     logo_color_mode:   str   = "solid"                      # "solid" | "tint"
+    notch_text_color:  tuple[int, int, int] | None = None   # notch label, honoured by every style
 
 
 # Settings the landscape renderer shares with portrait but wants set
@@ -2302,7 +2303,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               # Fork (Studio) fields: absent at their defaults.
                               "art_poster": "", "art_crop": "", "art_original": False, "art_logo": "",
                               "art_exclude": (), "art_logo_exclude": (), "tint_color": None,
-                              "fade_color": None, "logo_color": None, "logo_color_mode": "solid"}
+                              "fade_color": None, "logo_color": None, "logo_color_mode": "solid",
+                              "notch_text_color": None}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -4410,6 +4412,8 @@ def _build_poster(
     # back as a bright one.  "match" holds chroma where the band had it.  The two
     # controls are mutually exclusive in the configurator for the same reason.
     _frost_ref: bool | str = "match" if _frost_matched else cfg.frost_reference
+    if cfg.tint_color is not None:  # fork hook (Studio): a chosen colour shows as itself
+        _frost_ref = "match"
     # One saturation for every frosted element: a frosted notch owns it (its slider
     # lives in the sash panel); otherwise the rating bar's slider drives it. Sharing
     # it keeps the bar and any sash/notch identical.
@@ -4900,7 +4904,9 @@ def _build_poster(
                                      frost_reference=_frost_ref,
                                      tint_rgb=_frost_tint,
                                      star=_is_star,
-                                     text_color=cfg.sash_text_color,
+                                     # fork hook (Studio): a chosen notch text colour wins
+                                     text_color=cfg.notch_text_color or cfg.sash_text_color,
+                                     force_text=cfg.notch_text_color is not None,
                                      position=cfg.sash_badge_pos,
                                      body_opacity=cfg.sash_badge_opacity,
                                      chip_offset=cfg.sash_chip_y,
@@ -4915,7 +4921,7 @@ def _build_poster(
                                     frost_saturation=_frost_sat,
                                     frost_reference=_frost_ref,
                                     star=_is_star,
-                                    text_color=cfg.sash_text_color,
+                                    text_color=cfg.notch_text_color or cfg.sash_text_color,  # fork hook
                                     side=cfg.sash_side)
 
     # --- Trending rank mark ---

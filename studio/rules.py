@@ -25,7 +25,7 @@ from . import db
 MODES = ("auto", "pinned", "rotation")
 NEVER_KINDS = ("poster", "logo")
 # Look colours → the renderer parameters they set.
-COLOR_PARAMS = {"tint": "tint_color", "fade": "fade_color", "sash_text": "sash_text_color",
+COLOR_PARAMS = {"tint": "tint_color", "fade": "fade_color", "sash_text": "notch_text_color",
                 "rating_text": "rating_text_color", "logo": "logo_color"}
 _HEX = re.compile(r"^[0-9a-fA-F]{6}$")
 _PARAM = re.compile(r"^[a-z][a-z0-9_]{0,63}$")

@@ -12,7 +12,7 @@ const MODES = [
 const COLORS = [
   ['tint', 'tint_color', 'Notch colour', 'The frosted notch at the top (normally sampled from the poster).'],
   ['fade', 'fade_color', 'Fade colour', 'The dark fade behind the logo.'],
-  ['sash_text', 'sash_text_color', 'Notch text', 'The label inside the notch.'],
+  ['sash_text', 'notch_text_color', 'Notch text', 'The label inside the notch.'],
   ['logo', 'logo_color', 'Logo colour', 'Recolours the logo (solid or tinted).'],
 ];
 const STYLE_CONTROLS = [

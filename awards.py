@@ -1669,6 +1669,7 @@ def draw_award_badge(
     chip_offset: float = 0.0,         # side chip only: moved down by this fraction of poster height
     chip_offset_x: float = 0.0,       # side chip only: moved in from its corner by this fraction of poster width
     edge_y: float = 0.5,              # edge notch only: its centre, as a fraction of poster height
+    force_text: bool = False,         # fork (Studio): the frosted style honours text_color too
     _geom: tuple[int, int] | None = None,   # edge notch: the poster's (width, height), sizes come from it
     _along: float | None = None,            # edge notch: centre along the (turned) top edge, in pixels
 ) -> Image.Image:
@@ -1715,7 +1716,7 @@ def draw_award_badge(
             image.transpose(turn), label, sash_type, size_ratio_w, size_ratio_h, notch_style,
             0.0, notch_pad_ratio, font_size_ratio, frost_opacity, frost_saturation,
             frost_reference, tint_rgb, star, text_color, "center", body_opacity,
-            _geom=image.size, _along=(image.height - y) if left else y)
+            force_text=force_text, _geom=image.size, _along=(image.height - y) if left else y)
         return drawn.transpose(back)
 
     width, height = _geom or image.size
@@ -1853,8 +1854,9 @@ def draw_award_badge(
         # either — every other frost is light by construction).
         # (text_color is deliberately not consulted here: this style has always
         # ignored it, and honouring it now would restyle existing posters.)
+        _ink = text_color if (force_text and text_color is not None) else _frost_ink(fr_r, fr_g, fr_b)
         badge = Image.alpha_composite(badge, _notch_label_layer_1x(
-            label, font_size_ss, SS, badge_w, badge_h, (*_frost_ink(fr_r, fr_g, fr_b), 245)
+            label, font_size_ss, SS, badge_w, badge_h, (*_ink, 245)
         ))
 
         result = image.copy()
