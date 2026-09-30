@@ -3,7 +3,8 @@ fonts Posters+ can't ship: a bought font, a house font.
 
 An upload is made ready the way the shipped label fonts are
 (fontprep): a .otf's outlines become TrueType ones, heavy hinting comes
-out, and Inter's ★ goes in when the font has none — the labels draw "★ 87".
+out, and Inter's ★, separators and dashes go in where the font has none —
+the labels draw "★ 87" and "Drama · 2024".
 It is kept under CUSTOM_FONT_DIR by content hash, and the index there
 (fonts.json) maps each font's key — "custom-" and a slug of its name, the
 value label_font takes — to its file.  Uploading under a name already in use
@@ -35,6 +36,10 @@ MAX_NAME = 40
 # Room for a big family's Bold; a CJK font runs to 20 MB and more, and its
 # outlines would take a long while to convert.
 MAX_FONT_BYTES = 20 * 1024 * 1024
+
+# How an upload is prepared; an entry kept by an older version is prepared
+# again at startup (upgrade).  2: the separators and dashes, not only the ★.
+PREP_VERSION = 2
 
 _INDEX = "fonts.json"
 _FILE_RE = re.compile(r"^[0-9a-f]{16}\.ttf$")
@@ -181,8 +186,9 @@ def prepare(data: bytes) -> tuple[bytes, str, list[str]]:
             raise ValueError("the font has no outlines Posters+ can draw")
         if fontprep.strip_heavy_hinting(font):
             notes.append("hinting removed")
-        if fontprep.add_star(font) is not None:
-            notes.append("★ added from Inter")
+        added = fontprep.add_label_symbols(font)
+        if added:
+            notes.append(f"{' '.join(added)} added from Inter")
         family = clean_text(font["name"].getBestFamilyName() or "", 80) if "name" in font else ""
         sub = clean_text(font["name"].getBestSubFamilyName() or "", 40) if "name" in font else ""
         buf = io.BytesIO()
@@ -199,10 +205,11 @@ def prepare(data: bytes) -> tuple[bytes, str, list[str]]:
 def _check_draws(data: bytes) -> None:
     """Both renderers can load the prepared font and draw a label with it."""
     from PIL import ImageFont
+    import fontprep
     try:
         font = ImageFont.truetype(io.BytesIO(data), 40)
         notdef = bytes(font.getmask("\U0010FFFD"))
-        for text in ("★", "Sci-Fi 88"):
+        for text in (*fontprep.LABEL_SYMBOLS, "Sci-Fi 88"):
             mask = font.getmask(text)
             if mask.getbbox() is None or bytes(mask) == notdef:
                 raise ValueError
@@ -252,6 +259,15 @@ def _sweep(items: list[dict]) -> None:
                 pass
 
 
+def _write_font(file: str, data: bytes) -> None:
+    final = os.path.join(_dir(), file)
+    if not os.path.exists(final):
+        tmp = f"{final}.tmp-{os.getpid()}-{threading.get_ident()}"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, final)
+
+
 def store(data: bytes, name: str) -> dict:
     """Prepare and keep an uploaded font under *name*, replacing the font
     already under it; returns its admin entry.  ValueError when it can't be
@@ -265,14 +281,9 @@ def store(data: bytes, name: str) -> dict:
         replacing = any(f["key"] == key for f in items)
         if not replacing and len(items) >= MAX_FONTS:
             raise ValueError(f"that's the limit of {MAX_FONTS} fonts; delete one first")
-        final = os.path.join(_dir(), file)
-        if not os.path.exists(final):
-            tmp = f"{final}.tmp-{os.getpid()}-{threading.get_ident()}"
-            with open(tmp, "wb") as fh:
-                fh.write(ready)
-            os.replace(tmp, final)
-        entry = {"key": key, "name": name, "file": file, "family": family,
-                 "size": len(ready), "notes": notes, "added": int(time.time())}
+        _write_font(file, ready)
+        entry = {"key": key, "name": name, "file": file, "family": family, "size": len(ready),
+                 "notes": notes, "added": int(time.time()), "prep": PREP_VERSION}
         items = [entry if f["key"] == key else f for f in items] if replacing else items + [entry]
         _write_index(items)
         _sweep(items)
@@ -290,3 +301,46 @@ def delete(key: str) -> bool:
         _sweep(kept)
     refresh(force=True)
     return True
+
+
+def upgrade() -> int:
+    """Prepare again every font kept by an older PREP_VERSION — its stored
+    file is itself a font prepare() takes — so a font uploaded before a
+    preparation fix gets it without a new upload.  The number upgraded.  Run
+    once at startup; every worker may, and the lock makes the rest find
+    nothing to do.  Blocking."""
+    if not os.path.exists(_index_path()):
+        return 0
+    done = 0
+    with _locked():
+        items = _read_index()
+        for i, f in enumerate(items):
+            if f.get("prep", 1) >= PREP_VERSION:
+                continue
+            try:
+                with open(os.path.join(_dir(), f["file"]), "rb") as fh:
+                    ready, _family, notes = prepare(fh.read())
+            except (OSError, ValueError):
+                continue   # left as it was: still draws, as before
+            file = f"{hashlib.sha256(ready).hexdigest()[:16]}.ttf"
+            _write_font(file, ready)
+            # This pass only adds; what the first one did still stands.
+            items[i] = {**f, "file": file, "size": len(ready), "prep": PREP_VERSION,
+                        "notes": _merge_notes(f.get("notes", []), notes)}
+            done += 1
+        if done:
+            _write_index(items)
+            _sweep(items)
+    if done:
+        refresh(force=True)
+    return done
+
+
+def _merge_notes(old: list, new: list) -> list:
+    import fontprep
+    added = {ch for n in (*old, *new) if n.endswith(" added from Inter")
+             for ch in n[:-len(" added from Inter")].split()}
+    notes = [n for n in old if not n.endswith(" added from Inter")]
+    notes += [n for n in new if n not in notes and not n.endswith(" added from Inter")]
+    ordered = [ch for ch in fontprep.LABEL_SYMBOLS if ch in added]
+    return notes + ([f"{' '.join(ordered)} added from Inter"] if ordered else [])

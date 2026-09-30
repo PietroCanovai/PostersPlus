@@ -5,8 +5,8 @@ added where the family has none.
     docker run --rm -v "$PWD":/app -w /app python:3.11-slim \
         sh -c "pip install -q fonttools && python3 tools/build_label_fonts.py [OUT_DIR] [FAMILY ...]"
 
-Almost no Google Fonts family has the ★ the labels draw; fontprep.add_star
-copies Inter Bold's in, and strip_heavy_hinting takes out the per-glyph
+Almost no Google Fonts family has the ★ the labels draw; fontprep's
+add_label_symbols copies Inter Bold's in (and any separator a family lacks), and strip_heavy_hinting takes out the per-glyph
 hinting that made some families (Fira Sans, Barlow Condensed) ~9x slower to
 draw.  The families here are under the SIL Open Font License 1.1 and declare
 no Reserved Font Name, so a modified font keeps its name.
@@ -24,7 +24,7 @@ import urllib.request
 from fontTools.ttLib import TTFont
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from fontprep import add_star, strip_heavy_hinting  # noqa: E402
+from fontprep import add_label_symbols, strip_heavy_hinting  # noqa: E402
 
 # Google Fonts family → output file.
 FAMILIES: dict[str, str] = {
@@ -71,10 +71,10 @@ def main() -> None:
     for family in wanted:
         font = download_bold(family)
         stripped = strip_heavy_hinting(font)
-        k = add_star(font, inter)
+        added = add_label_symbols(font, inter)
         out = os.path.join(out_dir, FAMILIES[family])
         font.save(out)
-        note = "has its own ★" if k is None else f"★ scaled {k:.3f} from Inter"
+        note = f"{' '.join(added)} added from Inter" if added else "has every label symbol"
         print(f"wrote {out} ({note}{', hinting stripped' if stripped else ''})")
 
 

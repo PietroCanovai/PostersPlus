@@ -6068,6 +6068,16 @@ async def lifespan(app: FastAPI):
     _configurator_html = _load_configurator_html()
     load_languages()   # poster-output translations (English fallback if absent)
     _render_assets_signature = _compute_render_assets_signature()
+
+    async def _upgrade_custom_fonts():
+        try:
+            n = await asyncio.to_thread(custom_fonts.upgrade)
+            if n:
+                logger.info(f"Custom fonts: {n} prepared again for the current label symbols")
+        except Exception as exc:
+            logger.warning(f"Custom font upgrade skipped: {exc}")
+    # Held in the lifespan frame, which lives as long as the app.
+    _font_upgrade_task = asyncio.create_task(_upgrade_custom_fonts())  # noqa: F841
     # Count the genre fallback backgrounds without decoding them.  These are only
     # used when a title has no usable art at all, so warming the whole set into
     # memory cost ~172 MB resident for a path most requests never touch; they now

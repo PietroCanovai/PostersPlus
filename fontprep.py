@@ -1,25 +1,33 @@
 """Make a font ready to draw labels in, with fontTools: a CFF (.otf) font's
-outlines turned into TrueType ones, heavy hinting taken out, and the ★ the
-labels draw added from Inter Bold when the font has none.
+outlines turned into TrueType ones, heavy hinting taken out, and the symbols
+the labels draw (★ • · … — –) added from Inter Bold where the font has none.
 
 Used by tools/build_label_fonts.py for the shipped label fonts and by
 custom_fonts for the ones an operator uploads.
 
-The labels draw "★ 87" in the same font as the words, and almost no font has
-U+2605 (of ~85 Google Fonts families checked, only Inter, Plus Jakarta Sans
-and M PLUS 1p do).  Inter's is scaled so it stands as tall against the font's
-capitals as it does against Inter's, and given Inter's advance in proportion.
+The labels draw "★ 87" and "Drama · 2024" in the same font as the words.
+Almost no font has U+2605 (of ~85 Google Fonts families checked, only Inter,
+Plus Jakarta Sans and M PLUS 1p do), and a display or handwriting font may
+have no punctuation beyond ASCII at all.  Inter's glyphs are scaled so they
+stand as tall against the font's capitals as they do against Inter's, and
+given Inter's advances in proportion.
 """
 from __future__ import annotations
 
 import os
 
 from fontTools.pens.cu2quPen import Cu2QuPen
+from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 
 STAR = 0x2605
+# Every non-ASCII symbol label code draws in the label font itself: the ★ and
+# the separators, the landscape title's ellipsis, and the dash a scoreless
+# genre preview shows.  (Translated labels are the language's own letters,
+# which fonts.resolve_label_font falls back for instead.)
+LABEL_SYMBOLS = "★•·…—–"
 INTER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf")
 
 # Tables that only hinting reads.
@@ -29,7 +37,7 @@ _HINTING_TABLES = ("fpgm", "prep", "cvt ", "hdmx", "VDMX", "LTSH", "gasp")
 def cff_to_glyf(font: TTFont) -> None:
     """Turn a CFF-flavoured OpenType font's cubic outlines into TrueType's
     quadratic ones, in place, so it is built the same way as every other
-    label font (and add_star has one outline format to write)."""
+    label font (and add_label_symbols has one outline format to write)."""
     order = font.getGlyphOrder()
     glyph_set = font.getGlyphSet()
     glyphs = {}
@@ -89,39 +97,48 @@ def strip_heavy_hinting(font: TTFont) -> bool:
     return True
 
 
-def add_star(font: TTFont, inter: TTFont | None = None) -> float | None:
-    """Copy Inter Bold's ★ into *font* (TrueType outlines), in place; the
-    scale used, or None when the font has a ★ of its own."""
-    if STAR in font.getBestCmap():
-        return None
+def add_label_symbols(font: TTFont, inter: TTFont | None = None) -> str:
+    """Copy Inter Bold's glyph for each of LABEL_SYMBOLS the font has none
+    for into *font* (TrueType outlines), in place; the symbols added."""
+    have = font.getBestCmap()
+    missing = [ch for ch in LABEL_SYMBOLS if ord(ch) not in have]
+    if not missing:
+        return ""
     inter = inter or TTFont(INTER_PATH)
-    src_name = inter.getBestCmap()[STAR]
     k = _cap_height(font) / _cap_height(inter)
-    pen = TTGlyphPen(None)
-    inter.getGlyphSet()[src_name].draw(TransformPen(pen, (k, 0, 0, k, 0, 0)))
-    glyph = pen.glyph()
-
-    name = "uni2605"
-    while name in font.getGlyphOrder():
-        name += ".star"
+    inter_cmap = inter.getBestCmap()
+    inter_glyphs = inter.getGlyphSet()
     glyf = font["glyf"]
-    glyf[name] = glyph   # appends to the glyph order; maxp recounts on save
-    glyph.recalcBounds(glyf)
-    adv, _lsb = inter["hmtx"][src_name]
-    font["hmtx"][name] = (round(adv * k), glyph.xMin)
-    # Per-glyph tables add_star doesn't fill in fail to save without the new
-    # glyph: vertical metrics get a plain full-height box; the device-metric
-    # caches are optional and simply dropped.
-    if "vmtx" in font:
-        font["vmtx"][name] = (font["head"].unitsPerEm, 0)
+    for ch in missing:
+        src_name = inter_cmap[ord(ch)]
+        # Inter builds some (… from its period) out of other glyphs; copied
+        # as plain outlines, since those glyphs aren't in this font.
+        rec = DecomposingRecordingPen(inter_glyphs)
+        inter_glyphs[src_name].draw(rec)
+        pen = TTGlyphPen(None)
+        rec.replay(TransformPen(pen, (k, 0, 0, k, 0, 0)))
+        glyph = pen.glyph()
+        name = f"uni{ord(ch):04X}"
+        while name in font.getGlyphOrder():
+            name += ".inter"
+        glyf[name] = glyph   # appends to the glyph order; maxp recounts on save
+        glyph.recalcBounds(glyf)
+        adv, _lsb = inter["hmtx"][src_name]
+        font["hmtx"][name] = (round(adv * k), getattr(glyph, "xMin", 0))
+        # Per-glyph tables this doesn't fill in fail to save without the new
+        # glyph: vertical metrics get a plain full-height box.
+        if "vmtx" in font:
+            font["vmtx"][name] = (font["head"].unitsPerEm, 0)
+        for table in font["cmap"].tables:
+            # The full-range character maps; format 14 is variation
+            # sequences, 6/10 trimmed ranges that can't take a new code.
+            if table.isUnicode() and table.format in (4, 12):
+                table.cmap[ord(ch)] = name
+    # The device-metric caches are optional and simply dropped.
     for tag in ("hdmx", "LTSH", "VDMX"):
         if tag in font:
             del font[tag]
-    for table in font["cmap"].tables:
-        # Format 14 is variation sequences, not a character map.
-        if table.isUnicode() and table.format in (4, 6, 10, 12, 13):
-            table.cmap[STAR] = name
-    return k
+    return "".join(missing)
 
 
 def _cap_height(font: TTFont) -> float:

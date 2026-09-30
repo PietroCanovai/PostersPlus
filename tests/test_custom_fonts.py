@@ -1,4 +1,4 @@
-"""Operator-uploaded label fonts: preparing an upload (★ added, .otf
+"""Operator-uploaded label fonts: preparing an upload (★ and separators added, .otf
 converted), the store, and a render in one."""
 import io
 import os
@@ -15,6 +15,7 @@ from PIL import Image
 import config as _cfg
 import custom_fonts
 import fonts
+import fontprep
 from i18n import load_languages
 from main import build_request_config, _render_config_signature
 
@@ -30,8 +31,11 @@ def _otf(chars: str = _LATIN, vertical: bool = False) -> bytes:
     charstrings = {}
     for name in names:
         pen = T2CharStringPen(600, None)
+        # .notdef narrower than the rest, so a real glyph never draws the
+        # same as a missing one.
+        right = 250 if name == ".notdef" else 550
         if name != "g32":
-            pen.moveTo((50, 0)); pen.lineTo((550, 0)); pen.lineTo((550, 700)); pen.lineTo((50, 700))
+            pen.moveTo((50, 0)); pen.lineTo((right, 0)); pen.lineTo((right, 700)); pen.lineTo((50, 700))
             pen.closePath()
         charstrings[name] = pen.getCharString()
     fb.setupCFF("TestBox-Bold", {"FullName": "Test Box Bold"}, charstrings, {})
@@ -59,20 +63,25 @@ class PrepareTests(unittest.TestCase):
         font = TTFont(io.BytesIO(out))
         self.assertIn("glyf", font)
         self.assertNotIn("CFF ", font)
-        self.assertIn(0x2605, font.getBestCmap())
+        for ch in fontprep.LABEL_SYMBOLS:
+            self.assertIn(ord(ch), font.getBestCmap(), ch)
         self.assertEqual(family, "Test Box Bold")
         self.assertIn("converted from CFF outlines", notes)
-        self.assertIn("★ added from Inter", notes)
+        self.assertIn("★ • · … — – added from Inter", notes)
 
     def test_a_font_with_vertical_metrics_takes_the_star(self):
         out, _family, notes = custom_fonts.prepare(_otf(vertical=True))
         font = TTFont(io.BytesIO(out))
-        self.assertIn("★ added from Inter", notes)
+        self.assertIn("★ • · … — – added from Inter", notes)
         self.assertIn(font.getBestCmap()[0x2605], font["vmtx"].metrics)
 
-    def test_a_font_with_a_star_keeps_its_own(self):
+    def test_a_font_with_every_symbol_keeps_its_own(self):
         _out, _family, notes = custom_fonts.prepare(_shipped("Inter-Bold.ttf"))
-        self.assertNotIn("★ added from Inter", notes)
+        self.assertFalse([n for n in notes if "added from Inter" in n])
+
+    def test_only_the_missing_symbols_are_added(self):
+        _out, _family, notes = custom_fonts.prepare(_otf(_LATIN + "•·"))
+        self.assertIn("★ … — – added from Inter", notes)
 
     def test_a_font_missing_latin_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no Q"):
@@ -137,6 +146,28 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(build_request_config({"label_font": "custom-house-font"}).label_font, "inter")
         self.assertEqual(fonts.resolve_label_font("custom-house-font", "en"),
                          os.path.join(fonts.FONTS_DIR, "Inter-Bold.ttf"))
+
+    def test_a_font_kept_by_an_older_preparation_is_upgraded(self):
+        import json
+        font = TTFont(io.BytesIO(_otf()))
+        fontprep.cff_to_glyf(font)
+        buf = io.BytesIO()
+        font.save(buf)
+        with open(os.path.join(self._dir, "0123456789abcdef.ttf"), "wb") as fh:
+            fh.write(buf.getvalue())
+        with open(os.path.join(self._dir, "fonts.json"), "w") as fh:
+            json.dump({"fonts": [{"key": "custom-old", "name": "Old", "file": "0123456789abcdef.ttf",
+                                  "notes": ["converted from CFF outlines", "★ added from Inter"]}]}, fh)
+        custom_fonts.refresh(force=True)
+        cfg = build_request_config({"label_font": "custom-old"})
+        before = _render_config_signature(cfg)
+        self.assertEqual(custom_fonts.upgrade(), 1)
+        self.assertEqual(custom_fonts.upgrade(), 0)
+        entry = custom_fonts.admin_list()[0]
+        self.assertEqual(entry["notes"], ["converted from CFF outlines", "★ • · … — – added from Inter"])
+        self.assertTrue(fonts.covers(fonts.resolve_label_font("custom-old", "en"), "★•·…—–"))
+        self.assertEqual(len(self._files()), 1)
+        self.assertNotEqual(_render_config_signature(cfg), before)
 
     def test_shipped_fonts_leave_the_cache_key_alone(self):
         self.assertNotIn("label_font_file", _render_config_signature(build_request_config({"label_font": "oswald"})))
