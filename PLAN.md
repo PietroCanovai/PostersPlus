@@ -257,7 +257,7 @@ Planned in Studio:
 - **Per title**: turn off labels for that title only (e.g. no "Trending" on this one), besides the custom notch text that already exists. Implemented as a per-title `sash_priority` override in the title's style.
 - **Custom labels**: fixed text per title (done: *Notch text*), and a check of which labels a title qualifies for right now (via the renderer's `debug=1` metadata), shown in the editor as "Could show: Oscar Winner · Notable Director · Trending #12".
 
-**Phase 8 — Editor rework, Jellyfin's other images, frames** (requested 2026-09-30)
+**Phase 8 — Editor rework, Jellyfin's other images, frames** (requested 2026-09-30) — **done 2026-09-30** (8a–8e live). Slow previews were the editor (blank remounts, double renders, a debug render per change), not the renderer (cached 0.01 s, uncached ≤2 s).
 
 *8a. Fixes.* No toast for rotate add/remove; clicking a rotation look (strip) reliably selects and previews it; a newly added look becomes the selected one; clicking any candidate previews it as it would look (logo, style), without saving; the crop dialog darkens only the image outside the frame, never its own buttons; posters can be framed too (not only backdrops); "Use for all looks" for a logo; find out why some previews are slow and fix it.
 

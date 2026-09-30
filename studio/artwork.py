@@ -210,6 +210,9 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         res = rules.resolve(key)
         extra = {k: v for k, v in res.params.items() if not k.startswith("art_")}
         extra["shape"] = "landscape"
+        # The landscape layout has its own rating switch: follow a style that hides ratings.
+        if style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style:
+            extra["landscape_hide_rating"] = "true"
         url = engine.poster_url(row, prefs.get("style_applied"), resolution=500, with_quality=False,
                                 access_key=_cfg.ACCESS_KEY or "", extra=extra)
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:

@@ -27,7 +27,13 @@ Copies of the same film in two libraries (a 4K and a 1080p, say) share one set o
 
 ## Editing a title
 
-The preview on the left is exactly what Jellyfin will get. Everything saves by itself; it reaches Jellyfin in the nightly run, or right away with **Push now**.
+The preview on the left is exactly what Jellyfin will get; **clicking any image previews it** without saving. Everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**.
+
+Tabs for each Jellyfin image: **Poster** (composed with your style, below), **Backdrop**, **Logo** and **Thumb**. For the last three: *Automatic* (the rules in Settings → Jellyfin images), *Pinned* (any image, backdrops and thumbs framed with ⤢), or *Keep Jellyfin's*.
+
+**Frames**: real frames from your files (the chapter images Jellyfin extracted) show under Poster → Art → *Frames* and in the Backdrop/Thumb tabs. Add one to your backdrops to frame it into a poster.
+
+**Style** (Poster → Style): *This poster* or *Whole title*. Each control shows the value it inherits (from the title, or the library's Style page) until you change it; ↺ goes back.
 
 **How the title picks its poster**
 
