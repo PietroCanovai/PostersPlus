@@ -15,6 +15,9 @@ services:
       - JPEG_QUALITY=92
       # Studio renders 1000x1500 for Jellyfin; PostersPlus caps sizes at 500 unless raised.
       - MAX_POSTER_RESOLUTION=1000
+      # cloudflared runs on the host and reaches PostersPlus through the Docker
+      # gateway; trust its X-Forwarded-For so login lockouts see real visitors.
+      - FORWARDED_ALLOW_IPS=192.168.16.1
     ports:
       - "8183:8000"
     volumes:

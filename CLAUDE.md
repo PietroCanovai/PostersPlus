@@ -16,6 +16,8 @@ Fork of [UmbraProjects/PostersPlus](https://github.com/UmbraProjects/PostersPlus
 
 `serverino-lazarus`, 192.168.1.55, Ubuntu 24.04 x86_64, TZ Europe/Rome. Stack: `/home/serverino/docker/postersplus` (`compose.yaml`, `.env`, `postersplus-cache/`, `update.sh`). Port 8183 → 8000. This PC maps the server root as `Z:` (Samba). Jellyfin at :8096.
 
+Remote: `https://postersplus.biscuitgalaxy.lol` through the host's cloudflared (locally managed tunnel `320bce2f…`, config `/etc/cloudflared/config.yml`, restart needs sudo: the user). Meant to sit behind Cloudflare Access. `ACCESS_KEY` is set in the server's `.env` (Studio passes it on loopback; `/poster` without it is 403) and `FORWARDED_ALLOW_IPS=192.168.16.1` (the postersplus network's gateway, which is how host cloudflared arrives).
+
 ## Deploy
 
 - Push to `studio` → GitHub Actions builds `ghcr.io/pietrocanovai/postersplus:latest` + `:sha-<short>` (amd64 only). `.md` / `deploy/**` changes don't rebuild.
