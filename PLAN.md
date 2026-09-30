@@ -235,6 +235,28 @@ Seasons: season candidates (TMDB/Fanart/TVDB season art + the show's art), the s
 **Phase 6 — Remote access + polish**
 Session cookies, `FORWARDED_ALLOW_IPS`, tunnel hostname + Cloudflare Access (with your OK), `ACCESS_KEY`; bulk actions, keyboard shortcuts, phone polish, rules backup/export, README section, upstream-merge playbook. (Remote access can move earlier if you want it sooner.)
 
+**Phase 7 — Your own images, and control over the notch** (requested 2026-09-30)
+
+*7a. A library of your own images per title.* Today an upload becomes the pinned poster and replaces the previous one; the "Yours" tab only lists images a look still uses, so earlier uploads vanish. Instead:
+- A per-title uploads table (`uploads`: title_key, kind poster/backdrop/logo, `custom:` path, name, added_at). Every upload or pasted link is kept there whether or not it's in use, and can be deleted.
+- Upload several at once (multi-file picker, drag and drop). Uploading only adds to the library; you then Pin, Rotate or use it like any other candidate.
+- Uploads of every kind: posters (with or without their own title), **backdrops** (framed to 2:3 like TMDB's), **logos** (PNG with transparency). Each kind appears in its own tab next to the providers' images.
+- Custom images stay out of the Artwork tab's clean-up of unused `custom:` files (the fork checks its own table too).
+
+*7b. What the notch can say, from Studio.* The notch shows the first label in the priority list that applies to a title. The data behind each label:
+- **Awards** (Oscar/Emmy/Globe wins and nominations, Metacritic must-see, cult, true story, age rating): MDBList, keyed by IMDb id.
+- **Festival prizes**: PostersPlus's own festival data (`festivals.py`).
+- **Notable studio / director / cast**: curated lists in `discovery.py`, overridable in `/app/cache/discovery_overrides.json` (the admin dashboard's *Sash lists* view and its API `/admin/api/sash-lists`, with TMDB search for people and companies).
+- **Trending**: TMDB's daily trending list (or a custom MDBList/TMDB-shaped source).
+- **New season, returning, premiere, finale, airing/ended/cancelled, cinema/streaming/disc**: TMDB dates and status, plus MDBList's digital release date.
+- **Watchlist**: MDBList, SIMKL, Trakt or PMDB when `WATCHLIST_SOURCE` is set.
+
+Planned in Studio:
+- A **Notch** page: every label with an on/off switch and its order (moved from the Style page), a description of what triggers it and where the data comes from, and a live example of a title that gets it.
+- The **curated lists** (directors, studios, cast) editable in Studio: search TMDB for a person or company, add or remove them, change the label they show (e.g. "Ghibli"). This drives the existing `discovery_overrides.json`.
+- **Per title**: turn off labels for that title only (e.g. no "Trending" on this one), besides the custom notch text that already exists. Implemented as a per-title `sash_priority` override in the title's style.
+- **Custom labels**: fixed text per title (done: *Notch text*), and a check of which labels a title qualifies for right now (via the renderer's `debug=1` metadata), shown in the editor as "Could show: Oscar Winner · Notable Director · Trending #12".
+
 ## 10. Upstream merge playbook
 
 `git fetch upstream` → `git checkout studio` → `git merge upstream/dev` → resolve conflicts (expected only at the hook points listed in CLAUDE.md) → CI green → push → `update.sh` on the server. Never rewrite upstream code we don't need to; keep hooks tiny and calling into `studio/`.

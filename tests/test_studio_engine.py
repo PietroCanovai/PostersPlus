@@ -245,6 +245,15 @@ class TheatreTests(EngineTests.__bases__[0]):
         row = db.query_one("SELECT * FROM items WHERE jf_id = 't1'")
         self.assertEqual(rules.title_key(row), "stage:42")   # both recordings share one set of rules
 
+    def test_stagemedia_wins_over_a_guessed_tmdb_id(self):
+        # Jellyfin matched a show named like a film to the film (Beetlejuice → the 1988 movie).
+        self.jf.items["lib-th"][0]["ProviderIds"]["Tmdb"] = "4288"
+        prefs.set("stagemedia_key", "sm")
+        self.assertEqual(self.sync(), {"uploaded": 2})
+        self.assertEqual({c[0] for c in self.calls}, {"t1", "t2"})   # both drawn from StageMedia
+        from studio import rules
+        self.assertEqual(rules.title_key(db.query_one("SELECT * FROM items WHERE jf_id = 't1'")), "stage:42")
+
     def test_show_with_no_art_is_skipped_not_an_error(self):
         prefs.set("stagemedia_key", "sm")
 
@@ -327,6 +336,47 @@ class SeasonTests(EngineTests):
         self.assertEqual(params["tint_color"], "112233")      # from the show
         self.assertEqual(params["bottom_gradient"], "off")    # the season's own
         self.assertEqual(params["notch_label"], "Book One")
+
+
+class LooksTheSameTests(unittest.TestCase):
+    """Compression noise isn't a change; a new label or poster is."""
+
+    def _jpeg(self, img, q):
+        import io
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=q)
+        return out.getvalue()
+
+    def _poster(self, label):
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new("RGB", (1000, 1500))
+        d = ImageDraw.Draw(img)
+        for y in range(0, 1500, 6):   # busy art, so JPEG has something to get wrong
+            d.line([(0, y), (1000, (y * 7) % 1500)], fill=((y * 3) % 255, (y * 5) % 255, 120), width=3)
+        d.rectangle((330, 0, 670, 70), fill=(230, 230, 230))
+        font = ImageFont.truetype(os.path.join(os.path.dirname(__file__), "..", "fonts", "Inter-Bold.ttf"), 40)
+        d.text((350, 12), label, fill=(0, 0, 0), font=font)
+        return img
+
+    def test_noise_is_the_same_poster(self):
+        img = self._poster("Trending #12")
+        # One extra high-quality JPEG generation: what re-decoding the cached art does.
+        a, b = self._jpeg(img, 92), self._jpeg(self._jpeg_roundtrip(img, 90), 92)
+        self.assertNotEqual(a, b)
+        self.assertTrue(engine.looks_the_same(a, b))
+
+    def test_a_new_label_is_a_change(self):
+        a = self._jpeg(self._poster("Trending #12"), 92)
+        b = self._jpeg(self._poster("Trending #13"), 92)
+        self.assertFalse(engine.looks_the_same(a, b))
+
+    def test_undecodable_counts_as_different(self):
+        self.assertFalse(engine.looks_the_same(b"nope", b"nope2"))
+
+    def _jpeg_roundtrip(self, img, q):
+        import io
+        from PIL import Image
+        return Image.open(io.BytesIO(self._jpeg(img, q))).convert("RGB")
 
 
 class SmallPieces(unittest.TestCase):

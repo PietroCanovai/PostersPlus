@@ -151,10 +151,12 @@ class Client:
         real = [e for e in eps if (e.get("ParentIndexNumber") or 0) > 0] or eps
         return min(real, key=lambda e: (e.get("ParentIndexNumber") or 0, e.get("IndexNumber") or 0))
 
-    async def primary_image(self, item_id: str, max_height: int = 450) -> tuple[bytes, str]:
+    async def primary_image(self, item_id: str, max_height: int | None = 450) -> tuple[bytes, str]:
+        """The item's poster, resized by Jellyfin, or with max_height=None the
+        stored file exactly as it is."""
+        params = {"maxHeight": max_height, "quality": 85} if max_height else {}
         try:
-            resp = await self._http.get(f"/Items/{item_id}/Images/Primary",
-                                        params={"maxHeight": max_height, "quality": 85})
+            resp = await self._http.get(f"/Items/{item_id}/Images/Primary", params=params)
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
         if resp.status_code != 200:

@@ -71,13 +71,15 @@ def shared_client() -> Client:
 # ── Scan ────────────────────────────────────────────────────────────────────
 
 def is_stage(row: dict) -> bool:
-    """A theatre recording Studio draws from StageMedia (no TMDB/IMDb id)."""
-    return bool(row.get("stage_show_id")) and not (row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id"))
+    """A theatre title Studio draws from StageMedia: it has the Encora plugin's
+    StageMediaShowId.  That wins over a TMDB id Jellyfin guessed (a show named
+    like a film gets the film's id); only a match you set yourself beats it."""
+    from . import stage
+    return bool(row.get("stage_show_id")) and not row.get("manual_tmdb_id") and stage.enabled()
 
 
 def _item_status(row: dict, policy: dict) -> str:
-    from . import stage
-    if is_stage(row) and stage.enabled():
+    if is_stage(row):
         matched = True
     else:
         matched = bool(row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id"))
@@ -105,7 +107,8 @@ async def scan(client: Client) -> dict:
             seen.add(item.id)
             counts["items"] += 1
             _upsert(item, lib, policy, now)
-            if item.type == "Series" and prefs.get("seasons_enabled"):
+            # Theatre shows' "seasons" are productions (Broadway, West End): not season posters.
+            if item.type == "Series" and prefs.get("seasons_enabled") and not item.stage_show_id:
                 try:
                     for s in await client.seasons(item.id):
                         seen.add(s["id"])
@@ -220,6 +223,28 @@ async def render(http: httpx.AsyncClient, url: str) -> tuple[bytes, str]:
     if ctype not in ("image/jpeg", "image/png", "image/webp"):
         raise RuntimeError(f"Render returned {ctype}")
     return resp.content, ctype
+
+
+def looks_the_same(a: bytes, b: bytes, *, level: int = 48, max_pixels: int = 50) -> bool:
+    """Whether two renders of a poster differ only by compression noise.
+
+    A render can come out a few levels different with nothing changed (the art
+    was decoded from PostersPlus's re-encoded disk copy instead of the fresh
+    download, say).  Measured on real 1000x1500 posters (2026-09-30): that
+    noise peaks at ~17 levels with no pixel past 48, while the smallest real
+    change — one digit of a notch label — moves 2,200+ pixels past 48.  So
+    "fewer than *max_pixels* pixels differ by more than *level*" is the same
+    poster.  Anything that can't be decoded counts as different."""
+    try:
+        import io
+        from PIL import Image, ImageChops
+        ia, ib = (Image.open(io.BytesIO(x)).convert("RGB") for x in (a, b))
+        if ia.size != ib.size:
+            return False
+        hist = ImageChops.difference(ia, ib).convert("L").histogram()
+        return sum(hist[level + 1:]) < max_pixels
+    except Exception:
+        return False
 
 
 # ── Run ─────────────────────────────────────────────────────────────────────
@@ -342,6 +367,17 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
                                                          access_key=access_key, extra=params))
         image_hash = hashlib.sha256(image).hexdigest()
         decision = decide(row, image_hash, force=force)
+        if decision.reason == "changed":
+            # Only the bytes may have changed: compare with what Jellyfin holds.
+            try:
+                current, _ = await jf.primary_image(jf_id, max_height=None)
+            except JellyfinError:
+                current = None
+            if current is not None and looks_the_same(current, image):
+                if not dry_run:
+                    db.execute("UPDATE items SET pushed_hash = ?, status = ?, last_error = NULL WHERE jf_id = ?",
+                               (image_hash, OK, jf_id))
+                return "unchanged"
         if decision.action == "unchanged":
             if row["status"] != OK:
                 db.execute("UPDATE items SET status = ?, last_error = NULL WHERE jf_id = ?", (OK, jf_id))
