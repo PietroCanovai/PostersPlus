@@ -35,7 +35,7 @@ One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 
 - **Automatic**: PostersPlus's best textless poster, skipping anything marked Never.
 - **Pinned**: always the same *look*.
-- **Daily rotation**: a different look each night, shuffled, no repeats until every look has had its day. The strip shows the looks (*Today*, *Next*); click one to edit it.
+- **Daily rotation**: a different look each night, shuffled, no repeats until every look has had its day. The strip shows the looks (*Today*, *Next*); click one to edit it, ✕ on its corner takes it out of the rotation.
 
 A **look** is a poster plus its logo, frame and style. Under the strip:
 
@@ -82,7 +82,7 @@ Without a StageMedia key, theatre recordings are left alone.
 
 ## Seasons
 
-Turn on **Season posters** in Settings. Each season gets TMDB's season art (or the show's) with "Season 2" in the notch, using the show's colours and layout. Seasons are edited like a title: the strip at the top of a show (and of each season) has the show and every season; on a season, **← Show** goes back and ← → step through the seasons.
+Turn on **Season posters** in Settings. Each season gets TMDB's season art (or the show's) with "Season 2" in the notch, using the show's colours and layout. Seasons are edited like a title: the strip at the top of a show (and of each season) has the show and every season; on a season, **← Show** goes back and ← → step through the seasons. In *Review one by one*, seasons stay in the review: **Looks good** on a season returns to its show.
 
 ## Activity and the nightly run
 

@@ -205,6 +205,7 @@ export function Editor({ id, review }) {
   const idx = navList.indexOf(id);
   const prevId = idx > 0 ? navList[idx - 1] : null;
   const nextId = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : null;
+  const reviewIdx = nav.ids.indexOf(t && t.parent ? t.parent : id);   // a season keeps its show's place
   const goTo = other => go(`title/${other}${review ? '?review' : ''}`);
   useEffect(() => {
     const onKey = e => {
@@ -391,7 +392,10 @@ export function Editor({ id, review }) {
   }
   async function markReviewed() {
     await api(`/title/${id}`, { method: 'PUT', body: { reviewed: true } }).catch(() => {});
-    if (nextId) goTo(nextId); else { toast('That was the last one'); await refresh(); }
+    if (t.parent) return goTo(t.parent);   // a season: back to its show, still reviewing
+    const i = nav.ids.indexOf(id);
+    const next = i >= 0 && i < nav.ids.length - 1 ? nav.ids[i + 1] : null;
+    if (next) goTo(next); else { toast('That was the last one'); await refresh(); }
   }
 
   // ── What the preview shows ──
@@ -573,16 +577,15 @@ export function Editor({ id, review }) {
 
   const lookBar = slot === 'poster' && focusedLook ? html`<div class="look-bar">
       ${focusedLook.poster && html`<button onClick=${() => frameLook(focusedLook)}>⤢ Frame</button>`}
-      ${focusedLook.in_rotation && html`<button onClick=${() => { setFocus(null); call(`/looks/${focusedLook.look_id}`, { method: 'DELETE' }); }}>Remove</button>`}
     </div>` : null;
 
   return html`
-    ${review && html`<div class="notice info review-bar"><p>${idx >= 0 ? `${idx + 1} / ${navList.length}` : ''}</p>
+    ${review && html`<div class="notice info review-bar"><p>${reviewIdx >= 0 ? `${reviewIdx + 1} / ${nav.ids.length}` : ''}${t.parent ? ` · ${t.item.name}` : ''}</p>
       <div class="row"><button onClick=${() => go('library')}>Stop</button><button class="primary" onClick=${markReviewed}>Looks good ✓</button></div></div>`}
     <div class="ed-head">
       <div class="grow">
         ${t.parent_item
-          ? html`<button class="back-show" onClick=${() => go(`title/${t.parent}`)}>← ${t.parent_item.name}</button>`
+          ? html`<button class="back-show" onClick=${() => goTo(t.parent)}>← ${t.parent_item.name}</button>`
           : html`<div class="crumbs"><a href="#library">Library</a></div>`}
         <h1>${t.item.name}${t.item.year && !t.parent ? html` <span class="dim-text">${t.item.year}</span>` : ''}</h1>
         <div class="head-chips">${chips.map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}${t.item.pushed_at ? html`<span class="dim-text">sent ${ago(t.item.pushed_at)}</span>` : ''}</div>
@@ -594,7 +597,7 @@ export function Editor({ id, review }) {
     ${t.seasons.length > 0 && html`<div class="strip seasons">
       ${[{ jf_id: t.parent || t.item.jf_id, label: 'Show', tag: t.parent_item ? t.parent_item.jf_image_tag : t.item.jf_image_tag },
          ...t.seasons.map(s => ({ jf_id: s.jf_id, label: s.number === 0 ? 'SP' : `S${s.number}`, tag: s.jf_image_tag, name: s.name }))]
-        .map(s => html`<button class="strip-item ${s.jf_id === id ? 'on' : ''}" onClick=${() => s.jf_id !== id && go(`title/${s.jf_id}`)} title=${s.name || 'The show'}>
+        .map(s => html`<button class="strip-item ${s.jf_id === id ? 'on' : ''}" onClick=${() => s.jf_id !== id && goTo(s.jf_id)} title=${s.name || 'The show'}>
           <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.tag || '')}`} alt="" />
           <span class="chip ${s.label === 'Show' ? 'info' : ''}">${s.label}</span></button>`)}
     </div>`}
@@ -630,11 +633,15 @@ export function Editor({ id, review }) {
             ${mode === 'rotation' && html`<span class="hint-sm">${rotation.length ? `${rotation.length} looks, shuffled daily` : 'Add posters with ↻'}</span>`}
           </div>
           ${(mode === 'rotation' ? rotation : mode === 'pinned' && pinned ? [pinned] : []).length > 0 && html`<div class="strip">
-            ${(mode === 'rotation' ? rotation : [pinned]).map(l => html`<button class="strip-item ${editLook && editLook.look_id === l.look_id && !(focus && focus.c) ? 'on' : ''}"
+            ${(mode === 'rotation' ? rotation : [pinned]).map(l => html`<div class="strip-cell" key=${l.look_id}>
+              <button class="strip-item ${editLook && editLook.look_id === l.look_id && !(focus && focus.c) ? 'on' : ''}"
                 onClick=${() => { setFocus({ look: l.look_id }); setDraft(null); }}>
-              <img src=${l.poster ? thumbUrl(l.poster, l.crop ? 'backdrops' : 'posters') : `/studio/api/preview/${id}?w=500&look_id=${l.look_id}`} alt="" referrerpolicy="no-referrer" />
-              ${mode === 'rotation' && (l.look_id === t.today_look_id ? html`<span class="chip ok">Today</span>` : t.upcoming[0] === l.look_id ? html`<span class="chip">Next</span>` : '')}
-            </button>`)}</div>`}
+                <img src=${l.poster ? thumbUrl(l.poster, l.crop ? 'backdrops' : 'posters') : `/studio/api/preview/${id}?w=500&look_id=${l.look_id}`} alt="" referrerpolicy="no-referrer" />
+                ${mode === 'rotation' && (l.look_id === t.today_look_id ? html`<span class="chip ok">Today</span>` : t.upcoming[0] === l.look_id ? html`<span class="chip">Next</span>` : '')}
+              </button>
+              ${mode === 'rotation' && html`<button class="strip-x" title="Remove from rotation" aria-label="Remove from rotation" disabled=${busy}
+                onClick=${() => { if (focus && focus.look === l.look_id) setFocus(null); call(`/looks/${l.look_id}`, { method: 'DELETE' }); }}>✕</button>`}
+            </div>`)}</div>`}
           <${Seg} value=${sub} onChange=${setSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />
           ${cands && cands.error && html`<div class="notice warn"><p>${cands.error}</p></div>`}
           ${sub === 'art' ? artPane : sub === 'logo' ? logoPane : stylePane}`}

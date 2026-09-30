@@ -78,9 +78,13 @@ label.btn { font-weight: 580; }
 
 .mode-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .mode-row .seg { margin-bottom: 10px; }
-.strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; margin-bottom: 6px; }
+.strip { display: flex; gap: 10px; overflow-x: auto; padding: 8px 8px 10px 2px; margin-bottom: 6px; }
 .strip-item { position: relative; padding: 0; min-height: 0; width: 64px; flex: none; aspect-ratio: 2/3; overflow: hidden;
   border-radius: 8px; border: 2px solid transparent; background: var(--surface-2); }
+.strip-cell { position: relative; flex: none; }
+.strip-x { position: absolute; top: -6px; right: -6px; z-index: 1; min-height: 0; width: 24px; height: 24px; padding: 0;
+  border-radius: 50%; font-size: 12px; line-height: 1; background: #0d0e11; border: 1px solid var(--border); color: var(--text-2); }
+.strip-x:hover { color: var(--bad); border-color: #6b2c2c; }
 .strip-item.on { border-color: var(--accent); }
 .strip-item img { width: 100%; height: 100%; object-fit: cover; }
 .strip-item .chip { position: absolute; left: 3px; bottom: 3px; font-size: 10px; padding: 0 6px; background: #0d0e11e6; }
