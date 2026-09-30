@@ -20,9 +20,10 @@ class TextLogoTests(unittest.TestCase):
 
     def test_long_titles_wrap(self):
         one = Image.open(io.BytesIO(textlogo.render("Heat")))
-        two = Image.open(io.BytesIO(textlogo.render("The Assassination of Jesse James by the Coward Robert Ford")))
+        two = Image.open(io.BytesIO(textlogo.render("The Good, the Bad and the Ugly")))
         self.assertGreater(two.height, one.height * 1.5)                # two lines
-        self.assertLessEqual(two.width, textlogo.MAX_W + 400)
+        huge = Image.open(io.BytesIO(textlogo.render("The Assassination of Jesse James by the Coward Robert Ford")))
+        self.assertLessEqual(huge.width, textlogo.MAX_W + 400)          # shrunk to fit, not overflowing
 
     def test_options(self):
         o = textlogo.options({"font": "playfair", "upper": "true", "shadow": "false", "spacing": "9"})
