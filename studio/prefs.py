@@ -40,6 +40,7 @@ def get(key: str):
     defaults = {
         "jellyfin_url": "",
         "jellyfin_api_key": "",
+        "stagemedia_key": "",
         "uploads_enabled": False,
         "schedule_enabled": False,
         "schedule_time": "04:00",

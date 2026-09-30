@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -49,6 +50,20 @@ def _validate_path(path: str) -> None:
     art_overrides.provider_of(path)
 
 
+def _validator(key: str):
+    """Theatre titles also take StageMedia (or other https) poster links,
+    which Studio downloads itself with a public-address check."""
+    if not key.startswith("stage:"):
+        return _validate_path
+
+    def check(path: str) -> None:
+        from . import stage
+        if path.startswith("custom:") or stage.valid_poster(path):
+            return
+        raise ValueError("Not an image link Studio can use")
+    return check
+
+
 def _bad(exc: Exception):
     raise HTTPException(status_code=400, detail=str(exc))
 
@@ -81,7 +96,7 @@ def _title_payload(row: dict) -> dict:
     t = rules.get_title(key)
     res = rules.resolve(key)
     return {
-        "item": row, "title_key": key, "media_type": _media_type(row),
+        "item": row, "title_key": key, "media_type": _media_type(row), "stage": engine.is_stage(row),
         "tmdb_id": row.get("manual_tmdb_id") or row.get("tmdb_id"),
         "title": t, "looks": rules.looks(key),
         "never": {k: sorted(v) for k, v in rules.never(key).items()},
@@ -100,6 +115,18 @@ async def title(jf_id: str):
 @router.get("/title/{jf_id}/candidates")
 async def title_candidates(jf_id: str, force: bool = False):
     row = _item(jf_id)
+    if engine.is_stage(row):
+        from . import stage
+        try:
+            found = await stage.posters(row["stage_show_id"], force=force)
+        except stage.StageError as exc:
+            return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
+                          "stage": True, "error": str(exc)})
+        items = [{"path": u, "thumb": f"/studio/api/stage-thumb?url={quote(u, safe='')}", "language": None,
+                  "provider": "stagemedia"} for u in found]
+        return _json({"candidates": {"posters": items, "backdrops": [], "logos": []}, "stage": True,
+                      "auto": {"poster": {"path": found[0], "kind": "poster"} if found else None, "logo": None},
+                      "title": stage.show_name(row["name"])})
     tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
     if not tmdb_id:
         return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
@@ -110,6 +137,23 @@ async def title_candidates(jf_id: str, force: bool = False):
         logger.warning(f"Studio candidates for {jf_id}: {exc}")
         return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
                       "error": f"Couldn't load artwork: {exc}"})
+
+
+@router.get("/stage-thumb")
+async def stage_thumb(url: str, w: int = 342):
+    """A small copy of a theatre poster (StageMedia's need the API key, which
+    the browser never sees).  Only images Studio already knows of: a show's
+    StageMedia list or a saved look."""
+    from . import stage
+    known = any(url in found for _, found in stage._lists.values()) or bool(
+        db.query_one("SELECT 1 FROM looks WHERE poster = ? AND title_key LIKE 'stage:%'", (url,)))
+    if not known:
+        raise HTTPException(status_code=404, detail="Unknown image")
+    try:
+        data = await stage.thumbnail(url, max(120, min(w, 800)))
+    except stage.StageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.put("/title/{jf_id}")
@@ -144,7 +188,7 @@ async def add_look(jf_id: str, request: Request):
     key = rules.title_key(row)
     rules.ensure_title(key, row["name"])
     try:
-        look = rules.add_look(key, body, _validate_path)
+        look = rules.add_look(key, body, _validator(key))
         if body.get("pin"):
             rules.set_mode(key, "pinned", look["look_id"])
         elif body.get("in_rotation") and rules.get_title(key)["mode"] != "rotation":
@@ -157,8 +201,11 @@ async def add_look(jf_id: str, request: Request):
 @router.put("/looks/{look_id}")
 async def update_look(look_id: int, request: Request):
     body = await _body(request)
+    existing = rules.get_look(look_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No such look")
     try:
-        look = rules.update_look(look_id, body, _validate_path)
+        look = rules.update_look(look_id, body, _validator(existing["title_key"]))
     except KeyError:
         raise HTTPException(status_code=404, detail="No such look")
     except ValueError as exc:
@@ -242,9 +289,10 @@ def _draft_look(raw: str | None) -> dict | None:
 
 @router.get("/preview/{jf_id}")
 async def preview(jf_id: str, look: str | None = None, look_id: int | None = None, w: int = 500,
-                  title_style: str | None = None):
+                  title_style: str | None = None, style: str = "applied"):
     """The poster exactly as Jellyfin would get it: today's pick, a saved look,
-    or an unsaved one from the editor (*look* as JSON)."""
+    or an unsaved one from the editor (*look* as JSON).  style=draft renders
+    with the global style being edited instead of the applied one."""
     row = _item(jf_id)
     key = rules.title_key(row)
     override = _draft_look(look)
@@ -262,16 +310,21 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
     if res.skip:   # hands off: still show what Studio would make
         res = rules.resolve(key, look_override={}, title_style=draft_style)
     params = res.params
-    style = prefs.get("style_applied")
+    draft = db.get_setting("style_draft") if style == "draft" else None
+    style = draft or prefs.get("style_applied")
     import config as _cfg
     url = engine.poster_url(row, style, resolution=w if w in PREVIEW_WIDTHS else 500,
                             with_quality=engine._style_uses_quality(style), access_key=_cfg.ACCESS_KEY or "",
                             extra=params)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
-            data, ctype = await engine.render(http, url)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        if engine.is_stage(row):
+            from . import stage
+            data, ctype = await stage.render(row, style, params, w if w in PREVIEW_WIDTHS else 500)
+        else:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
+                data, ctype = await engine.render(http, url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
     return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=600"})
 
 

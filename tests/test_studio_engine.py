@@ -190,6 +190,63 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(engine.due(datetime(2026, 10, 2, 4, 0)))
 
 
+class TheatreTests(EngineTests.__bases__[0]):
+    """StageMedia recordings: no TMDB id, a StageMediaShowId, drawn by studio.stage."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.connect(os.path.join(self.tmp.name, "studio.db"))
+        prefs.set("jellyfin_url", "http://jf.test")
+        prefs.set("jellyfin_api_key", "k")
+        prefs.set("uploads_enabled", True)
+        prefs.set("libraries", {"lib-th": {"enabled": True, "unmatched": "leave"}})
+        self.jf = FakeJellyfin()
+        self.jf.libraries = [{"Name": "Theatre", "ItemId": "lib-th", "CollectionType": "movies"}]
+        rec = lambda i, name: {**self.jf._item(i, "Movie", name), "ProviderIds": {"StageMediaShowId": "42"}}
+        self.jf.items = {"lib-th": [rec("t1", "Hadestown - Broadway, 09-02-2024 - a"),
+                                    rec("t2", "Hadestown - West End, xx-03-2025 - b")]}
+        from studio import stage
+        self.stage = stage
+        self.calls = []
+
+        async def fake_render(row, style, params, resolution):
+            self.calls.append((row["jf_id"], params, resolution))
+            return b"stage-" + row["name"][:9].encode(), "image/jpeg"
+        self._orig = stage.render
+        stage.render = fake_render
+
+    def tearDown(self):
+        self.stage.render = self._orig
+        db._conn.close()
+        db._conn = None
+        self.tmp.cleanup()
+
+    def sync(self):
+        rid = asyncio.run(engine.run(trigger="manual", dry_run=False,
+                                     jf_transport=httpx.MockTransport(self.jf.handler),
+                                     render_transport=httpx.MockTransport(lambda r: httpx.Response(500))))
+        return json.loads(db.query_one("SELECT counts FROM runs WHERE id = ?", (rid,))["counts"])
+
+    def test_without_a_key_theatre_is_left_alone(self):
+        self.assertEqual(self.sync(), {"skipped": 2})
+        self.assertEqual({r["status"] for r in db.query("SELECT status FROM items")}, {engine.LEFT_ALONE})
+
+    def test_with_a_key_theatre_is_drawn_by_the_stage_renderer(self):
+        prefs.set("stagemedia_key", "sm")
+        self.assertEqual(self.sync(), {"uploaded": 2})
+        self.assertEqual({c[0] for c in self.calls}, {"t1", "t2"})
+        self.assertEqual({u[0] for u in self.jf.uploads}, {"t1", "t2"})
+        from studio import rules
+        row = db.query_one("SELECT * FROM items WHERE jf_id = 't1'")
+        self.assertEqual(rules.title_key(row), "stage:42")   # both recordings share one set of rules
+
+    def test_show_name(self):
+        self.assertEqual(self.stage.show_name("Hadestown - Broadway, 09-02-2024 - x"), "Hadestown")
+        self.assertEqual(self.stage.show_name("Evita"), "Evita")
+        self.assertTrue(self.stage.valid_poster("https://stagemedia.me/p/1.jpg"))
+        self.assertFalse(self.stage.valid_poster("http://10.0.0.1/x.jpg"))
+
+
 class SmallPieces(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

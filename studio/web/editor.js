@@ -175,7 +175,7 @@ export function Editor({ id, review }) {
   }
 
   if (!t) return html`<div class="empty">Loading…</div>`;
-  const matched = !!t.tmdb_id;
+  const matched = !!t.tmdb_id || t.stage;
   const mode = t.title.mode;
   const looks = t.looks;
   const pinned = looks.find(l => l.look_id === t.title.pinned_look_id);

@@ -50,15 +50,20 @@ export function go(hash) { location.hash = hash; }
 export const nav = { ids: [], label: '' };
 
 // A candidate path → a URL the browser can show (full size, for cropping).
+const isStage = p => /^https:\/\/([^/]+\.)?stagemedia\.me\//i.test(p);
+const stageThumb = (p, w) => `/studio/api/stage-thumb?w=${w}&url=${encodeURIComponent(p)}`;
+
 export function fullImageUrl(path) {
   if (!path) return '';
   if (path.startsWith('custom:')) return '/custom-art/' + path.slice(7);
+  if (isStage(path)) return stageThumb(path, 800);
   if (/^https?:/.test(path)) return path;
   return 'https://image.tmdb.org/t/p/w1280' + path;
 }
 export function thumbUrl(path, kind = 'posters') {
   if (!path) return '';
   if (path.startsWith('custom:')) return '/custom-art/' + path.slice(7);
+  if (isStage(path)) return stageThumb(path, 342);
   if (/^https?:/.test(path)) {
     if (path.includes('assets.fanart.tv/fanart/')) return path.replace('/fanart/', '/preview/');
     return path;

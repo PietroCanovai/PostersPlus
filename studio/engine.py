@@ -70,8 +70,18 @@ def shared_client() -> Client:
 
 # ── Scan ────────────────────────────────────────────────────────────────────
 
+def is_stage(row: dict) -> bool:
+    """A theatre recording Studio draws from StageMedia (no TMDB/IMDb id)."""
+    return bool(row.get("stage_show_id")) and not (row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id"))
+
+
 def _item_status(row: dict, policy: dict) -> str:
-    if not (row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id")):
+    from . import stage
+    if is_stage(row) and stage.enabled():
+        matched = True
+    else:
+        matched = bool(row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id"))
+    if not matched:
         return LEFT_ALONE if policy["unmatched"] == "leave" else NEEDS_MATCH
     if row.get("status") in (NEEDS_MATCH, LEFT_ALONE):
         return NEW if not row.get("pushed_hash") else OK
@@ -284,8 +294,12 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
         if with_quality and row["jf_type"] == "Series" and not row.get("quality"):
             ep = await jf.representative_episode(jf_id)
             row["quality"] = ",".join(quality_tokens(ep)) if ep else ""
-        image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
-                                                     access_key=access_key, extra=res.params))
+        if is_stage(row):
+            from . import stage
+            image, ctype = await stage.render(row, style, res.params, resolution)
+        else:
+            image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
+                                                         access_key=access_key, extra=res.params))
         image_hash = hashlib.sha256(image).hexdigest()
         decision = decide(row, image_hash, force=force)
         if decision.action == "unchanged":

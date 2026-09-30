@@ -2,6 +2,7 @@ import { html, render, useState, useEffect, useRef, useCallback } from './vendor
 import { api, toast, Toast, n, ago, when, duration } from './common.js';
 import { Library } from './library.js';
 import { Editor } from './editor.js';
+import { Style } from './style.js';
 
 function useHash() {
   const [h, setH] = useState(location.hash.slice(1) || 'library');
@@ -94,7 +95,7 @@ function RunsList({ runs }) {
       : r.status === 'cancelled' ? ['Stopped', 'warn'] : (r.counts || {}).error ? ['Done with errors', 'warn'] : ['Done', 'ok'];
     return html`<div class="list-row click" onClick=${() => { location.hash = `run/${r.id}`; }}>
       <div class="grow">
-        <div class="name">${when(r.started_at)} · ${r.trigger === 'schedule' ? 'Nightly' : 'Manual'}${r.dry_run ? ' preview' : ''}${r.scope === 'selection' ? ' (selection)' : ''}</div>
+        <div class="name">${when(r.started_at)} · ${r.trigger === 'schedule' ? 'Nightly' : r.trigger === 'apply' ? 'New style' : 'Manual'}${r.dry_run ? ' preview' : ''}${r.scope === 'selection' ? ' (selection)' : ''}</div>
         <div class="meta">${r.status === 'failed' ? r.message : runSummary(r)}${r.finished_at ? ` · took ${duration(r.started_at, r.finished_at)}` : ''}</div>
       </div>
       <span class="chip ${chip[1]}">${chip[0]}</span>
@@ -270,9 +271,28 @@ function SyncSettings({ s, reload }) {
   <//>`;
 }
 
-function StyleSettings({ s }) {
-  return html`<${Section} title="Poster style" sub="The look every poster gets. A proper style editor comes in a later version; this is the style imported from the old sync script.">
-    <textarea readonly value=${decodeURIComponent(s.style_applied).replaceAll('&', '\n')}></textarea>
+function StageSettings({ s, reload }) {
+  const [key, setKey] = useState('');
+  async function save(value) {
+    try {
+      await api('/settings', { method: 'PUT', body: { stagemedia_key: value } });
+      setKey(''); reload();
+      toast(value ? 'StageMedia key saved. Run a preview from Activity to pick up your theatre titles.' : 'StageMedia key removed');
+    } catch (ex) { toast(ex.message, true); }
+  }
+  return html`<${Section} title="Theatre (StageMedia)" sub="Recordings the Encora plugin imports have no TMDB entry. With a StageMedia key, Studio makes their posters from StageMedia's artwork.">
+    <div class="field"><label for="sm-key">StageMedia API key</label>
+      <input id="sm-key" type="password" autocomplete="off" value=${key} onInput=${e => setKey(e.target.value)}
+        placeholder=${s.stagemedia_key_set ? `Saved (${s.stagemedia_key_hint}) — type to replace` : 'The key your Encora plugin uses'} />
+      <div class="hint-sm">Also switch the Theatre library on under Libraries.</div></div>
+    <div class="row"><button class="primary" onClick=${() => save(key)} disabled=${!key}>Save</button>
+      ${s.stagemedia_key_set && html`<button class="danger" onClick=${() => save('')}>Remove</button>`}</div>
+  <//>`;
+}
+
+function StyleSettings() {
+  return html`<${Section} title="Poster style" sub="The look every poster gets, with live previews on your own titles.">
+    <button onClick=${() => { location.hash = 'style'; }}>Open the style editor</button>
   <//>`;
 }
 
@@ -299,7 +319,8 @@ function Settings({ onLogout }) {
     <${JellyfinSettings} s=${s} reload=${reload} />
     ${s.jellyfin_url && s.jellyfin_api_key_set && html`<${LibrarySettings} />`}
     <${SyncSettings} s=${s} reload=${reload} />
-    <${StyleSettings} s=${s} />
+    <${StageSettings} s=${s} reload=${reload} />
+    <${StyleSettings} />
     <${VersionCard} />
     <${Section} title="Advanced" sub="The original PostersPlus pages, for everything Studio doesn't cover yet.">
       <div class="row"><a href="/admin" target="_blank"><button>Admin dashboard</button></a>
@@ -349,6 +370,7 @@ function App() {
     <nav class="nav">
       <div class="brand">Posters+ <span>Studio</span></div>
       ${nav('library', 'Library', status && status.items.needs_match ? html`<span class="chip warn">${status.items.needs_match}</span>` : '')}
+      ${nav('style', 'Style', status && status.style_draft ? html`<span class="chip warn" title="Changes not applied yet">draft</span>` : '')}
       ${nav('activity', 'Activity', problems ? html`<span class="chip bad">${problems}</span>` : (status && status.progress.running ? html`<span class="chip info">running</span>` : ''))}
       ${nav('settings', 'Settings', '')}
       <div class="spacer"></div>
@@ -358,6 +380,7 @@ function App() {
       ${page === 'settings' ? html`<${Settings} onLogout=${logout} />`
         : page === 'run' ? html`<${RunDetail} id=${arg} />`
         : page === 'activity' ? html`<${Activity} status=${status} refresh=${refresh} />`
+        : page === 'style' ? html`<${Style} refreshStatus=${refresh} />`
         : page === 'title' ? html`<${Editor} id=${arg} review=${query === 'review'} key=${arg} />`
         : status && !status.configured ? html`<${Activity} status=${status} refresh=${refresh} />`
         : html`<${Library} />`}

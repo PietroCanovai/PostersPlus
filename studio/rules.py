@@ -41,6 +41,8 @@ def title_key(row: dict) -> str:
     tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
     if tmdb_id:
         return f"tmdb:{'tv' if row.get('jf_type') == 'Series' else 'movie'}:{tmdb_id}"
+    if row.get("stage_show_id") and not row.get("imdb_id"):
+        return f"stage:{row['stage_show_id']}"   # every recording of a show shares its rules
     return f"jf:{row['jf_id']}"
 
 

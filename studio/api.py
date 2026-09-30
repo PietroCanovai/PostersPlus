@@ -123,6 +123,7 @@ async def status():
         "uploads_enabled": bool(prefs.get("uploads_enabled")),
         "schedule_enabled": bool(prefs.get("schedule_enabled")),
         "schedule_time": prefs.get("schedule_time"),
+        "style_draft": db.get_setting("style_draft") is not None,
         "next_run": nxt.isoformat(timespec="minutes") if nxt else None,
         "now": datetime.now().isoformat(timespec="minutes"),
         "last_scan_at": db.get_setting("last_scan_at"),
@@ -205,6 +206,8 @@ def _settings_payload() -> dict:
         "uploads_enabled": bool(prefs.get("uploads_enabled")),
         "schedule_enabled": bool(prefs.get("schedule_enabled")),
         "schedule_time": prefs.get("schedule_time"),
+        "stagemedia_key_set": bool(prefs.get("stagemedia_key")),
+        "stagemedia_key_hint": _secret_hint(prefs.get("stagemedia_key") or ""),
         "resolution": int(prefs.get("resolution") or 1000),
         "resolutions": list(prefs.RESOLUTIONS),
         "style_applied": prefs.get("style_applied"),
@@ -227,6 +230,8 @@ async def put_settings(request: Request):
         prefs.set("jellyfin_url", url)
     if body.get("jellyfin_api_key"):
         prefs.set("jellyfin_api_key", str(body["jellyfin_api_key"]).strip())
+    if "stagemedia_key" in body:
+        prefs.set("stagemedia_key", str(body["stagemedia_key"] or "").strip())
     if "uploads_enabled" in body:
         prefs.set("uploads_enabled", bool(body["uploads_enabled"]))
     if "schedule_time" in body:

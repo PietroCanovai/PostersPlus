@@ -1,6 +1,13 @@
 # PostersPlus Studio — plan
 
-Status: **agreed 2026-09-30, not started.** Nothing below is built yet. Execute phase by phase; each phase ends with something testable on the real server.
+Status (2026-09-30): **Phases 0–3 done and live; Phase 4 (style editor) built.** Phases 5–6 to go. Execute phase by phase; each phase ends with something testable on the real server.
+
+Deviations from the plan as written:
+- Staging ran in the main container with uploads switched off (Studio's default) rather than a second `postersplus-dev` container: read-only toward Jellyfin, same effect, no duplicate cache.
+- The explicit-`quality=` cache hook wasn't needed: Studio sends `quality=` only when the style draws quality, which the current style doesn't.
+- Rotation, Never lists and colours (Phase 3) shipped together with Phase 2, as they share one rules model and one set of renderer hooks.
+- Chosen notch colours render as picked: a Studio-only `notch_text_color` (honoured by the frosted notch through a `force_text` kwarg in `awards.py`) and "match" tinting when `tint_color` is set.
+- Concerts are `MusicVideo` items in Jellyfin; `MAX_POSTER_RESOLUTION=1000` is set in the server's compose file.
 
 Fork `PietroCanovai/PostersPlus` of `UmbraProjects/PostersPlus` (upstream, branch `dev`). Server `serverino-lazarus` (192.168.1.55, Ubuntu 24.04, x86_64, TZ Europe/Rome), stack in `/home/serverino/docker/postersplus` (`compose.yaml`, host port 8183 → container 8000, cache volume `./postersplus-cache:/app/cache`). This PC reaches the server's filesystem as `Z:` over Samba.
 
