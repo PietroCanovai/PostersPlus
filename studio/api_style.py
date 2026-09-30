@@ -41,8 +41,8 @@ def _sash_info(style: str) -> dict:
     import main
     value = dict(parse_qsl(style)).get("sash_priority")
     active = main._parse_sash_priority(value)
-    every = list(_cfg.SASH_PRIORITY) + [s for s in main.ALL_PRIORITY_SLOTS if s not in _cfg.SASH_PRIORITY]
-    return {"active": active, "all": every}
+    # The real labels: ALL_PRIORITY_SLOTS adds legacy combined tokens that repeat them.
+    return {"active": [s for s in active if s in _cfg.SASH_PRIORITY], "all": list(_cfg.SASH_PRIORITY)}
 
 
 # Settings the Style page has controls for; their renderer defaults are sent

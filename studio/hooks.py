@@ -128,14 +128,18 @@ def recolor_logo(logo, color: tuple, mode: str = "solid"):
 def sash_candidates(meta) -> list[dict]:
     """Every notch label a title qualifies for, whether or not it's switched on:
     [{"slot", "label"}] in the full default order (for the editor's "could show")."""
+    # The real labels only: ALL_PRIORITY_SLOTS also has legacy combined tokens
+    # (structural, noms, release_status, …) that repeat them.
+    import config as _cfg
     import discovery
-    out = []
-    for slot in discovery.ALL_PRIORITY_SLOTS:
+    out, seen = [], set()
+    for slot in _cfg.SASH_PRIORITY:
         try:
             label = discovery._evaluate_slot(slot, meta)
         except Exception:
             label = None
-        if label:
+        if label and label not in seen:
+            seen.add(label)
             out.append({"slot": slot, "label": label})
     return out
 

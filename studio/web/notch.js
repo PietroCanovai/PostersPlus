@@ -21,7 +21,7 @@ export const SASH_INFO = {
   season_finale: ['Season finale', 'A show’s latest season just ended.', 'TMDB episode dates'],
   cult: ['Cult classic', 'On the cult-classics list.', 'MDBList keywords'],
   foreign: ['Foreign language', 'Not originally in English.', 'TMDB original language'],
-  newly_streaming: ['Newly streaming', 'Older recency signal (new on streaming).', 'TMDB / MDBList'],
+  new_release: ['New release', 'Recently released (digital or streaming).', 'TMDB / MDBList release dates'],
   true_story: ['True story', 'Based on a true story.', 'MDBList keywords'],
   short_film: ['Short film', 'A short runtime.', 'TMDB runtime'],
   mini_series: ['Mini series', 'A limited series.', 'TMDB'],

@@ -554,7 +554,7 @@ export function Editor({ id, review }) {
                 const off = notch.off.includes(c.slot);
                 const globallyOff = !off && !notch.priority.includes(c.slot);
                 return html`<div class="list-row ${off || globallyOff ? 'off' : ''}">
-                  <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked=${!off} disabled=${globallyOff} onChange=${() => toggleSashOff(c.slot)} />
+                  <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked=${!off && !globallyOff} disabled=${globallyOff} onChange=${() => toggleSashOff(c.slot)} />
                     <span><span class="t">${c.label}</span><span class="d" style="display:block">${sashName(c.slot)}${globallyOff ? ' · off for every title (Notch page)' : ''}</span></span></label></div>`;
               })}</div>`}
               <button class="link" onClick=${() => go('notch')}>Label order and notable lists →</button>
