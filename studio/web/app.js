@@ -306,9 +306,8 @@ function ArtRules({ s, reload }) {
   return html`<${Section} title="Jellyfin images" sub="Off: Jellyfin keeps its own, unless a title pins one.">
     ${sw('backdrop', 'Backdrops')}
     ${r.backdrop.enabled && html`<div class="rule-row">
-      <label>At least <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_w} onChange=${e => put('backdrop', { min_w: +e.target.value })} />
+      <label>Exactly <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_w} onChange=${e => put('backdrop', { min_w: +e.target.value })} />
         × <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_h} onChange=${e => put('backdrop', { min_h: +e.target.value })} /></label>
-      <label class="own-check"><input type="checkbox" checked=${r.backdrop.wide_only} onChange=${e => put('backdrop', { wide_only: e.target.checked })} /> 16:9 only</label>
       <label class="own-check"><input type="checkbox" checked=${r.backdrop.textless} onChange=${e => put('backdrop', { textless: e.target.checked })} /> Textless first</label>
     </div>`}
     ${sw('logo', 'Logos', 'The same logo the posters use.')}

@@ -64,6 +64,10 @@ label.btn { font-weight: 580; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .pv-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); font-size: 14px; }
 .ed-caption { color: var(--text-2); font-size: 13px; margin-top: 6px; text-align: center; }
+.ed-size { color: var(--text-3); font-size: 12.5px; text-align: center; margin-top: 2px; }
+.back-show { min-height: 34px; padding: 4px 12px; font-size: 14px; margin-bottom: 6px; }
+.strip.seasons { margin-bottom: 14px; }
+.strip.seasons .strip-item { width: 56px; }
 .look-bar { display: flex; gap: 6px; justify-content: center; margin-top: 8px; }
 .look-bar button { min-height: 36px; padding: 4px 12px; font-size: 13.5px; }
 .side-actions { margin-top: 12px; }

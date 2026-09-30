@@ -102,6 +102,13 @@ def _uploads_for(key: str) -> list[dict]:
              "added_at": u["added_at"]} for u in uploads.for_title(key)]
 
 
+def _parent_brief(jf_id: str | None) -> dict | None:
+    if not jf_id:
+        return None
+    p = db.query_one("SELECT jf_id, name, year, jf_image_tag FROM items WHERE jf_id = ?", (jf_id,))
+    return p
+
+
 def _title_payload(row: dict) -> dict:
     key = rules.title_key(row)
     t = rules.get_title(key)
@@ -115,11 +122,13 @@ def _title_payload(row: dict) -> dict:
         "uploads": _uploads_for(key),
         "siblings": [{"jf_id": s["jf_id"], "library_name": s["library_name"], "name": s["name"]}
                      for s in _siblings(key)],
+        # A show lists its seasons; a season lists its show's (itself included).
         "seasons": [{"jf_id": s["jf_id"], "number": s["season_number"], "name": s["name"], "status": s["status"],
                      "jf_image_tag": s["jf_image_tag"]}
                     for s in db.query("SELECT * FROM items WHERE parent_jf_id = ? AND present = 1 "
-                                      "ORDER BY season_number", (row["jf_id"],))],
+                                      "ORDER BY season_number", (row.get("parent_jf_id") or row["jf_id"],))],
         "parent": row.get("parent_jf_id"),
+        "parent_item": _parent_brief(row.get("parent_jf_id")),
         "art": _art_payload(key),
     }
 

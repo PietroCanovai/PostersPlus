@@ -5,8 +5,8 @@ Thumb's "landscape" source): Studio picks an image and sends it as it is.
 
 Per title and kind: automatic, pinned (a path, optionally framed), or keep
 (leave Jellyfin's).  Automatic follows the library rules in Settings:
-  backdrop  the providers' backgrounds that meet a minimum size (default
-            1920x1080), optionally 16:9 and textless, best first
+  backdrop  the providers' backgrounds of exactly the rule's size (default
+            1920x1080), textless first if asked
   logo      PostersPlus's own pick in the style's language order (/logo)
   thumb     PostersPlus's landscape render (logo + style over a backdrop),
             or the best backdrop with the title on it
@@ -140,12 +140,8 @@ def set_logo(title_key: str, kind: str, logo: str) -> dict:
 # ── Picking ─────────────────────────────────────────────────────────────────
 
 def _fits(c: dict, r: dict) -> bool:
-    w, h = c.get("width") or 0, c.get("height") or 0
-    if w < r["min_w"] or h < r["min_h"]:
-        return False
-    if r["wide_only"] and h and abs(w / h - 16 / 9) > 0.02:
-        return False
-    return True
+    """Exactly the rule's size (min_w x min_h): bigger counts as off-size too."""
+    return (c.get("width") or 0) == r["min_w"] and (c.get("height") or 0) == r["min_h"]
 
 
 def auto_backdrop(cands: dict, r: dict | None = None) -> str | None:

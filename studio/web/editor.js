@@ -18,8 +18,8 @@ const lookStyle = l => {
   return { ...out, ...(l.style || {}) };
 };
 const ownTitle = (c, kind) => kind === 'posters' && (c.provider === 'custom' ? !!c.own_title : !!c.language);
-const fitRank = (c, r) => (!c.width ? 1 : c.width >= r.min_w && c.height >= r.min_h
-  && (!r.wide_only || Math.abs(c.width / c.height - 16 / 9) < 0.02) ? 0 : 2);
+// Exactly the rule's size first, unknown sizes (yours, frames) next, any other size last.
+const fitRank = (c, r) => (!c.width ? 1 : c.width === r.min_w && c.height === r.min_h ? 0 : 2);
 const byFit = (list, r) => list.map((c, i) => [fitRank(c, r), i, c]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
 const isFrame = c => c.provider === 'frame' || !!c.frame;
 const cropToObj = s => (s ? Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +s.split(',')[i]])) : null);
@@ -97,6 +97,24 @@ function CropDialog({ src, aspect, initial, actions, onClose }) {
         </div>
       </div>
     </div></div>`;
+}
+
+// The chosen image's own size: from the provider's data, or measured for your uploads.
+function SizeLine({ c, path, framed }) {
+  const [measured, setMeasured] = useState(null);
+  const known = c && c.width ? `${c.width}×${c.height}` : '';
+  useEffect(() => {
+    setMeasured(null);
+    if (known || !path || !path.startsWith('custom:')) return;
+    const im = new Image();
+    im.onload = () => setMeasured(`${im.naturalWidth}×${im.naturalHeight}`);
+    im.src = fullImageUrl(path);
+  }, [path, known]);
+  const size = known || measured;
+  if (!path) return null;
+  const src = c ? (PROVIDERS[c.provider] || c.provider) : path.startsWith('custom:') ? 'Yours' : path.startsWith('jf-chapter:') ? 'Frame' : '';
+  const bits = [src, size, framed ? 'framed' : ''].filter(Boolean);
+  return bits.length ? html`<div class="ed-size">${bits.join(' · ')}</div>` : null;
 }
 
 function MatchPanel({ t, onDone }) {
@@ -181,9 +199,12 @@ export function Editor({ id, review }) {
     }
   }, [art, slot, id]);
 
-  const idx = nav.ids.indexOf(id);
-  const prevId = idx > 0 ? nav.ids[idx - 1] : null;
-  const nextId = idx >= 0 && idx < nav.ids.length - 1 ? nav.ids[idx + 1] : null;
+  // In a show's seasons, ← → step through the show and its seasons; elsewhere, the Library's list.
+  const family = t && t.parent ? [t.parent, ...t.seasons.map(s => s.jf_id)] : null;
+  const navList = family || nav.ids;
+  const idx = navList.indexOf(id);
+  const prevId = idx > 0 ? navList[idx - 1] : null;
+  const nextId = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : null;
   const goTo = other => go(`title/${other}${review ? '?review' : ''}`);
   useEffect(() => {
     const onKey = e => {
@@ -394,6 +415,19 @@ export function Editor({ id, review }) {
       : t.stage ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
+  // Which source image the preview shows, for its size.
+  const byPath = new Map([...all.posters, ...all.backdrops, ...all.logos, ...(frames || [])].map(c => [c.path, c]));
+  let sizeInfo = { path: '' };
+  if (slot === 'poster') {
+    const p = focus && focus.c ? focus.c.path : editLook ? editLook.poster : autoPoster && autoPoster.path;
+    const framed = focus && focus.c ? !!focus.crop && focus.kind === 'backdrops' : !!(editLook && editLook.crop);
+    sizeInfo = { path: p || '', c: (focus && focus.c && focus.c.path === p ? focus.c : null) || byPath.get(p), framed };
+  } else {
+    const ch = t.art[slot];
+    const p = focus && focus.art ? focus.art.path : ch.mode === 'pinned' ? ch.path : '';
+    sizeInfo = { path: p || '', c: byPath.get(p), framed: !!(focus && focus.art ? focus.crop : ch.crop) };
+  }
+
   const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length, never: never.poster.size + never.logo.size, styled: false });
 
   // ── Poster: Art ──
@@ -511,7 +545,7 @@ export function Editor({ id, review }) {
     const artGrid = html`<div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
       const b = [];
       if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
-      if (k !== 'logo' && fitRank(c, r) === 2) b.push(['Below rule', 'warn']);
+      if (k !== 'logo' && fitRank(c, r) === 2) b.push([`Not ${r.min_w}×${r.min_h}`, 'warn']);
       if (isFrame(c)) b.push(['Frame', '']);
       return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
         onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
@@ -543,17 +577,27 @@ export function Editor({ id, review }) {
     </div>` : null;
 
   return html`
-    ${review && html`<div class="notice info review-bar"><p>${idx >= 0 ? `${idx + 1} / ${nav.ids.length}` : ''}</p>
+    ${review && html`<div class="notice info review-bar"><p>${idx >= 0 ? `${idx + 1} / ${navList.length}` : ''}</p>
       <div class="row"><button onClick=${() => go('library')}>Stop</button><button class="primary" onClick=${markReviewed}>Looks good ✓</button></div></div>`}
     <div class="ed-head">
       <div class="grow">
-        <div class="crumbs"><a href="#library">Library</a>${t.parent ? html` · <a href=${`#title/${t.parent}`}>Show</a>` : ''}</div>
-        <h1>${t.item.name}${t.item.year ? html` <span class="dim-text">${t.item.year}</span>` : ''}</h1>
+        ${t.parent_item
+          ? html`<button class="back-show" onClick=${() => go(`title/${t.parent}`)}>← ${t.parent_item.name}</button>`
+          : html`<div class="crumbs"><a href="#library">Library</a></div>`}
+        <h1>${t.item.name}${t.item.year && !t.parent ? html` <span class="dim-text">${t.item.year}</span>` : ''}</h1>
         <div class="head-chips">${chips.map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}${t.item.pushed_at ? html`<span class="dim-text">sent ${ago(t.item.pushed_at)}</span>` : ''}</div>
       </div>
       <div class="row nav-btns"><button onClick=${() => prevId && goTo(prevId)} disabled=${!prevId} aria-label="Previous">←</button>
         <button onClick=${() => nextId && goTo(nextId)} disabled=${!nextId} aria-label="Next">→</button></div>
     </div>
+
+    ${t.seasons.length > 0 && html`<div class="strip seasons">
+      ${[{ jf_id: t.parent || t.item.jf_id, label: 'Show', tag: t.parent_item ? t.parent_item.jf_image_tag : t.item.jf_image_tag },
+         ...t.seasons.map(s => ({ jf_id: s.jf_id, label: s.number === 0 ? 'SP' : `S${s.number}`, tag: s.jf_image_tag, name: s.name }))]
+        .map(s => html`<button class="strip-item ${s.jf_id === id ? 'on' : ''}" onClick=${() => s.jf_id !== id && go(`title/${s.jf_id}`)} title=${s.name || 'The show'}>
+          <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.tag || '')}`} alt="" />
+          <span class="chip ${s.label === 'Show' ? 'info' : ''}">${s.label}</span></button>`)}
+    </div>`}
 
     ${!matched && html`<${MatchPanel} t=${t} onDone=${() => { refresh(); api(`/title/${id}/candidates`).then(setCands); }} />`}
 
@@ -561,6 +605,7 @@ export function Editor({ id, review }) {
       <aside class="ed-side">
         <${Preview} src=${previewSrc} shape=${shape} picking=${!!pick} onPick=${eyedrop} />
         <div class="ed-caption">${pick ? 'Click the preview to pick a colour' : caption}</div>
+        <${SizeLine} ...${sizeInfo} />
         ${lookBar}
         <div class="row side-actions">
           <button class="primary" onClick=${push} disabled=${busy || !matched || t.title.hands_off}>Push now</button>
@@ -578,9 +623,6 @@ export function Editor({ id, review }) {
       <section class="ed-main">
         <${Seg} value=${slot} onChange=${v => { setSlot(v); setFocus(null); }} options=${SLOTS} />
 
-        ${t.seasons.length > 0 && slot === 'poster' && html`<div class="strip">${t.seasons.map(s => html`<button class="strip-item" onClick=${() => go(`title/${s.jf_id}`)} title=${s.name}>
-          <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.jf_image_tag || '')}`} alt="" />
-          <span class="chip">${s.number === 0 ? 'SP' : `S${s.number}`}</span></button>`)}</div>`}
 
         ${slot === 'poster' && html`
           <div class="mode-row">

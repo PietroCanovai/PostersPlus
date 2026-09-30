@@ -45,7 +45,7 @@ A **look** is a poster plus its logo, frame and style. Under the strip:
 
 **Frames** are stills: TMDB's episode stills for shows, and the chapter images Jellyfin extracted from your files. They work like any other image: frame, Pin, ↻, or pin as the Backdrop or Thumb. For films, FilmGrab and Movie-Screencaps (linked in the tab) have curated stills: copy an image link into the link box.
 
-Backdrops are listed with the ones meeting your Settings rule (e.g. at least 1920×1080, 16:9) first, then those of unknown size (yours, frames), then the rest (*Below rule*).
+Backdrops of exactly the size in Settings (1920×1080 by default) come first, then those of unknown size (yours, frames), then every other size, bigger ones included. Under the preview: where the shown image comes from and its size.
 
 ### Backdrop, Logo, Thumb
 
@@ -82,7 +82,7 @@ Without a StageMedia key, theatre recordings are left alone.
 
 ## Seasons
 
-Turn on **Season posters** in Settings. Each season gets TMDB's season art (or the show's) with "Season 2" in the notch, using the show's colours and layout. Seasons are edited from their show's page (the *Seasons* strip), exactly like a title.
+Turn on **Season posters** in Settings. Each season gets TMDB's season art (or the show's) with "Season 2" in the notch, using the show's colours and layout. Seasons are edited like a title: the strip at the top of a show (and of each season) has the show and every season; on a season, **← Show** goes back and ← → step through the seasons.
 
 ## Activity and the nightly run
 
@@ -92,7 +92,7 @@ The nightly run happens at the time set in Settings (04:00 by default). If the s
 
 ## Settings
 
-Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops with a minimum size, 16:9 and textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
+Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
 
 ## Updating
 

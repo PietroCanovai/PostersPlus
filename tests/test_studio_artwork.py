@@ -29,8 +29,9 @@ class PickingTests(unittest.TestCase):
                                C("/square.jpg", 2000, 2000), C("/good.jpg", 1920, 1080)]}
         r = artwork.library_rules()["backdrop"]
         self.assertEqual(artwork.auto_backdrop(cands, r), "/good.jpg")                 # textless first
-        self.assertEqual(artwork.auto_backdrop(cands, {**r, "textless": False}), "/titled.jpg")
-        self.assertEqual(artwork.auto_backdrop(cands, {**r, "wide_only": False, "textless": False}), "/titled.jpg")
+        self.assertEqual(artwork.auto_backdrop(cands, {**r, "textless": False}), "/good.jpg")   # 4K isn't 1920x1080
+        self.assertEqual(artwork.auto_backdrop({"backdrops": [C("/big.jpg", 1921, 1080)]}, r), None)   # 1 px bigger: off-size
+        self.assertEqual(artwork.auto_backdrop(cands, {**r, "min_w": 3840, "min_h": 2160, "textless": False}), "/titled.jpg")
         self.assertIsNone(artwork.auto_backdrop({"backdrops": [C("/small.jpg", 1280, 720)]}, r))   # Jellyfin's stays
 
     def test_titled_backdrop_by_language(self):
