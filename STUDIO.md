@@ -37,9 +37,11 @@ The preview on the left is exactly what Jellyfin will get. Everything saves by i
 
 A **look** is a poster plus everything that goes with it: its own logo, colours, frame and layout. In a rotation, click a look in the strip to edit it.
 
-**Posters** tab: every candidate from TMDB, Fanart and TVDB, split into *No text*, *With title* (used as they are, no logo on top), *Backdrops* (you frame a poster-shaped part) and *Yours*. On each: **Pin**, **↻ Rotate** (add to or remove from the rotation) and **Never**. Upload your own, or paste a link (ThePosterDB download links work).
+**Posters** tab: every candidate from TMDB, Fanart and TVDB, split into *No text*, *With title* (used as they are, no logo on top), *Backdrops* (you frame a poster-shaped part) and *Yours*. On each: **Pin**, **↻ Rotate** (add to or remove from the rotation) and **Never**.
 
-**Logos** tab: the logo for the current look: automatic, the title as text, any candidate, or your own PNG. **Never** keeps a logo out of the automatic pick.
+**Your own images**: **Upload posters** / **Upload backdrops** (several files at once), paste a link (ThePosterDB download links work), or drop files on the upload row. Every image you add stays in the title's library (*Yours* for posters, at the front of *Backdrops* for backdrops, first in *Logos* for logos) until you delete it with ✕, and you use it like any other: Pin it, put it in the rotation, frame a backdrop. Tick **Has its title** on an uploaded poster that already shows the title, so Studio doesn't put a logo on it.
+
+**Logos** tab: the logo for the current look: automatic, the title as text, any candidate, or your own PNGs (**Upload logos**, links or drag and drop). **Never** keeps a logo out of the automatic pick.
 
 **Colours & layout** tab: notch colour, fade colour, notch text colour and logo colour (solid, or keeping the logo's shading). **Pick** takes a colour straight from the preview. Logo size and position, the bottom fade, the notch on or off, and your own notch text.
 

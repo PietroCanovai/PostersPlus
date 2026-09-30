@@ -96,6 +96,15 @@ CREATE TABLE IF NOT EXISTS looks (
     created_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS looks_title ON looks(title_key);
+CREATE TABLE IF NOT EXISTS uploads (
+    title_key TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    path      TEXT NOT NULL,
+    name      TEXT NOT NULL DEFAULT '',
+    own_title INTEGER NOT NULL DEFAULT 0,
+    added_at  REAL NOT NULL,
+    PRIMARY KEY (title_key, path)
+);
 CREATE TABLE IF NOT EXISTS never (
     title_key TEXT NOT NULL,
     kind      TEXT NOT NULL,

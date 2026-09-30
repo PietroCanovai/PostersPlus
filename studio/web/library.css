@@ -64,6 +64,11 @@ input[type=search] { font: inherit; color: var(--text); background: var(--bg); b
 .own-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 .own-row input[type=url] { flex: 1; min-width: 200px; max-width: none; }
 label.btn { font-weight: 580; }
+.dropzone { border: 1px dashed transparent; border-radius: var(--radius); padding: 6px; margin-left: -6px; margin-right: -6px; transition: .12s; }
+.dropzone.drag { border-color: var(--accent); background: #211c10; }
+.drop-hint { margin: 0; }
+.own-check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.own-check input { accent-color: var(--accent); }
 .cands { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .cands.logos { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
 .cand { display: flex; flex-direction: column; gap: 6px; min-width: 0; }

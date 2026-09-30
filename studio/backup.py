@@ -33,6 +33,7 @@ def export() -> dict:
         "titles": db.query("SELECT * FROM titles"),
         "looks": db.query("SELECT * FROM looks"),
         "never": db.query("SELECT * FROM never"),
+        "uploads": db.query("SELECT * FROM uploads"),
         "settings": {k: db.get_setting(k) for k in _SETTINGS if db.get_setting(k) is not None},
     }
 
@@ -49,8 +50,13 @@ def restore(data: dict) -> dict:
         conn = db.connect()
         conn.execute("BEGIN")
         try:
-            for table in ("looks", "never", "titles"):
+            for table in ("looks", "never", "titles") + (("uploads",) if "uploads" in data else ()):
                 conn.execute(f"DELETE FROM {table}")
+            for u in data.get("uploads") or []:
+                conn.execute("INSERT OR IGNORE INTO uploads (title_key, kind, path, name, own_title, added_at) "
+                             "VALUES (?, ?, ?, ?, ?, ?)",
+                             (str(u["title_key"]), str(u["kind"]), str(u["path"]), u.get("name") or "",
+                              int(bool(u.get("own_title"))), float(u.get("added_at") or time.time())))
             new_ids: dict[int, int] = {}
             for lk in looks:
                 cur = conn.execute(

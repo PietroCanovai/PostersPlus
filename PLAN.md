@@ -237,7 +237,7 @@ Session cookies, `FORWARDED_ALLOW_IPS`, tunnel hostname + Cloudflare Access (wit
 
 **Phase 7 — Your own images, and control over the notch** (requested 2026-09-30)
 
-*7a. A library of your own images per title.* Today an upload becomes the pinned poster and replaces the previous one; the "Yours" tab only lists images a look still uses, so earlier uploads vanish. Instead:
+*7a. A library of your own images per title.* **Done 2026-09-30.** Before: an upload becomes the pinned poster and replaces the previous one; the "Yours" tab only lists images a look still uses, so earlier uploads vanish. Instead:
 - A per-title uploads table (`uploads`: title_key, kind poster/backdrop/logo, `custom:` path, name, added_at). Every upload or pasted link is kept there whether or not it's in use, and can be deleted.
 - Upload several at once (multi-file picker, drag and drop). Uploading only adds to the library; you then Pin, Rotate or use it like any other candidate.
 - Uploads of every kind: posters (with or without their own title), **backdrops** (framed to 2:3 like TMDB's), **logos** (PNG with transparency). Each kind appears in its own tab next to the providers' images.

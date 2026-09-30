@@ -91,6 +91,12 @@ def _media_type(row: dict) -> str:
     return "tv" if row["jf_type"] in ("Series", "Season") else "movie"
 
 
+def _uploads_for(key: str) -> list[dict]:
+    from . import uploads
+    return [{"path": u["path"], "kind": u["kind"], "name": u["name"], "own_title": u["own_title"],
+             "added_at": u["added_at"]} for u in uploads.for_title(key)]
+
+
 def _title_payload(row: dict) -> dict:
     key = rules.title_key(row)
     t = rules.get_title(key)
@@ -101,7 +107,7 @@ def _title_payload(row: dict) -> dict:
         "title": t, "looks": rules.looks(key),
         "never": {k: sorted(v) for k, v in rules.never(key).items()},
         "today_look_id": res.look_id, "upcoming": res.upcoming, "skip": res.skip,
-        "uploads": candidates.uploads(key),
+        "uploads": _uploads_for(key),
         "siblings": [{"jf_id": s["jf_id"], "library_name": s["library_name"], "name": s["name"]}
                      for s in _siblings(key)],
         "seasons": [{"jf_id": s["jf_id"], "number": s["season_number"], "name": s["name"], "status": s["status"],
@@ -245,31 +251,46 @@ async def set_never(jf_id: str, request: Request):
 
 # ── Your own images ─────────────────────────────────────────────────────────
 
+def _upload_kind(kind: str) -> str:
+    from . import uploads
+    if kind not in uploads.KINDS:
+        raise HTTPException(status_code=400, detail="kind must be poster, backdrop or logo")
+    return kind
+
+
 async def _store(data: bytes, kind: str) -> str:
     import art_overrides
+
+    from . import uploads
     try:
-        return await asyncio.to_thread(art_overrides.store_custom_image, data,
-                                       kind="logo" if kind == "logo" else "poster")
+        return await asyncio.to_thread(art_overrides.store_custom_image, data, kind=uploads.STORE_KIND[kind])
     except ValueError as exc:
         _bad(exc)
 
 
 @router.post("/title/{jf_id}/image")
-async def upload_image(jf_id: str, request: Request, kind: str = "poster"):
-    _item(jf_id)
+async def upload_image(jf_id: str, request: Request, kind: str = "poster", name: str = ""):
+    """One image file as the body.  It joins the title's own images (kept until
+    you delete it); using it is a separate step."""
+    from . import uploads
+    row, kind = _item(jf_id), _upload_kind(kind)
     chunks, size = [], 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > MAX_IMAGE:
             raise HTTPException(status_code=413, detail="The image is over 25 MB")
         chunks.append(chunk)
-    return _json({"path": await _store(b"".join(chunks), kind)})
+    path = await _store(b"".join(chunks), kind)
+    key = rules.title_key(row)
+    rules.ensure_title(key, row["name"])
+    return _json({"path": path, "upload": uploads.add(key, kind, path, name)})
 
 
 @router.post("/title/{jf_id}/image-link")
 async def image_link(jf_id: str, request: Request):
-    _item(jf_id)
-    body = await _body(request)
+    from . import uploads
+    row, body = _item(jf_id), await _body(request)
+    kind = _upload_kind(str(body.get("kind") or "poster"))
     url = str(body.get("url") or "").strip()
     if not url or len(url) > 2048:
         raise HTTPException(status_code=400, detail="Paste an image link")
@@ -279,7 +300,31 @@ async def image_link(jf_id: str, request: Request):
         data = await art_overrides.download_custom_url(main._HTTP_CLIENT, url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Couldn't use that link: {exc}")
-    return _json({"path": await _store(data, str(body.get("kind") or "poster"))})
+    path = await _store(data, kind)
+    key = rules.title_key(row)
+    rules.ensure_title(key, row["name"])
+    return _json({"path": path, "upload": uploads.add(key, kind, path, url.rsplit("/", 1)[-1][:80])})
+
+
+@router.put("/title/{jf_id}/uploads")
+async def update_upload(jf_id: str, request: Request):
+    """Body {path, own_title}: whether an uploaded poster already has the title on it."""
+    from . import uploads
+    row, body = _item(jf_id), await _body(request)
+    uploads.set_own_title(rules.title_key(row), str(body.get("path") or ""), bool(body.get("own_title")))
+    return _json(_title_payload(row))
+
+
+@router.delete("/title/{jf_id}/uploads")
+async def delete_upload(jf_id: str, path: str):
+    from . import uploads
+    row = _item(jf_id)
+    key = rules.title_key(row)
+    if db.query_one("SELECT 1 FROM looks WHERE title_key = ? AND (poster = ? OR logo = ?)", (key, path, path)):
+        raise HTTPException(status_code=400, detail="A look still uses this image: remove it from the rotation "
+                                                    "or pin something else first")
+    uploads.remove(key, path)
+    return _json(_title_payload(row))
 
 
 # ── Preview and push ────────────────────────────────────────────────────────

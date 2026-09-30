@@ -22,6 +22,12 @@ const STYLE_CONTROLS = [
 ];
 
 function posterKind(c) { return c.kind || 'posters'; }
+// Whether a poster already carries the title (so no logo goes on top): a
+// provider's language-tagged poster, or your upload marked that way.
+function ownTitle(c, kind) {
+  if (kind !== 'posters') return false;
+  return c.provider === 'custom' ? !!c.own_title : !!c.language;
+}
 
 // ── Crop dialog: a 2:3 window on a wide image (same maths as the Artwork tab) ──
 function CropDialog({ src, initial, onSave, onClose }) {
@@ -110,7 +116,7 @@ function MatchPanel({ t, onDone }) {
 }
 
 // ── Candidate cards ─────────────────────────────────────────────────────────
-function Card({ c, kind, badges, actions, dim }) {
+function Card({ c, kind, badges, actions, dim, extra }) {
   const meta = [PROVIDERS[c.provider] || c.provider, c.language || (kind === 'logos' ? 'no language' : kind === 'posters' ? 'no text' : ''),
     c.width ? `${c.width}×${c.height}` : ''].filter(Boolean).join(' · ');
   return html`<div class="cand ${kind} ${dim ? 'dim' : ''}">
@@ -119,7 +125,8 @@ function Card({ c, kind, badges, actions, dim }) {
         onError=${e => { if (e.target.src !== fullImageUrl(c.path)) e.target.src = fullImageUrl(c.path); }} />
       ${badges.length > 0 && html`<span class="cand-badges">${badges.map(([l, cl]) => html`<span class="chip ${cl}">${l}</span>`)}</span>`}
     </div>
-    <div class="cand-meta">${meta}</div>
+    <div class="cand-meta">${c.name ? c.name : meta}</div>
+    ${extra}
     <div class="cand-actions">${actions}</div>
   </div>`;
 }
@@ -205,7 +212,7 @@ export function Editor({ id, review }) {
   }
   function usePoster(c, kind) {
     withCrop(c.path, kind, async cropVal => {
-      const fields = { poster: c.path, crop: cropVal || '', own_title: kind === 'posters' && !!c.language };
+      const fields = { poster: c.path, crop: cropVal || '', own_title: ownTitle(c, kind) };
       if (pinned) {
         await call(`/looks/${pinned.look_id}`, { method: 'PUT', body: fields });
         if (mode !== 'pinned') await call(`/title/${id}`, { method: 'PUT', body: { mode: 'pinned', pinned_look_id: pinned.look_id } });
@@ -219,7 +226,7 @@ export function Editor({ id, review }) {
     const existing = rotation.find(l => l.poster === c.path);
     if (existing) return call(`/looks/${existing.look_id}`, { method: 'DELETE' }, 'Removed from the rotation');
     withCrop(c.path, kind, cropVal => call(`/title/${id}/looks`, {
-      method: 'POST', body: { poster: c.path, crop: cropVal || '', own_title: kind === 'posters' && !!c.language, in_rotation: true },
+      method: 'POST', body: { poster: c.path, crop: cropVal || '', own_title: ownTitle(c, kind), in_rotation: true },
     }, mode === 'rotation' ? 'Added to the rotation' : 'Added to the rotation (switched to Daily rotation)'));
   }
   function toggleNever(kindName, path) {
@@ -231,24 +238,49 @@ export function Editor({ id, review }) {
     if (editLook) return call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { logo: path } }, 'Logo set');
     return call(`/title/${id}/looks`, { method: 'POST', body: { poster: '', logo: path, pin: true } }, 'Logo set (this title is now pinned, poster still automatic)');
   }
-  async function upload(file, kindName) {
-    if (!file) return;
+  // Your own images join the title's library; using one is a separate click.
+  const KIND_WORD = { poster: 'posters', backdrop: 'backdrops', logo: 'logos' };
+  function showKind(kindName) {
+    if (kindName === 'logo') setTab('logos');
+    else { setTab('posters'); setPkind(kindName === 'backdrop' ? 'backdrops' : 'yours'); }
+  }
+  async function upload(files, kindName) {
+    const list = [...(files || [])].filter(f => f && f.type.startsWith('image/'));
+    if (!list.length) return;
     setBusy(true);
-    try {
-      const r = await api(`/title/${id}/image?kind=${kindName}`, { method: 'POST', raw: file });
-      setBusy(false);
-      if (kindName === 'logo') await useLogo(r.path); else usePoster({ path: r.path, provider: 'custom' }, 'posters');
-    } catch (ex) { setBusy(false); toast(ex.message, true); }
+    let ok = 0;
+    for (const f of list) {
+      try {
+        await api(`/title/${id}/image?kind=${kindName}&name=${encodeURIComponent(f.name.slice(0, 100))}`, { method: 'POST', raw: f });
+        ok += 1;
+      } catch (ex) { toast(`${f.name}: ${ex.message}`, true); }
+    }
+    setBusy(false);
+    await refresh();
+    if (ok) { showKind(kindName); toast(`Added ${ok} ${ok === 1 ? KIND_WORD[kindName].replace(/s$/, '') : KIND_WORD[kindName]} to your images`); }
   }
   async function useLink(kindName) {
     if (!link.trim()) return;
     setBusy(true);
     try {
-      const r = await api(`/title/${id}/image-link`, { method: 'POST', body: { url: link.trim(), kind: kindName } });
-      setBusy(false); setLink('');
-      if (kindName === 'logo') await useLogo(r.path); else usePoster({ path: r.path, provider: 'custom' }, 'posters');
-    } catch (ex) { setBusy(false); toast(ex.message, true); }
+      await api(`/title/${id}/image-link`, { method: 'POST', body: { url: link.trim(), kind: kindName } });
+      setLink(''); await refresh(); showKind(kindName); toast('Added to your images');
+    } catch (ex) { toast(ex.message, true); }
+    setBusy(false);
   }
+  function dropTo(kindName) {
+    return {
+      onDragOver: e => { e.preventDefault(); e.currentTarget.classList.add('drag'); },
+      onDragLeave: e => e.currentTarget.classList.remove('drag'),
+      onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove('drag'); upload(e.dataTransfer.files, kindName); },
+    };
+  }
+  async function removeUpload(c) {
+    if (!confirm('Delete this image from your images?')) return;
+    await call(`/title/${id}/uploads?path=${encodeURIComponent(c.path)}`, { method: 'DELETE' }, 'Deleted');
+  }
+  const setOwnTitle = (c, on) => call(`/title/${id}/uploads`, { method: 'PUT', body: { path: c.path, own_title: on } },
+    on ? 'Used as it is, without a logo' : 'Your logo goes on top of it');
   async function push() {
     setBusy(true);
     try {
@@ -315,12 +347,13 @@ export function Editor({ id, review }) {
 
   // ── Posters tab ──
   const all = (cands && cands.candidates) || { posters: [], backdrops: [], logos: [] };
-  const customPosters = t.uploads.filter(p => !p.endsWith('.png')).map(p => ({ path: p, provider: 'custom', language: null }));
-  const customLogos = t.uploads.filter(p => p.endsWith('.png')).map(p => ({ path: p, provider: 'custom', language: null }));
-  const posterList = pkind === 'backdrops' ? all.backdrops
+  const mine = kindName => t.uploads.filter(u => u.kind === kindName)
+    .map(u => ({ path: u.path, provider: 'custom', language: null, own_title: u.own_title, name: u.name }));
+  const customPosters = mine('poster'), customBackdrops = mine('backdrop'), customLogos = mine('logo');
+  const posterList = pkind === 'backdrops' ? [...customBackdrops, ...all.backdrops]
     : pkind === 'yours' ? customPosters
     : all.posters.filter(c => (pkind === 'textless' ? !c.language : !!c.language));
-  const shownPosters = posterList.filter(c => source === 'all' || c.provider === source);
+  const shownPosters = posterList.filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
   const kindOf = pkind === 'backdrops' ? 'backdrops' : 'posters';
   function posterBadges(c) {
     const b = [];
@@ -409,12 +442,15 @@ export function Editor({ id, review }) {
             ${pkind !== 'yours' && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
               <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
           </div>
-          <div class="own-row">
-            <label class="btn">Upload a poster<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange=${e => upload(e.target.files[0], 'poster')} /></label>
+          <div class="own-row dropzone" ...${dropTo(pkind === 'backdrops' ? 'backdrop' : 'poster')}>
+            <label class="btn">Upload posters<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, 'poster'); e.target.value = ''; }} /></label>
+            <label class="btn">Upload backdrops<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, 'backdrop'); e.target.value = ''; }} /></label>
             <input type="url" placeholder="…or paste an image link (ThePosterDB download links work)" value=${link} onInput=${e => setLink(e.target.value)} />
-            <button onClick=${() => useLink('poster')} disabled=${!link || busy}>Use link</button>
+            <button onClick=${() => useLink(pkind === 'backdrops' ? 'backdrop' : 'poster')} disabled=${!link || busy}>Add link</button>
             <a class="hint-sm" target="_blank" rel="noopener noreferrer" href=${`https://theposterdb.com/search?term=${encodeURIComponent(t.item.name)}`}>ThePosterDB ↗</a>
+            <span class="hint-sm drop-hint">or drop images here (they go to ${pkind === 'backdrops' ? 'backdrops' : 'your posters'})</span>
           </div>
+          ${pkind === 'yours' && html`<p class="hint-sm">Your images stay here until you delete them. Pin or rotate any of them; tick <em>Has its title</em> on a poster that already shows the title, so no logo goes on top.</p>`}
           ${pkind === 'titled' && html`<p class="hint-sm">These carry their own title, so Studio uses them as they are, with no logo on top.</p>`}
           ${pkind === 'backdrops' && html`<p class="hint-sm">Wide images: Studio asks you to frame a poster-shaped part of it.</p>`}
           ${!cands ? html`<div class="empty">Loading artwork…</div>` : shownPosters.length ? html`<div class="cands">${shownPosters.map(c => {
@@ -423,17 +459,23 @@ export function Editor({ id, review }) {
               actions=${html`
                 <button onClick=${() => usePoster(c, kindOf)} disabled=${busy || isNever} title="Always use this poster">Pin</button>
                 <button onClick=${() => toggleRotation(c, kindOf)} disabled=${busy || isNever} class=${rotation.some(l => l.poster === c.path) ? 'on' : ''} title="Add to (or remove from) the daily rotation">↻<span class="lbl"> Rotate</span></button>
-                <button onClick=${() => toggleNever('poster', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''} title="Never use this one automatically">${isNever ? 'Allow' : 'Never'}</button>`} />`;
-          })}</div>` : html`<div class="empty">None here.</div>`}`}
+                ${c.provider === 'custom'
+                  ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete from your images">✕</button>`
+                  : html`<button onClick=${() => toggleNever('poster', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''} title="Never use this one automatically">${isNever ? 'Allow' : 'Never'}</button>`}`}
+              extra=${c.provider === 'custom' && kindOf === 'posters' ? html`<label class="own-check"><input type="checkbox" checked=${!!c.own_title} onChange=${e => setOwnTitle(c, e.target.checked)} /> Has its title</label>` : null} />`;
+          })}</div>` : html`<div class="empty">${pkind === 'yours' ? 'No images of your own yet: upload some, paste a link, or drop files above.' : 'None here.'}</div>`}`}
 
         ${tab === 'logos' && html`
           <p class="hint-sm">The logo for ${lookLabel}.</p>
           <div class="own-row">
             <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic logo</button>
             <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
-            <label class="btn">Upload a PNG<input type="file" accept="image/png,image/webp" hidden onChange=${e => upload(e.target.files[0], 'logo')} /></label>
+          </div>
+          <div class="own-row dropzone" ...${dropTo('logo')}>
+            <label class="btn">Upload logos<input type="file" multiple accept="image/png,image/webp" hidden onChange=${e => { upload(e.target.files, 'logo'); e.target.value = ''; }} /></label>
             <input type="url" placeholder="…or paste a logo link" value=${link} onInput=${e => setLink(e.target.value)} />
-            <button onClick=${() => useLink('logo')} disabled=${!link || busy}>Use link</button>
+            <button onClick=${() => useLink('logo')} disabled=${!link || busy}>Add link</button>
+            <span class="hint-sm drop-hint">or drop PNGs here (transparent background works best)</span>
           </div>
           ${!cands ? html`<div class="empty">Loading logos…</div>` : html`<div class="cands logos">${[...customLogos, ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom').map(c => {
             const isNever = never.logo.has(c.path);
@@ -444,7 +486,9 @@ export function Editor({ id, review }) {
             if (isNever) b.push(['Never', 'bad']);
             return html`<${Card} key=${c.path} c=${c} kind="logos" badges=${b} dim=${isNever}
               actions=${html`<button onClick=${() => useLogo(c.path)} disabled=${busy || isNever}>Use</button>
-                <button onClick=${() => toggleNever('logo', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''}>${isNever ? 'Allow' : 'Never'}</button>`} />`;
+                ${c.provider === 'custom'
+                  ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete from your images">✕</button>`
+                  : html`<button onClick=${() => toggleNever('logo', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''}>${isNever ? 'Allow' : 'Never'}</button>`}`} />`;
           })}</div>`}`}
 
         ${tab === 'look' && html`

@@ -359,6 +359,12 @@ def _drop_unused_custom(paths: Iterable[str]) -> None:
     except Exception as exc:
         logger.error(f"Art overrides: couldn't check custom image use ({exc})")
         return
+    try:  # fork hook: Studio's uploads and looks use custom images too
+        from studio.uploads import studio_custom_paths
+        used |= studio_custom_paths()
+    except Exception as exc:
+        logger.error(f"Art overrides: couldn't check Studio's custom images ({exc}); keeping them all")
+        return
     for path in set(paths) - used:
         file = custom_file(path)
         try:
