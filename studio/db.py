@@ -168,6 +168,7 @@ _ADDED_COLUMNS = (
     ("items", "parent_jf_id", "TEXT"),
     ("items", "season_number", "INTEGER"),
     ("items", "productions", "TEXT"),   # theatre: the show's productions (Jellyfin seasons), "|"-joined
+    ("jf_art", "logo", "TEXT NOT NULL DEFAULT ''"),   # thumb: '' poster's, 'text', 'none', or a logo path
 )
 
 

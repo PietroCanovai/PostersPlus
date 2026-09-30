@@ -150,6 +150,7 @@ export function Editor({ id, review }) {
   const [lib, setLib] = useState(null);
   const [slot, setSlot] = useState('poster');
   const [sub, setSub] = useState('art');
+  const [thumbSub, setThumbSub] = useState('art');
   const [art, setArt] = useState('textless');
   const [source, setSource] = useState('all');
   const [focus, setFocus] = useState(null);         // {look: id} | {c, kind, crop}
@@ -433,7 +434,7 @@ export function Editor({ id, review }) {
       : list.length ? html`<div class="cands ${listKind}">${list.map(c => {
           const isNever = never.poster.has(c.path), inRot = rotation.some(l => l.poster === c.path);
           return html`<${Card} key=${c.path} c=${c} kind=${listKind} focused=${isFocused(c)} badges=${posterBadges(c)}
-            onFocus=${() => (listKind === 'backdrops' ? frame(c, listKind) : setFocus({ c, kind: listKind, crop: '' }))}
+            onFocus=${() => setFocus({ c, kind: listKind, crop: listKind === 'backdrops' ? '0.5,0.5,1' : '' })}
             onFrame=${() => frame(c, listKind)}
             extra=${c.provider === 'custom' && listKind === 'posters' ? html`<label class="own-check"><input type="checkbox" checked=${!!c.own_title} onChange=${e => setOwnTitle(c, e.target.checked)} /> Has title</label>` : null}>
             <button onClick=${() => (listKind === 'backdrops' ? frame(c, listKind, 'pin') : pin(c, listKind))} disabled=${busy || isNever}>Pin</button>
@@ -502,24 +503,38 @@ export function Editor({ id, review }) {
     const stageArt = t.stage ? all.posters.map(c => ({ ...c, needsFrame: true })) : [];
     const pool = k === 'logo' ? [...mine('logo'), ...all.logos]
       : byFit([...mine('backdrop'), ...all.backdrops, ...(frames || []).map(f => ({ ...f, frame: true })), ...stageArt], r);
-    const thumbStyled = k === 'thumb' && ch.mode === 'auto' && !t.stage && t.art.rules.thumb.source === 'landscape';
+    // A generated thumb: the style drawn on its art (automatic or pinned), with its own logo.
+    const generated = k === 'thumb' && ch.mode !== 'keep' && !t.stage && t.art.rules.thumb.source === 'landscape';
+    const part = generated ? thumbSub : 'art';
+    const pinArt = c => (c.needsFrame ? frameArt(c, k)
+      : setArtChoice(k, { mode: 'pinned', path: c.path, ...(generated && c.language ? { logo: 'none' } : {}) }));
+    const artGrid = html`<div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
+      const b = [];
+      if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
+      if (k !== 'logo' && fitRank(c, r) === 2) b.push(['Below rule', 'warn']);
+      if (isFrame(c)) b.push(['Frame', '']);
+      return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
+        onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
+        <button onClick=${() => pinArt(c)} disabled=${busy}>Pin</button>
+      </${Card}>`;
+    })}</div>`;
+    const logoGrid = html`
+      <div class="own-row">
+        ${[['', 'Poster’s'], ['text', 'Title as text'], ['none', 'None']].map(([v, l]) => html`<button class=${(ch.logo || '') === v ? 'on' : ''}
+          onClick=${() => setArtChoice(k, { logo: v })} disabled=${busy} title=${v === 'none' ? 'The art already shows the title' : ''}>${l}</button>`)}
+      </div>
+      <div class="cands logos">${[...mine('logo'), ...all.logos].map(c => html`<${Card} key=${c.path} c=${c} kind="logos"
+        badges=${ch.logo === c.path ? [['Used', 'info']] : []} onFocus=${() => setArtChoice(k, { logo: c.path })}>
+        <button onClick=${() => setArtChoice(k, { logo: c.path })} disabled=${busy}>Use</button></${Card}>`)}</div>`;
     return html`
       <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
         options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
       ${ch.mode === 'auto' && (t.stage ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
-      ${thumbStyled && lib && html`<${StyleControls} values=${titleValues} inherited=${libEff} from="library"
-        onSet=${(key, v) => setStyleKey(key, v, 'title')} groups=${THUMB_GROUPS} />`}
-      <div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
-        const b = [];
-        if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
-        if (k !== 'logo' && fitRank(c, r) === 2) b.push(['Below rule', 'warn']);
-        if (isFrame(c)) b.push(['Frame', '']);
-        return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
-          onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
-          <button onClick=${() => (c.needsFrame ? frameArt(c, k) : setArtChoice(k, { mode: 'pinned', path: c.path }))} disabled=${busy}>Pin</button>
-        </${Card}>`;
-      })}</div>`;
+      ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
+      ${part === 'art' ? artGrid : part === 'logo' ? logoGrid
+        : lib && html`<${StyleControls} values=${titleValues} inherited=${libEff} from="library"
+          onSet=${(key, v) => setStyleKey(key, v, 'title')} groups=${THUMB_GROUPS} />`}`;
   }
 
   const lookBar = slot === 'poster' && focusedLook ? html`<div class="look-bar">

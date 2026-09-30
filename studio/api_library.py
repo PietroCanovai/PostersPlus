@@ -447,6 +447,13 @@ async def set_art(jf_id: str, kind: str, request: Request):
     key = rules.title_key(row)
     path = str(body.get("path") or "")
     try:
+        if "logo" in body:
+            logo = str(body.get("logo") or "")
+            if logo not in ("", "text", "none"):
+                _validate_path(logo)
+            artwork.set_logo(key, kind, logo)
+        if "mode" not in body:
+            return _json(_title_payload(row))
         if path and not path.startswith("jf-chapter:"):
             _validator(key)(path)
         artwork.set_choice(key, kind, str(body.get("mode") or "auto"), path, rules.clean_crop(body.get("crop")))
@@ -457,7 +464,7 @@ async def set_art(jf_id: str, kind: str, request: Request):
 
 @router.get("/preview-art/{jf_id}/{kind}")
 async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str = "", crop: str = "",
-                      style: str = "applied", landscape: bool = False):
+                      style: str = "applied", landscape: bool = False, logo: str | None = None):
     """What Studio would send as this item's Backdrop / Logo / Thumb (the saved
     choice, or an unsaved one given as mode/path/crop)."""
     from . import artwork
@@ -465,6 +472,8 @@ async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str 
         raise HTTPException(status_code=400, detail="Unknown image type")
     row = _item(jf_id)
     draft = {"mode": mode, "path": path, "crop": crop} if mode else None
+    if logo is not None:
+        draft = {**(draft or {}), "logo": logo}
     try:
         style_str = (db.get_setting("style_draft") or None) if style == "draft" else None
         res = await artwork.resolve(row, kind, draft=draft, style_str=style_str, landscape=landscape)

@@ -89,6 +89,50 @@ class PickingTests(unittest.TestCase):
                                 extra={"shape": "landscape"})
         self.assertIn("landscape_logo_pos=right", url)
 
+    def test_pinned_thumb_is_still_generated(self):
+        from urllib.parse import parse_qs, urlsplit
+        row = {"jf_id": "m1", "tmdb_id": "949", "jf_type": "Movie", "name": "Heat"}
+        key = rules.title_key(row)
+        urls = []
+        orig_render, orig_realize = engine.render, artwork.realize_path
+
+        async def render(http, url):
+            urls.append({k: v[0] for k, v in parse_qs(urlsplit(url).query).items()})
+            return b"thumb", "image/jpeg"
+
+        async def realize(path, crop="", aspect=16 / 9):
+            return f"custom:landscape/{crop or 'x'}.jpg"
+        engine.render, artwork.realize_path = render, realize
+        import sys
+        import types
+        real_cfg = sys.modules.get("config")
+        try:
+            import config  # noqa: F401  (Linux: the real one)
+        except Exception:
+            sys.modules["config"] = types.SimpleNamespace(ACCESS_KEY="")
+        try:
+            artwork.set_choice(key, "thumb", "pinned", "/bd.jpg", "0.3,0.5,1.2")
+            self.assertEqual(asyncio.run(artwork.resolve(row, "thumb")), (b"thumb", "image/jpeg"))
+            q = urls[-1]
+            self.assertEqual(q["shape"], "landscape")
+            self.assertEqual(q["art_poster"], "custom:landscape/0.3,0.5,1.2.jpg")   # framed copy, styled
+            artwork.set_logo(key, "thumb", "text")
+            self.assertEqual(artwork.choice(key, "thumb")["path"], "/bd.jpg")          # the pin stays
+            asyncio.run(artwork.resolve(row, "thumb"))
+            self.assertEqual(urls[-1]["art_logo"], "text")
+            artwork.set_logo(key, "thumb", "none")
+            asyncio.run(artwork.resolve(row, "thumb"))
+            self.assertEqual(urls[-1]["art_original"], "true")                          # its own title, no logo
+            artwork.set_choice(key, "thumb", "auto")
+            self.assertEqual(artwork.choice(key, "thumb")["logo"], "none")              # auto keeps the logo choice
+            asyncio.run(artwork.resolve(row, "thumb"))
+            self.assertNotIn("art_poster", urls[-1])
+            self.assertEqual(urls[-1]["landscape_art"], "original")
+        finally:
+            engine.render, artwork.realize_path = orig_render, orig_realize
+            if real_cfg is None and isinstance(sys.modules.get("config"), types.SimpleNamespace):
+                sys.modules.pop("config")
+
     def test_choices(self):
         k = "tmdb:movie:1"
         self.assertEqual(artwork.choice(k, "logo")["mode"], "auto")

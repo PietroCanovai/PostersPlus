@@ -39,7 +39,7 @@ One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 
 A **look** is a poster plus its logo, frame and style. Under the strip:
 
-- **Art**: *No text*, *With title* (used as they are, no logo on top), *Backdrops*, *Frames* and *Yours*. On each image: **Pin**, **↻** (in or out of the rotation), **⊘** Never, and **⤢** to frame it (posters and backdrops alike). Add your own with **Upload** (several at once), an image link, or by dropping files; they stay until you delete them (✕). Tick **Has title** on an uploaded poster that already shows the title.
+- **Art**: *No text*, *With title* (used as they are, no logo on top), *Backdrops*, *Frames* and *Yours*. Clicking a backdrop or frame previews it as a poster (centred); ⤢ frames it. On each image: **Pin**, **↻** (in or out of the rotation), **⊘** Never, and **⤢** to frame it (posters and backdrops alike). Add your own with **Upload** (several at once), an image link, or by dropping files; they stay until you delete them (✕). Tick **Has title** on an uploaded poster that already shows the title.
 - **Logo**: automatic, the title as text, any candidate or your own PNGs. **All** puts a logo on every look.
 - **Style**: *This poster* or *Whole title*: logo size and position, fades, notch, colours (**⌖** picks a colour from the preview). Each control shows the value it inherits until you change it; ↺ goes back. *Notch labels for this title* switches individual labels off.
 
@@ -49,7 +49,7 @@ Backdrops are listed with the ones meeting your Settings rule (e.g. at least 192
 
 ### Backdrop, Logo, Thumb
 
-*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render) has its own style right in the Thumb tab for the title, and on the Style page (**Thumbs**) for the library: art, logo position, bands, the info line and badge. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
+*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render, the Thumb source in Settings) is drawn on whatever art it has, a pinned image included. The Thumb tab has *Art*, *Logo* (the poster's, the title as text, none for art that already shows the title, or any logo) and *Style* (art, logo position, bands, the info line and badge); the Style page's **Thumbs** switch sets that style for the library. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
 
 Titles Jellyfin couldn't match show a **Which title is this?** panel; the match is kept in Studio only.
 

@@ -70,18 +70,23 @@ def is_frame(path) -> bool:
     return isinstance(path, str) and bool(FRAME_RE.match(path))
 
 
-async def realize_path(path: str) -> str:
-    """A frame as a path the renderer can read: a hidden custom: copy, made
-    the first time it's used (not in the title's own images)."""
-    if not is_frame(path):
+async def realize_path(path: str, crop: str = "", aspect: float = 16 / 9) -> str:
+    """A path the renderer can read: frames (and, framed with *crop*, any
+    image) become a hidden custom: copy, made the first time it's used and
+    kept out of the title's own images."""
+    from . import stage
+    if not (is_frame(path) or crop or stage.is_stage_host(path)):
         return path
     import art_overrides
-    row = db.query_one("SELECT custom FROM frame_cache WHERE src = ?", (path,))
+    src = f"{path}#{crop}#{aspect:.4f}" if crop else path
+    row = db.query_one("SELECT custom FROM frame_cache WHERE src = ?", (src,))
     if row and art_overrides.custom_art_bytes(row["custom"]) is not None:
         return row["custom"]
     data = await fetch(path)
+    if crop:
+        data, _ = _frame(data, crop, aspect)
     custom = await asyncio.to_thread(art_overrides.store_custom_image, data, kind="landscape")
-    db.execute("INSERT OR REPLACE INTO frame_cache (src, custom, added_at) VALUES (?, ?, ?)", (path, custom, time.time()))
+    db.execute("INSERT OR REPLACE INTO frame_cache (src, custom, added_at) VALUES (?, ?, ?)", (src, custom, time.time()))
     return custom
 
 
@@ -96,7 +101,7 @@ async def realize(params: dict) -> dict:
 
 def choice(title_key: str, kind: str) -> dict:
     row = db.query_one("SELECT * FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
-    return row or {"title_key": title_key, "kind": kind, "mode": "auto", "path": "", "crop": ""}
+    return row or {"title_key": title_key, "kind": kind, "mode": "auto", "path": "", "crop": "", "logo": ""}
 
 
 def set_choice(title_key: str, kind: str, mode: str, path: str = "", crop: str = "") -> dict:
@@ -104,7 +109,7 @@ def set_choice(title_key: str, kind: str, mode: str, path: str = "", crop: str =
         raise ValueError("bad kind or mode")
     if mode == "pinned" and not path:
         raise ValueError("pin which image?")
-    if mode == "auto" and not path:
+    if mode == "auto" and not path and not choice(title_key, kind).get("logo"):
         db.execute("DELETE FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
     else:
         db.execute("INSERT INTO jf_art (title_key, kind, mode, path, crop, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
@@ -120,6 +125,16 @@ def managed(title_key: str, kind: str) -> bool:
     if c["mode"] == "keep":
         return False
     return c["mode"] == "pinned" or library_rules()[kind]["enabled"]
+
+
+def set_logo(title_key: str, kind: str, logo: str) -> dict:
+    """The generated thumb's logo: '' the poster's, 'text', 'none' (the art
+    has its title), or a logo path.  Keeps the image choice."""
+    c = choice(title_key, kind)
+    db.execute("INSERT INTO jf_art (title_key, kind, mode, path, crop, logo, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+               "ON CONFLICT(title_key, kind) DO UPDATE SET logo=excluded.logo, updated_at=excluded.updated_at",
+               (title_key, kind, c["mode"], c.get("path") or "", c.get("crop") or "", logo, time.time()))
+    return choice(title_key, kind)
 
 
 # ── Picking ─────────────────────────────────────────────────────────────────
@@ -215,16 +230,19 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     draft) and *landscape* the landscape thumb whatever the Thumb source."""
     from . import engine
     key = rules.title_key(row)
-    c = draft or choice(key, kind)
+    c = {**choice(key, kind), **(draft or {})}
     if c["mode"] == "keep":
         return None
-    if c["mode"] == "pinned" and c.get("path"):
-        return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
-    if engine.is_stage(row) or not (row.get("manual_tmdb_id") or row.get("tmdb_id")):
-        return None   # nothing to pick from automatically
-    if row.get("jf_type") == "Season":
-        return None
+    pinned = c["mode"] == "pinned" and bool(c.get("path"))
+    renderable = not engine.is_stage(row) and bool(row.get("manual_tmdb_id") or row.get("tmdb_id")) \
+        and row.get("jf_type") != "Season"
     import config as _cfg
+    # A generated thumb draws the style on whatever art it has, a pinned image included.
+    generated = kind == "thumb" and renderable and (landscape or library_rules()["thumb"]["source"] == "landscape")
+    if pinned and not generated:
+        return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
+    if not renderable:
+        return None   # nothing to pick from automatically
     style_str = style_str if style_str is not None else prefs.get("style_applied")
     style = dict(parse_qsl(style_str, keep_blank_values=True))
     media = "tv" if row["jf_type"] == "Series" else "movie"
@@ -241,10 +259,22 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         if r.status_code != 200:
             return None
         return r.content, r.headers.get("content-type", "image/png").split(";")[0]
-    if kind == "thumb" and (landscape or library_rules()["thumb"]["source"] == "landscape"):
+    if generated:
         res = rules.resolve(key)
-        extra = {k: v for k, v in res.params.items() if not k.startswith("art_")}
+        # The poster's logo (and Never logos) carry over; its art doesn't.
+        extra = {k: v for k, v in res.params.items() if not k.startswith("art_") or k in ("art_logo", "art_logo_exclude")}
         extra["shape"] = "landscape"
+        logo = c.get("logo") or ""
+        if logo == "none":
+            extra.pop("art_logo", None)
+            if pinned:
+                extra["art_original"] = "true"
+            else:
+                extra["landscape_art"] = "original"
+        elif logo:
+            extra["art_logo"] = logo
+        if pinned:
+            extra["art_poster"] = await realize_path(c["path"], c.get("crop") or "")
         # The landscape layout has its own rating switch: follow a style that hides ratings.
         if (style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style
                 and "landscape_hide_rating" not in extra):

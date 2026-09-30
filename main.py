@@ -9810,6 +9810,9 @@ async def get_poster(
                 _ls_path    = _ls_override.path
                 is_textless = rcfg.landscape_art != "original"
                 logger.info(f"Operator landscape art for {tmdb_id}: {_ls_path}")
+            _studio_ls = _studio_hooks.landscape_override(rcfg)  # fork hook (Studio): a thumb's own art
+            if _studio_ls is not None:
+                _ls_path, is_textless = _studio_ls
             if _ls_path is None:
                 # Metahub's background is a textless backdrop of the same class
                 # as TMDB's, so it is a straight substitute before the canvas.

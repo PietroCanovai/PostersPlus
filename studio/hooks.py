@@ -89,6 +89,14 @@ def poster_override(cfg):
     )
 
 
+def landscape_override(cfg):
+    """(path, is_textless) for the art a Studio thumb names, or None.  Studio
+    frames it to 16:9 beforehand, so no crop is applied here."""
+    if not cfg.art_poster:
+        return None
+    return cfg.art_poster, not cfg.art_original
+
+
 def skip_excluded(excluded: tuple, poster_path, is_textless: bool, backdrop_path, tmdb_data: dict):
     """(poster_path, is_textless, backdrop_path) with the automatic pick moved
     off anything excluded: the next of TMDB's ranked textless posters, else
