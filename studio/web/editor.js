@@ -469,7 +469,7 @@ export function Editor({ id, review }) {
     const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
     previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
     caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin keeps its own' : ch.mode === 'pinned' ? 'Pinned'
-      : t.stage ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
+      : t.stage && slot !== 'thumb' ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
   // Which source image the preview shows, for its size.
@@ -597,7 +597,7 @@ export function Editor({ id, review }) {
     const pool = k === 'logo' ? [...mine('logo'), ...all.logos]
       : byFit([...mine('backdrop'), ...all.backdrops, ...(frames || []).map(f => ({ ...f, frame: true })), ...stageArt], r);
     // A generated thumb: the style drawn on its art (automatic or pinned), with its own logo.
-    const generated = k === 'thumb' && ch.mode !== 'keep' && !t.stage && t.art.rules.thumb.source === 'landscape';
+    const generated = k === 'thumb' && ch.mode !== 'keep' && t.art.rules.thumb.source === 'landscape';
     const part = generated ? thumbSub : 'art';
     const pinArt = c => (c.needsFrame ? frameArt(c, k)
       : setArtChoice(k, { mode: 'pinned', path: c.path, ...(generated && c.language ? { logo: 'none' } : {}) }));
@@ -624,7 +624,7 @@ export function Editor({ id, review }) {
     return html`
       <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
         options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
-      ${ch.mode === 'auto' && (t.stage ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
+      ${ch.mode === 'auto' && (t.stage && k !== 'thumb' ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
       ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
       ${part === 'art' ? html`${uploadRow(k === 'logo' ? 'logo' : 'backdrop', k === 'logo' ? [] : FRAME_SITES,

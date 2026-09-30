@@ -235,6 +235,12 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     import config as _cfg
     # A generated thumb draws the style on whatever art it has, a pinned image included.
     generated = kind == "thumb" and renderable and (landscape or library_rules()["thumb"]["source"] == "landscape")
+    if (kind == "thumb" and engine.is_stage(row) and row.get("jf_type") != "Season"
+            and (landscape or library_rules()["thumb"]["source"] == "landscape")):
+        from . import stage
+        style_str = style_str if style_str is not None else prefs.get("style_applied")
+        return await stage.render_thumb(row, style_str, rules.resolve(key).params,
+                                        art=c["path"] if pinned else "", crop=c.get("crop") or "", logo=c.get("logo") or "")
     if pinned and not generated:
         return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
     if not renderable:

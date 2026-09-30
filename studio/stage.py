@@ -161,6 +161,83 @@ async def thumbnail(url: str, width: int = 342) -> bytes:
     return await asyncio.to_thread(_small)
 
 
+def _stage_canvas(art, size: tuple[int, int], framed: bool):
+    """A 16:9 canvas from theatre art.  Framed (or wide) art fills it; portrait
+    key art is shown whole on the right, over a blurred, darkened copy of
+    itself, leaving the left for the title like every other thumb."""
+    from PIL import Image, ImageEnhance, ImageFilter
+    w, h = size
+    art = art.convert("RGB")
+    if framed or art.width / art.height >= 1.3:
+        scale = max(w / art.width, h / art.height)
+        im = art.resize((round(art.width * scale), round(art.height * scale)), Image.Resampling.LANCZOS)
+        left, top = (im.width - w) // 2, (im.height - h) // 2
+        return im.crop((left, top, left + w, top + h))
+    scale = max(w / art.width, h / art.height)
+    bg = art.resize((round(art.width * scale), round(art.height * scale)), Image.Resampling.LANCZOS)
+    top = (bg.height - h) // 3
+    bg = bg.crop(((bg.width - w) // 2, top, (bg.width - w) // 2 + w, top + h)).filter(ImageFilter.GaussianBlur(w / 40))
+    bg = ImageEnhance.Brightness(bg).enhance(0.55)
+    fg_h = h
+    fg = art.resize((round(art.width * fg_h / art.height), fg_h), Image.Resampling.LANCZOS)
+    bg.paste(fg, (w - fg.width - round(w * 0.06), 0))
+    return bg
+
+
+async def render_thumb(row: dict, style: str, params: dict, *, art: str = "", crop: str = "",
+                       logo: str = "") -> tuple[bytes, str]:
+    """A theatre title's generated thumb: PostersPlus's landscape layout (the
+    thumb style, logo or the show's name) on the show's art.  *art* is a
+    pinned image (framed with *crop*), else the poster's art, else
+    StageMedia's first poster.  *logo* as the Thumb tab's choice."""
+    from urllib.parse import parse_qsl
+
+    import config as _cfg
+    import landscape
+    import main
+    from PIL import Image
+
+    from . import artwork
+    merged = {**dict(parse_qsl(style, keep_blank_values=True)), **params}
+    poster_art = merged.pop("art_poster", "")
+    merged.pop("art_crop", None)
+    own_title = merged.pop("art_original", "") in ("1", "true")
+    for k in ("studio_template", "playbill_venue"):
+        merged.pop(k, None)
+    merged.setdefault("landscape_hide_rating", "true")   # no scores for theatre
+    merged["shape"] = "landscape"
+    source = art or poster_art
+    if not source:
+        found = await posters(row["stage_show_id"])
+        if not found:
+            raise NoArt("StageMedia has no art for this show yet; upload one in the editor")
+        source = found[0]
+    data = await (artwork.fetch(source) if artwork.is_frame(source) else image_bytes(source))
+    if art and crop:
+        data, _ = artwork._frame(data, crop, 16 / 9)
+    cfg = main.build_request_config(merged)
+    logo_ref = logo if logo not in ("", "text", "none") else ("" if logo else cfg.art_logo)
+    logo_img = None
+    if logo_ref and logo_ref != "text":
+        try:
+            logo_img = await main.fetch_logo_image(main._HTTP_CLIENT, logo_ref)
+        except Exception as exc:
+            logger.warning(f"Studio: theatre thumb logo {logo_ref} failed ({exc}); using the name")
+    # The name as text unless the art already carries it (None) or a logo is drawn.
+    wants_text = logo_img is None and logo != "none" and not (own_title and not art)
+    size = (_cfg.LANDSCAPE_WIDTH, _cfg.LANDSCAPE_HEIGHT)
+
+    def _compose() -> bytes:
+        canvas = _stage_canvas(Image.open(io.BytesIO(data)), size, framed=bool(art and crop)).convert("RGBA")
+        out = landscape.build_landscape(canvas, "—", "Theatre", cfg, logo=logo_img,
+                                        fallback_title=show_name(row["name"]) if wants_text else None)
+        return main._encode_poster(out)
+
+    async with main._get_render_semaphore():
+        body = await asyncio.get_running_loop().run_in_executor(None, _compose)
+    return body, f"image/{_cfg.IMAGE_FORMAT}"
+
+
 async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[bytes, str]:
     """The finished poster for a theatre title: (bytes, content type)."""
     from urllib.parse import parse_qsl
