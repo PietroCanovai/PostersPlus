@@ -79,16 +79,20 @@ async def posters(show_id: str, *, force: bool = False) -> list[str]:
     hit = _lists.get(show_id)
     if hit and not force and time.time() - hit[0] < LIST_TTL:
         return hit[1]
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            # The API refuses a request without actor_ids ("No actors").  Posters
-            # belong to the show; the ids only pick performer photos, so this
-            # sends the same placeholder the Encora plugin falls back to.
-            r = await http.get(API, params={"show_id": show_id, "actor_ids": "1"},
-                               headers={"Authorization": f"Bearer {key()}", "Accept": "application/json",
-                                        "User-Agent": "PostersPlus-Studio/1.0"})
-    except httpx.HTTPError as exc:
-        raise StageError(f"Can't reach StageMedia ({type(exc).__name__})")
+    r = None
+    for attempt in (1, 2):   # StageMedia is sometimes slow: one retry before giving up
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as http:
+                # The API refuses a request without actor_ids ("No actors").  Posters
+                # belong to the show; the ids only pick performer photos, so this
+                # sends the same placeholder the Encora plugin falls back to.
+                r = await http.get(API, params={"show_id": show_id, "actor_ids": "1"},
+                                   headers={"Authorization": f"Bearer {key()}", "Accept": "application/json",
+                                            "User-Agent": "PostersPlus-Studio/1.0"})
+            break
+        except httpx.HTTPError as exc:
+            if attempt == 2:
+                raise StageError(f"Can't reach StageMedia ({type(exc).__name__})")
     if r.status_code in (401, 403):
         raise StageError("StageMedia rejected the API key")
     try:

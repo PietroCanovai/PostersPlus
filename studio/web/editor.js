@@ -384,7 +384,8 @@ export function Editor({ id, review }) {
     const ch = t.art[slot];
     const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
     previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
-    caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin’s own' : ch.mode === 'pinned' ? 'Pinned' : 'Automatic';
+    caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin keeps its own' : ch.mode === 'pinned' ? 'Pinned'
+      : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
   const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length, never: never.poster.size + never.logo.size, styled: false });
