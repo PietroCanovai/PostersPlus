@@ -2673,14 +2673,22 @@ async def resolve_tvdb_to_tmdb(
     """The TMDB identity of a TVDB id, cached like the IMDb map: a request
     that carries only ``tvdb:<id>`` renders from TMDB whenever TMDB links
     the title.  None when it doesn't; raises ``IdResolveError`` on a failed
-    lookup, which is never cached."""
-    key = f"idmap:{_IDMAP_VERSION}:tvdb:{tvdb_id}"
+    lookup, which is never cached.
+
+    Series only: TMDB keeps no TVDB ids for movies, so /find answers a TVDB
+    id with TV results alone, and TVDB numbers its movies and series apart —
+    a movie's id asked there would name whatever series shares the number.
+    A movie goes to TVDB directly (None)."""
+    if media_type not in ("tv", "series"):
+        return None
+    key = f"idmap:{_IDMAP_VERSION}:tvdb:series:{tvdb_id}"
     cached = get_cached_tvdb_json(key)
     if cached is not None:
         return None if cached.get("__miss__") else cached
-    kind = "tv" if media_type in ("tv", "series") else "movie"
-    result = await tmdb_find_by_imdb(client, str(tvdb_id), tmdb_key, kind,
+    result = await tmdb_find_by_imdb(client, str(tvdb_id), tmdb_key, "tv",
                                      external_source="tvdb_id")
+    if result is not None and result["media_type"] != "tv":
+        result = None
     if result is None:
         set_cached_tvdb_json(key, _IDMAP_MISS, _IDMAP_MISS_TTL_SECONDS)
         return None

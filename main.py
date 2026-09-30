@@ -1521,7 +1521,7 @@ def _parse_tvdb_stremio_id(stremio_id: str) -> int | None:
     raw = rest.split(":", 1)[0]
     if namespace.lower() != "tvdb" or not raw.isascii() or not raw.isdigit():
         return None
-    return int(raw) if 0 < len(raw) <= 10 else None
+    return int(raw) if len(raw) <= 10 and int(raw) > 0 else None
 
 
 async def _resolve_tvdb_identity(
