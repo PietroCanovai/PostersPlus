@@ -954,7 +954,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1573,6 +1573,53 @@ async def _imdb_id_under_tmdb(
     return (await _imdb_id_under_tmdb_checked(tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta))[0]
 
 
+async def _settle_title_identity(
+    tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None,
+) -> "tuple[str, str, bool, str, bool]":
+    """_resolve_title_identity, then _imdb_id_under_tmdb_checked.
+
+    Returns ``(tmdb_id, media_type, use_cinemeta, imdb_id, imdb_unverified)``.
+    A TMDB id the link check finds deleted (TmdbIdGone — a duplicate a
+    client's catalog still names) is set aside, and the IMDb id beside it
+    decides the title instead: it can only be raised when there is one.
+    """
+    media_type_in = media_type
+    tmdb_id, media_type, use_cinemeta = await _resolve_title_identity(
+        tmdb_id, imdb_id, media_type_in, tmdb_key
+    )
+    try:
+        kept, unverified = await _imdb_id_under_tmdb_checked(
+            tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta
+        )
+        return tmdb_id, media_type, use_cinemeta, kept, unverified
+    except TmdbIdGone as exc:
+        logger.info(f"{exc} — resolving {imdb_id} instead")
+        # Our own id map may be what named the deleted entry.
+        forget_imdb_mapping_to(imdb_id, tmdb_id)
+    tmdb_id, media_type, use_cinemeta = await _resolve_title_identity(
+        "", imdb_id, media_type_in, tmdb_key
+    )
+    try:
+        kept, unverified = await _imdb_id_under_tmdb_checked(
+            tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta
+        )
+    except TmdbIdGone as exc:
+        logger.warning(f"{exc} — keeping {imdb_id} unverified for now")
+        return tmdb_id, media_type, use_cinemeta, imdb_id, True
+    return tmdb_id, media_type, use_cinemeta, kept, unverified
+
+
+def _is_tmdb_title_404(exc: httpx.HTTPStatusError, endpoint: str, tmdb_id: str) -> bool:
+    """Whether *exc* is TMDB's 404 for the title's own details page, i.e. the
+    TMDB id itself is gone rather than one of its images."""
+    try:
+        url = exc.request.url
+    except RuntimeError:  # built without a request
+        return False
+    return (exc.response is not None and exc.response.status_code == 404
+            and url.host == "api.themoviedb.org" and url.path == f"/3/{endpoint}/{tmdb_id}")
+
+
 async def _imdb_id_under_tmdb_checked(
     tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None, use_cinemeta: bool,
 ) -> tuple[str, bool]:
@@ -1590,6 +1637,8 @@ async def _imdb_id_under_tmdb_checked(
         raise HTTPException(status_code=503, detail="Service unavailable")
     try:
         linked = await resolve_tmdb_to_imdb(_HTTP_CLIENT, tmdb_id, media_type, tmdb_key)
+    except TmdbIdGone:
+        raise
     except IdResolveError as exc:
         logger.warning(f"{exc} — keeping {imdb_id} unverified for now")
         return imdb_id, True
@@ -8324,10 +8373,9 @@ async def get_logo(
         )
 
     effective_tmdb_key = _resolve_tmdb_key((tmdb_key or "").strip())
-    tmdb_id, type, use_cinemeta = await _resolve_title_identity(
+    tmdb_id, type, use_cinemeta, imdb_id, _ = await _settle_title_identity(
         tmdb_id, imdb_id, type, effective_tmdb_key
     )
-    imdb_id = await _imdb_id_under_tmdb(tmdb_id, imdb_id, type, effective_tmdb_key, use_cinemeta)
     media_type = "tv" if type in ("tv", "series") else "movie"
     effective_lang = (lang or "en").strip() or "en"
 
@@ -8664,13 +8712,11 @@ async def get_poster(
             tmdb_id, type, use_cinemeta = await _resolve_tvdb_identity(
                 _tvdb_request_id, type, _resolve_tmdb_key(tmdb_key)
             )
+            _imdb_link_unverified = False
         else:
-            tmdb_id, type, use_cinemeta = await _resolve_title_identity(
-                tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key)
+            tmdb_id, type, use_cinemeta, imdb_id, _imdb_link_unverified = (
+                await _settle_title_identity(tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key))
             )
-        imdb_id, _imdb_link_unverified = await _imdb_id_under_tmdb_checked(
-            tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key), use_cinemeta
-        )
         has_tmdb_id = _TMDB_ID_RE.match(tmdb_id) is not None
 
     canonical_id = _canonical_rating_id(imdb_id, anime_key, tmdb_id)
@@ -10958,6 +11004,13 @@ async def get_poster(
         if _render_fut is not None and not _render_fut.done():
             _render_fut.set_exception(exc)
         status = exc.response.status_code
+        _endpoint = "tv" if type in ("tv", "series") else "movie"
+        if has_tmdb_id and _is_tmdb_title_404(exc, _endpoint, tmdb_id):
+            # The title itself is gone from TMDB — a deleted duplicate a
+            # catalog or our id map still points at (see mark_tmdb_id_gone).
+            # Marked, the next request goes by the IMDb id instead.
+            mark_tmdb_id_gone(tmdb_id, _endpoint, imdb_id or None)
+            raise HTTPException(status_code=404, detail=f"TMDB {_endpoint}/{tmdb_id} no longer exists")
         if status == 404:
             # Metahub art the probe vouched for has gone: forget the probe so
             # the next request re-checks (and falls through to the canvas)
@@ -10967,7 +11020,6 @@ async def get_poster(
             # TMDB returned metadata with a poster/image path that no longer exists.
             # Invalidate the (per-language) metadata cache so the next request
             # re-fetches fresh data.
-            _endpoint = "tv" if type in ("tv", "series") else "movie"
             # The row the render read: keyed by the secondary language too
             # when a custom logo priority uses one.
             delete_cached_tmdb_metadata(tmdb_metadata_cache_key(

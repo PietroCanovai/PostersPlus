@@ -59,6 +59,7 @@ from cache import (
     release_status_expiry,
     get_cached_tvdb_json,
     set_cached_tvdb_json,
+    delete_cached_tvdb_json,
     get_cached_badge_facts,
     set_cached_badge_facts,
 )
@@ -2395,6 +2396,11 @@ class IdResolveError(Exception):
     opposed to a definite "no such title", which is a None result."""
 
 
+class TmdbIdGone(IdResolveError):
+    """TMDB answers 404 for this TMDB id: the entry was deleted, usually a
+    duplicate merged into an older one. See mark_tmdb_id_gone."""
+
+
 async def tmdb_find_by_imdb(
     client: httpx.AsyncClient,
     imdb_id: str,
@@ -2422,9 +2428,18 @@ async def tmdb_find_by_imdb(
     except Exception as exc:
         raise IdResolveError(f"TMDB find failed for {imdb_id}: {exc}") from exc
 
-    movie_results = data.get("movie_results") or []
-    tv_results    = data.get("tv_results") or []
+    # A deleted entry can linger in /find for a while after its own page
+    # 404s, and one that links a series' IMDb id would win the lookup again.
+    movie_results = [r for r in data.get("movie_results") or []
+                     if not tmdb_id_gone(str(r["id"]), "movie")]
+    tv_results    = [r for r in data.get("tv_results") or []
+                     if not tmdb_id_gone(str(r["id"]), "tv")]
 
+    # Requests say "series"; TMDB says "tv". Unnormalised, a series whose
+    # IMDb id some movie entry also claims (a duplicate someone added) was
+    # resolved to that movie, and the answer kept for the id map's 90 days.
+    if media_type_hint == "series":
+        media_type_hint = "tv"
     if media_type_hint == "tv" and tv_results:
         return {"tmdb_id": str(tv_results[0]["id"]), "media_type": "tv"}
     if media_type_hint == "movie" and movie_results:
@@ -2449,6 +2464,43 @@ _IDMAP_MISS = {"__miss__": True}
 
 def _idmap_key(imdb_id: str, media_type: str) -> str:
     return f"idmap:{_IDMAP_VERSION}:imdb:{imdb_id}:{media_type}"
+
+
+def _gone_key(tmdb_id: str, media_type: str) -> str:
+    kind = "tv" if media_type in ("tv", "series") else "movie"
+    return f"idmap:{_IDMAP_VERSION}:gone:{kind}:{tmdb_id}"
+
+
+def tmdb_id_gone(tmdb_id: str, media_type: str) -> bool:
+    """Whether TMDB answered 404 for this id lately (mark_tmdb_id_gone)."""
+    return get_cached_tvdb_json(_gone_key(tmdb_id, media_type)) is not None
+
+
+def forget_imdb_mapping_to(imdb_id: str, tmdb_id: str) -> None:
+    """Drop the id-map rows that resolve *imdb_id* to *tmdb_id*."""
+    for requested in ("movie", "tv", "series"):
+        key = _idmap_key(imdb_id, requested)
+        cached = get_cached_tvdb_json(key)
+        if cached and cached.get("tmdb_id") == tmdb_id:
+            delete_cached_tvdb_json(key)
+
+
+def mark_tmdb_id_gone(tmdb_id: str, media_type: str, imdb_id: str | None = None) -> None:
+    """Remember that TMDB 404s *tmdb_id*, and forget the id-map rows that led to it.
+
+    TMDB deletes entries (a duplicate merged into the older one, a junk
+    upload), but catalogs and our own id map keep pointing at them. Marked
+    gone, a request carrying the id alongside an IMDb id renders from the
+    IMDb id instead, and an IMDb id mapped to it is looked up afresh. Kept a
+    day, like a /find miss, so an entry TMDB restores comes back.
+    """
+    kind = "tv" if media_type in ("tv", "series") else "movie"
+    set_cached_tvdb_json(_gone_key(tmdb_id, kind), {"gone": True}, _IDMAP_MISS_TTL_SECONDS)
+    delete_cached_tvdb_json(_reverse_idmap_key(tmdb_id, kind))
+    if imdb_id:
+        forget_imdb_mapping_to(imdb_id, tmdb_id)
+    logger.warning(f"TMDB {kind}/{tmdb_id} is gone (404) — marked for a day"
+                   + (f", id map for {imdb_id} cleared" if imdb_id else ""))
 
 
 # Anthologies IMDb files as one series with a season per story, where TMDB
@@ -2587,6 +2639,9 @@ async def resolve_tmdb_to_imdb(
     cached = get_cached_tvdb_json(key)
     if cached is not None:
         return cached.get("imdb_id") or None
+    # Checked only past the cache: marking an id gone deletes its row.
+    if tmdb_id_gone(tmdb_id, media_type):
+        raise TmdbIdGone(f"TMDB {media_type}/{tmdb_id} is gone (404)")
     # A lookup that just failed isn't sent again for a while: during a TMDB
     # blip (a 429 above all) every request for the title would otherwise add
     # another call.
@@ -2606,8 +2661,13 @@ async def resolve_tmdb_to_imdb(
                 f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/external_ids",
                 params={"api_key": tmdb_key},
             )
+            if resp.status_code == 404:
+                mark_tmdb_id_gone(tmdb_id, kind)
+                raise TmdbIdGone(f"TMDB {kind}/{tmdb_id} is gone (404)")
             resp.raise_for_status()
             imdb_id = (resp.json().get("imdb_id") or "").strip() or None
+        except TmdbIdGone:
+            raise
         except Exception as exc:
             if len(_reverse_idmap_failed_at) >= 10000:
                 _reverse_idmap_failed_at.clear()

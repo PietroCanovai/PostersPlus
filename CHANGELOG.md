@@ -99,6 +99,12 @@
 
 ### Fixes
 
+- Some series (Game of Thrones, Fleabag) 404'd when a client sent only
+  their IMDb id: a duplicate movie entry on TMDB claiming the same IMDb id
+  won the lookup, and the answer was kept for 90 days. A series now
+  prefers TMDB's TV entry, and a TMDB id that TMDB has deleted is set
+  aside: the title is found again by its IMDb id (straight away when the
+  request sent one alongside, from the next request otherwise).
 - The configurator's Poster Resolution no longer resets to 500 when the
   page is refreshed.
 - Import URL no longer replaces API keys you already have: a URL's

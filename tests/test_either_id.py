@@ -76,15 +76,20 @@ class _MemoryJsonCache:
 
     def __enter__(self):
         for mod in self.modules:
-            self._saved.append((mod, mod.get_cached_tvdb_json, mod.set_cached_tvdb_json))
+            self._saved.append((mod, mod.get_cached_tvdb_json, mod.set_cached_tvdb_json,
+                                getattr(mod, "delete_cached_tvdb_json", None)))
             mod.get_cached_tvdb_json = lambda key: self.store.get(key)
             mod.set_cached_tvdb_json = lambda key, value, ttl: self.store.__setitem__(key, value)
+            if hasattr(mod, "delete_cached_tvdb_json"):
+                mod.delete_cached_tvdb_json = lambda key: self.store.pop(key, None)
         return self
 
     def __exit__(self, *exc):
-        for mod, get, set_ in self._saved:
+        for mod, get, set_, delete in self._saved:
             mod.get_cached_tvdb_json = get
             mod.set_cached_tvdb_json = set_
+            if delete is not None:
+                mod.delete_cached_tvdb_json = delete
 
 
 SHAWSHANK = {
@@ -424,6 +429,59 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             client = _FakeClient(RuntimeError("must not be called"))
             self.assertEqual(await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k"), "tt0111161")
 
+    # Game of Thrones, with a since-deleted duplicate movie claiming its IMDb id.
+    GOT_AND_DUPLICATE = _FakeResponse(
+        200, {"movie_results": [{"id": 1775784}], "tv_results": [{"id": 1399}]}
+    )
+    GOT_MAP = "idmap:v1:imdb:tt0944947:series"
+
+    async def test_series_request_prefers_the_tv_result(self):
+        # Requests say "series"; unnormalised, the hint matched nothing and
+        # the movie result won.
+        with _MemoryJsonCache(tmdb, cinemeta):
+            client = _FakeClient(self.GOT_AND_DUPLICATE)
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt0944947", "series", "k")
+            self.assertEqual(result, {"tmdb_id": "1399", "media_type": "tv"})
+
+    async def test_reverse_404_marks_the_id_gone_and_clears_the_map(self):
+        self.addCleanup(tmdb._reverse_idmap_failed_at.clear)
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            cache.store[self.GOT_MAP] = {"tmdb_id": "1775784", "media_type": "movie"}
+            with self.assertRaises(tmdb.TmdbIdGone):
+                await tmdb.resolve_tmdb_to_imdb(_FakeClient(_FakeResponse(404)), "1775784", "movie", "k")
+            self.assertTrue(tmdb.tmdb_id_gone("1775784", "movie"))
+            self.assertFalse(tmdb.tmdb_id_gone("1775784", "tv"))
+            # Known gone: not asked again.
+            client = _FakeClient(RuntimeError("must not be called"))
+            with self.assertRaises(tmdb.TmdbIdGone):
+                await tmdb.resolve_tmdb_to_imdb(client, "1775784", "movie", "k")
+            self.assertEqual(client.calls, [])
+
+    async def test_mark_gone_clears_only_map_rows_naming_that_id(self):
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            cache.store[self.GOT_MAP] = {"tmdb_id": "1775784", "media_type": "movie"}
+            cache.store["idmap:v1:imdb:tt0944947:tv"] = {"tmdb_id": "1399", "media_type": "tv"}
+            tmdb.mark_tmdb_id_gone("1775784", "movie", "tt0944947")
+            self.assertNotIn(self.GOT_MAP, cache.store)
+            self.assertIn("idmap:v1:imdb:tt0944947:tv", cache.store)
+
+    async def test_a_mapping_to_a_gone_id_is_looked_up_again(self):
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            cache.store[self.GOT_MAP] = {"tmdb_id": "1775784", "media_type": "movie"}
+            tmdb.mark_tmdb_id_gone("1775784", "movie", "tt0944947")
+            # /find still lists the deleted entry; it is skipped.
+            client = _FakeClient(self.GOT_AND_DUPLICATE)
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt0944947", "series", "k")
+            self.assertEqual(result, {"tmdb_id": "1399", "media_type": "tv"})
+            self.assertEqual(len(client.calls), 1)
+
+    async def test_find_skips_a_gone_id(self):
+        with _MemoryJsonCache(tmdb, cinemeta):
+            tmdb.mark_tmdb_id_gone("1775784", "movie")
+            client = _FakeClient(self.GOT_AND_DUPLICATE)
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt0944947", "movie", "k")
+            self.assertEqual(result, {"tmdb_id": "1399", "media_type": "tv"})
+
     async def test_concurrent_lookups_share_one_request(self):
         release = asyncio.Event()
 
@@ -588,6 +646,45 @@ class ImdbUnderTmdbTests(unittest.IsolatedAsyncioTestCase):
     async def test_imdb_id_linked_elsewhere_is_dropped(self):
         self._stub("tt9999999")
         self.assertEqual(await self._kept(), "")
+
+    async def test_a_deleted_tmdb_id_is_settled_by_the_imdb_id(self):
+        # A catalog still sending TMDB's deleted duplicate beside the IMDb id.
+        self._resolve = main.resolve_imdb_to_tmdb
+        self.addCleanup(setattr, main, "resolve_imdb_to_tmdb", self._resolve)
+
+        async def _forward(client, imdb_id, media_type, key):
+            return {"tmdb_id": "1399", "media_type": "tv"}
+
+        async def _reverse(client, tmdb_id, media_type, key):
+            if tmdb_id == "1775784":
+                tmdb.mark_tmdb_id_gone(tmdb_id, media_type, imdb_id=None)
+                raise tmdb.TmdbIdGone("gone")
+            return "tt0944947"
+
+        main.resolve_imdb_to_tmdb = _forward
+        main.resolve_tmdb_to_imdb = _reverse
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            cache.store["idmap:v1:imdb:tt0944947:series"] = {"tmdb_id": "1775784", "media_type": "movie"}
+            self.assertEqual(
+                await main._settle_title_identity("1775784", "tt0944947", "series", "k"),
+                ("1399", "series", False, "tt0944947", False),
+            )
+            self.assertNotIn("idmap:v1:imdb:tt0944947:series", cache.store)
+
+    def test_only_the_titles_own_404_counts_as_gone(self):
+        def _err(url, status=404, with_request=True):
+            req = httpx.Request("GET", url)
+            return httpx.HTTPStatusError(
+                "x", request=req if with_request else None,
+                response=httpx.Response(status, request=req),
+            )
+        title = "https://api.themoviedb.org/3/movie/1775784"
+        self.assertTrue(main._is_tmdb_title_404(_err(title), "movie", "1775784"))
+        self.assertFalse(main._is_tmdb_title_404(_err(title, 500), "movie", "1775784"))
+        self.assertFalse(main._is_tmdb_title_404(_err(title + "/images"), "movie", "1775784"))
+        self.assertFalse(main._is_tmdb_title_404(
+            _err("https://image.tmdb.org/t/p/original/x.jpg"), "movie", "1775784"))
+        self.assertFalse(main._is_tmdb_title_404(_err(title, with_request=False), "movie", "1775784"))
 
     async def test_failed_lookup_keeps_the_imdb_id_unverified(self):
         # A TMDB blip says nothing about the link: dropping the id cached the
