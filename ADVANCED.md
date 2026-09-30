@@ -152,6 +152,12 @@ Disable composite poster caching entirely. Every request re-renders from scratch
 
 Default: `false`
 
+### `LOG_VIEWER_MAX_MB`
+
+Disk kept for the admin dashboard's Logs view: a structured copy of the log in `/app/cache/logs`, which the view filters by level, text, module, time, request and title. Keys are redacted the same way the console log redacts them. HTTP lines keep the client's address, as `docker logs` does, until the cap pushes them out. The copy is split across two files and the older one is dropped once they reach this size between them; 20 MB holds roughly 100,000 lines. `0` turns the Logs view off. `docker logs` is unaffected either way.
+
+Default: `20`
+
 ### `PUBLIC_URL`
 
 The address clients reach this instance on, e.g. `https://posters.example.com`. The [trending catalogs addon](CONFIGURATION.md#trending-catalogs-addon) puts it in front of every poster link it hands out. Left blank, it is worked out from each request's `Host`, `X-Forwarded-Host` and `X-Forwarded-Proto` headers, which works behind most reverse proxies. The catch is that those headers come from the client: behind a CDN or shared cache that does not key on them, a forged header could point a cached catalog's posters at another host. Setting this removes the guesswork.

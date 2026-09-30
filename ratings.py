@@ -203,22 +203,35 @@ async def fetch_rating(
             break
 
     mdb_type = "show" if media_type in ("tv", "series") else "movie"
+    # MDBList files an IMDb id under its own type only, and 404s it under the
+    # other. An IMDb id names one title, so a miss is asked again as the
+    # other type: a request whose type was wrong (a series once resolved to a
+    # duplicate TMDB movie) would otherwise cache "no ratings" for the title,
+    # and the cache is keyed by IMDb id alone. A TMDB id is per type — no retry.
+    mdb_types = [mdb_type]
+    if provider == "imdb":
+        mdb_types.append("movie" if mdb_type == "show" else "show")
 
-    try:
-        logger.info(
-            "External API Call: Requested ratings+keywords from MDBlist for "
-            f"{provider}/{media_id}"
-        )
-        resp = await client.get(
-            f"https://api.mdblist.com/{provider}/{mdb_type}/{media_id}",
-            params={"apikey": mdblist_key, "append_to_response": "keyword"},
-            timeout=10.0,
-        )
-    except Exception as exc:
-        logger.error(f"MDblist request error for {media_id}: {type(exc).__name__}: {exc}")
-        return FETCH_FAILED
+    for attempt, mdb_type in enumerate(mdb_types):
+        try:
+            logger.info(
+                "External API Call: Requested ratings+keywords from MDBlist for "
+                f"{provider}/{mdb_type}/{media_id}"
+            )
+            resp = await client.get(
+                f"https://api.mdblist.com/{provider}/{mdb_type}/{media_id}",
+                params={"apikey": mdblist_key, "append_to_response": "keyword"},
+                timeout=10.0,
+            )
+        except Exception as exc:
+            logger.error(f"MDblist request error for {media_id}: {type(exc).__name__}: {exc}")
+            return FETCH_FAILED
 
-    quota = _record_mdblist_quota(mdblist_key, resp.headers)
+        quota = _record_mdblist_quota(mdblist_key, resp.headers)
+        if resp.status_code != 404 or attempt + 1 == len(mdb_types):
+            break
+    if resp.status_code == 200:
+        media_type = "tv" if mdb_type == "show" else "movie"
 
     # 429 is either the daily quota or the per-IP burst limit; 503 is how the
     # burst limit first shows itself (a run of 503s, then 429 + Retry-After

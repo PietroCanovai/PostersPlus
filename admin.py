@@ -43,6 +43,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config as _cfg
+import log_store as _log_store
 import reports as _reports
 import settings as _settings
 import watchlist as _watchlist
@@ -415,6 +416,39 @@ async def admin_status(request: Request, x_admin_key: str = Header(default="")):
         "writable": _writable(),
     }
     return _json(stats)
+
+
+# ---------------------------------------------------------------------------
+# Logs: the dashboard's searchable copy of the log (log_store.py).  The
+# title lookup that turns a name into the ids to filter by lives in main.py,
+# beside the other TMDB-backed admin endpoints.
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/api/logs")
+async def admin_logs(
+    request: Request,
+    levels: str = "", q: str = "", ids: str = "", rid: str = "", module: str = "",
+    kind: str = "all", noise: bool = False, problems: bool = False, since: int = 0,
+    before: str = "", after: str = "", limit: int = 400, expand: bool = False,
+    x_admin_key: str = Header(default=""),
+):
+    await _authorise(request, x_admin_key)
+    state = _log_store.status()
+    if not state["enabled"]:
+        return _json({"enabled": False, "reason": state["reason"], "entries": []})
+    try:
+        query = _log_store.Query(
+            levels=levels, q=q, ids=ids, rid=rid, logger=module, kind=kind, noise=noise,
+            problems=problems, since=time.time() - since if since > 0 else 0.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    limit = max(1, min(limit, 2000))
+    if after:
+        result = await asyncio.to_thread(_log_store.tail, query, after, expand=expand)
+    else:
+        result = await asyncio.to_thread(_log_store.search, query, before=before or None, limit=limit, expand=expand)
+    return _json({"enabled": True, **state, **result})
 
 
 # ---------------------------------------------------------------------------

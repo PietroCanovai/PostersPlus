@@ -15,7 +15,9 @@ import tmdb
 
 def _jpeg(size):
     buf = io.BytesIO()
-    Image.new("RGB", size, (90, 30, 30)).save(buf, format="JPEG")
+    image = Image.new("RGB", size, (90, 30, 30))
+    image.paste((200, 200, 200), (0, 0, size[0] // 2, size[1]))   # not blank art
+    image.save(buf, format="JPEG")
     return buf.getvalue()
 
 

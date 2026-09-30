@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Logs in the dashboard
+
+- A **Logs** view in the admin dashboard: the server log with filters for
+  level, time, module, app or HTTP lines and text (exclusions, phrases,
+  regex), a *Problems only* switch, a live tail and a download.
+- Every line knows the request that logged it, so one matching line can
+  bring the rest of its request with it, or open that request on its own.
+- **Find a title** by name (or IMDb / TVDB id) to see its ids and only the
+  lines about it: no more looking ids up on TMDB or IMDb to grep for them.
+- `LOG_VIEWER_MAX_MB` (default 20) caps the disk it uses; 0 turns it off.
+
 ### Hebrew, and a font choice
 
 - Poster text can be in **Hebrew** (thanks @haveAnIssue), drawn right to
@@ -88,6 +99,17 @@
 
 ### Fixes
 
+- Some series (Game of Thrones, Fleabag) 404'd when a client sent only
+  their IMDb id: a duplicate movie entry on TMDB claiming the same IMDb id
+  won the lookup, and the answer was kept for 90 days. A series now
+  prefers TMDB's TV entry, and a TMDB id that TMDB has deleted is set
+  aside: the title is found again by its IMDb id (straight away when the
+  request sent one alongside, from the next request otherwise).
+- The same titles lost their ratings: MDBList, asked about them as movies,
+  had no record, and "no ratings" was kept for two weeks. An IMDb id MDBList
+  doesn't know under one type is now asked as the other, and on upgrade
+  the no-ratings rows this could have left behind are cleared once, with
+  their posters.
 - The configurator's Poster Resolution no longer resets to 500 when the
   page is refreshed.
 - Import URL no longer replaces API keys you already have: a URL's

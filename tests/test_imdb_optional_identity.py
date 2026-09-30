@@ -174,6 +174,30 @@ class MdblistRouteTests(unittest.TestCase):
         client = _RecordingClient(_FakeResponse(status_code=404))
         result = self._fetch(client, media_id="1698026", provider="tmdb")
         self.assertEqual(result, ({}, "Unknown", None, [], None))
+        # A TMDB id is per type: never asked again as a show.
+        self.assertEqual(client.urls, ["https://api.mdblist.com/tmdb/movie/1698026"])
+
+    def test_imdb_404_is_asked_again_as_the_other_type(self):
+        # Fleabag asked as a movie (its IMDb id once resolved to a duplicate
+        # TMDB movie): MDBList files it as a show only.
+        class _ByType(_RecordingClient):
+            async def get(self, url, **kwargs):
+                self.urls.append(url)
+                if "/show/" in url:
+                    return _FakeResponse(payload={"ratings": [{"source": "imdb", "value": 8.7}]})
+                return _FakeResponse(status_code=404)
+
+        client = _ByType(None)
+        result = self._fetch(client, media_id="tt5687612", provider="imdb")
+        self.assertEqual(client.urls, ["https://api.mdblist.com/imdb/movie/tt5687612",
+                                       "https://api.mdblist.com/imdb/show/tt5687612"])
+        self.assertEqual(result[0], {"imdb": 8.7})
+
+    def test_imdb_unknown_as_either_type_is_an_empty_result(self):
+        client = _RecordingClient(_FakeResponse(status_code=404))
+        result = self._fetch(client, media_id="tt0000001", provider="imdb")
+        self.assertEqual(result, ({}, "Unknown", None, [], None))
+        self.assertEqual(len(client.urls), 2)
 
 
 class PosterBoundaryTests(unittest.TestCase):

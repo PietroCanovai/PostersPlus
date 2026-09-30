@@ -100,3 +100,41 @@ class RatingCachePolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WrongTypeMissCleanupTests(unittest.TestCase):
+    """The one-time sweep of MDBList "not found" rows left by a wrong type."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute("CREATE TABLE rating_cache (imdb_id TEXT PRIMARY KEY, "
+                          "ratings_json TEXT, release_date TEXT)")
+        self.conn.execute("CREATE TABLE final_poster_cache (cache_key TEXT PRIMARY KEY)")
+        self.conn.execute("CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT)")
+        self.conn.executemany("INSERT INTO rating_cache VALUES (?, ?, ?)", [
+            ("tt5687612", "{}", None),              # asked as a movie: cleared
+            ("tt0326520", "{}", "1983-01-01"),      # known, too few votes: kept
+            ("tt0903747", '{"imdb": 9.5}', None),   # rated: kept
+            ("tmdb:49417", "{}", None),             # TMDB route, per type: kept
+        ])
+        self.conn.executemany("INSERT INTO final_poster_cache VALUES (?)", [
+            ("tt5687612:67070:series:abc",), ("tt56876120:1:movie:abc",),
+            ("tt0903747:1396:series:abc",),
+        ])
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _ids(self, table, col):
+        return {r[0] for r in self.conn.execute(f"SELECT {col} FROM {table}")}
+
+    def test_clears_only_wrong_type_misses_and_their_posters_once(self):
+        cache._clear_mdblist_wrong_type_misses(self.conn)
+        self.assertEqual(self._ids("rating_cache", "imdb_id"),
+                         {"tt0326520", "tt0903747", "tmdb:49417"})
+        self.assertEqual(self._ids("final_poster_cache", "cache_key"),
+                         {"tt56876120:1:movie:abc", "tt0903747:1396:series:abc"})
+        # Once only: a later miss is a real one, kept for its TTL.
+        self.conn.execute("INSERT INTO rating_cache VALUES ('tt5687612', '{}', NULL)")
+        cache._clear_mdblist_wrong_type_misses(self.conn)
+        self.assertIn("tt5687612", self._ids("rating_cache", "imdb_id"))

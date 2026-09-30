@@ -912,6 +912,8 @@ import watchlist
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
 import config as _cfg
+import log_store
+log_store.install(_cfg.LOG_DIR, _cfg.LOG_VIEWER_MAX_MB, _TruncateUrlFilter._redact)
 import discovery
 from discovery import (
     ALL_PRIORITY_SLOTS,
@@ -952,7 +954,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1513,6 +1515,46 @@ async def _resolve_title_identity(
     )
 
 
+def _parse_tvdb_stremio_id(stremio_id: str) -> int | None:
+    """The TVDB id in a ``tvdb:<id>`` (or ``tvdb:<id>:<s>:<e>``) Stremio id —
+    what AIOMetadata's TVDB catalogs send for titles TMDB and IMDb don't list."""
+    namespace, _, rest = (stremio_id or "").strip().partition(":")
+    raw = rest.split(":", 1)[0]
+    if namespace.lower() != "tvdb" or not raw.isascii() or not raw.isdigit():
+        return None
+    return int(raw) if len(raw) <= 10 and int(raw) > 0 else None
+
+
+async def _resolve_tvdb_identity(
+    tvdb_id: int, media_type: str, tmdb_key: str | None,
+) -> "tuple[str, str, bool]":
+    """``_resolve_title_identity`` for a request carrying only a TVDB id.
+
+    TMDB, when it links the TVDB id, takes the title from there as if its TMDB
+    id had been sent.  Otherwise TVDB is the spine: ``tvdb:<id>`` stands in as
+    the id (non-numeric, so the TMDB-only lookups skip themselves) and the
+    Cinemeta-spine branch, finding no IMDb id to ask Cinemeta about, reads the
+    title from TVDB.
+    """
+    if tmdb_key and _HTTP_CLIENT is not None:
+        try:
+            resolved = await resolve_tvdb_to_tmdb(_HTTP_CLIENT, tvdb_id, media_type, tmdb_key)
+        except IdResolveError as exc:
+            logger.warning(f"{exc} — rendering tvdb:{tvdb_id} from TVDB instead")
+            resolved = None
+        if resolved is not None:
+            return resolved["tmdb_id"], resolved["media_type"], False
+    if not tvdb.tvdb_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"tvdb:{tvdb_id} has no TMDB record and this server has no TVDB "
+                "key to render it from. Send tmdb_id or imdb_id if you have one."
+            ),
+        )
+    return f"tvdb:{tvdb_id}", media_type, True
+
+
 async def _imdb_id_under_tmdb(
     tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None, use_cinemeta: bool,
 ) -> str:
@@ -1532,6 +1574,53 @@ async def _imdb_id_under_tmdb(
     return (await _imdb_id_under_tmdb_checked(tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta))[0]
 
 
+async def _settle_title_identity(
+    tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None,
+) -> "tuple[str, str, bool, str, bool]":
+    """_resolve_title_identity, then _imdb_id_under_tmdb_checked.
+
+    Returns ``(tmdb_id, media_type, use_cinemeta, imdb_id, imdb_unverified)``.
+    A TMDB id the link check finds deleted (TmdbIdGone — a duplicate a
+    client's catalog still names) is set aside, and the IMDb id beside it
+    decides the title instead: it can only be raised when there is one.
+    """
+    media_type_in = media_type
+    tmdb_id, media_type, use_cinemeta = await _resolve_title_identity(
+        tmdb_id, imdb_id, media_type_in, tmdb_key
+    )
+    try:
+        kept, unverified = await _imdb_id_under_tmdb_checked(
+            tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta
+        )
+        return tmdb_id, media_type, use_cinemeta, kept, unverified
+    except TmdbIdGone as exc:
+        logger.info(f"{exc} — resolving {imdb_id} instead")
+        # Our own id map may be what named the deleted entry.
+        forget_imdb_mapping_to(imdb_id, tmdb_id)
+    tmdb_id, media_type, use_cinemeta = await _resolve_title_identity(
+        "", imdb_id, media_type_in, tmdb_key
+    )
+    try:
+        kept, unverified = await _imdb_id_under_tmdb_checked(
+            tmdb_id, imdb_id, media_type, tmdb_key, use_cinemeta
+        )
+    except TmdbIdGone as exc:
+        logger.warning(f"{exc} — keeping {imdb_id} unverified for now")
+        return tmdb_id, media_type, use_cinemeta, imdb_id, True
+    return tmdb_id, media_type, use_cinemeta, kept, unverified
+
+
+def _is_tmdb_title_404(exc: httpx.HTTPStatusError, endpoint: str, tmdb_id: str) -> bool:
+    """Whether *exc* is TMDB's 404 for the title's own details page, i.e. the
+    TMDB id itself is gone rather than one of its images."""
+    try:
+        url = exc.request.url
+    except RuntimeError:  # built without a request
+        return False
+    return (exc.response is not None and exc.response.status_code == 404
+            and url.host == "api.themoviedb.org" and url.path == f"/3/{endpoint}/{tmdb_id}")
+
+
 async def _imdb_id_under_tmdb_checked(
     tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None, use_cinemeta: bool,
 ) -> tuple[str, bool]:
@@ -1549,6 +1638,8 @@ async def _imdb_id_under_tmdb_checked(
         raise HTTPException(status_code=503, detail="Service unavailable")
     try:
         linked = await resolve_tmdb_to_imdb(_HTTP_CLIENT, tmdb_id, media_type, tmdb_key)
+    except TmdbIdGone:
+        raise
     except IdResolveError as exc:
         logger.warning(f"{exc} — keeping {imdb_id} unverified for now")
         return imdb_id, True
@@ -6428,6 +6519,7 @@ class _ClientIpMiddleware:
 
 
 app.add_middleware(_ClientIpMiddleware)
+app.add_middleware(log_store.RequestIdMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -7403,6 +7495,57 @@ async def admin_art_search(request: Request, q: str = "",
     return _admin._json({"results": results})
 
 
+@app.get("/admin/api/logs/title")
+async def admin_logs_title(request: Request, media_type: str = "", tmdb_id: str = "",
+                           imdb_id: str = "", tvdb_id: str = "",
+                           x_admin_key: str = Header(default="")):
+    """Every id a title goes by, for the Logs view's title filter: picked from
+    the search (TMDB id) or clicked in a log line (IMDb or TVDB id)."""
+    await _admin._authorise(request, x_admin_key)
+    client, key = _art_client_and_key()
+    ids = {"imdb_id": imdb_id.strip() or None, "tvdb_id": tvdb_id.strip() or None}
+    if not tmdb_id and (ids["imdb_id"] or ids["tvdb_id"]):
+        if ids["imdb_id"]:
+            _check_imdb_id(ids["imdb_id"])
+            ext, source = ids["imdb_id"], "imdb_id"
+        else:
+            if not ids["tvdb_id"].isdigit() or len(ids["tvdb_id"]) > 10:
+                raise HTTPException(status_code=400, detail="Invalid tvdb_id")
+            ext, source = ids["tvdb_id"], "tvdb_id"
+        resp = await _proxy_tmdb_get(f"https://api.themoviedb.org/3/find/{ext}",
+                                     {"api_key": key, "external_source": source})
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"TMDB lookup of {ext} returned {resp.status_code}")
+        found = resp.json()
+        for kind, field in (("movie", "movie_results"), ("tv", "tv_results")):
+            if found.get(field):
+                media_type, tmdb_id = kind, str(found[field][0]["id"])
+                break
+        else:
+            # TMDB doesn't know it; the id alone still filters.
+            return _admin._json({**ids, "tmdb_id": None, "media_type": media_type or None,
+                                 "title": None, "year": None, "thumb": None})
+    media_type = _art_media_type(media_type)
+    _check_tmdb_id(tmdb_id)
+    resp = await _proxy_tmdb_get(f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}",
+                                 {"api_key": key, "append_to_response": "external_ids"})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404 if resp.status_code == 404 else 502,
+                            detail=f"TMDB returned {resp.status_code} for {media_type}/{tmdb_id}")
+    d = resp.json()
+    ext = d.get("external_ids") or {}
+    date = d.get("release_date") or d.get("first_air_date") or ""
+    return _admin._json({
+        "media_type": media_type,
+        "tmdb_id": str(d.get("id") or tmdb_id),
+        "imdb_id": ext.get("imdb_id") or d.get("imdb_id") or ids["imdb_id"],
+        "tvdb_id": str(ext["tvdb_id"]) if ext.get("tvdb_id") else ids["tvdb_id"],
+        "title": d.get("title") or d.get("name") or "",
+        "year": date[:4],
+        "thumb": f"{_TMDB_IMG}/w92{d['poster_path']}" if d.get("poster_path") else None,
+    })
+
+
 @app.get("/admin/api/art/title")
 async def admin_art_title(request: Request, media_type: str, tmdb_id: str,
                           language: str = "en", x_admin_key: str = Header(default="")):
@@ -8273,10 +8416,9 @@ async def get_logo(
         )
 
     effective_tmdb_key = _resolve_tmdb_key((tmdb_key or "").strip())
-    tmdb_id, type, use_cinemeta = await _resolve_title_identity(
+    tmdb_id, type, use_cinemeta, imdb_id, _ = await _settle_title_identity(
         tmdb_id, imdb_id, type, effective_tmdb_key
     )
-    imdb_id = await _imdb_id_under_tmdb(tmdb_id, imdb_id, type, effective_tmdb_key, use_cinemeta)
     media_type = "tv" if type in ("tv", "series") else "movie"
     effective_lang = (lang or "en").strip() or "en"
 
@@ -8598,22 +8740,26 @@ async def get_poster(
         if imdb_id:
             _check_imdb_id(imdb_id)
         if not tmdb_id and not imdb_id:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Missing required parameter: /poster needs tmdb_id or imdb_id "
-                    "(or a tt... stremio_id) to identify the title. Sending both "
-                    "is best: tmdb_id selects the artwork and metadata, imdb_id "
-                    "adds the IMDb-keyed enrichment (Metahub logo fallback, "
-                    "digital-release detection, stream-quality badges)."
-                ),
+            _tvdb_request_id = _parse_tvdb_stremio_id(stremio_id)
+            if _tvdb_request_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Missing required parameter: /poster needs tmdb_id or imdb_id "
+                        "(or a tt... or tvdb:... stremio_id) to identify the title. "
+                        "Sending both is best: tmdb_id selects the artwork and "
+                        "metadata, imdb_id adds the IMDb-keyed enrichment (Metahub "
+                        "logo fallback, digital-release detection, stream-quality badges)."
+                    ),
+                )
+            tmdb_id, type, use_cinemeta = await _resolve_tvdb_identity(
+                _tvdb_request_id, type, _resolve_tmdb_key(tmdb_key)
             )
-        tmdb_id, type, use_cinemeta = await _resolve_title_identity(
-            tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key)
-        )
-        imdb_id, _imdb_link_unverified = await _imdb_id_under_tmdb_checked(
-            tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key), use_cinemeta
-        )
+            _imdb_link_unverified = False
+        else:
+            tmdb_id, type, use_cinemeta, imdb_id, _imdb_link_unverified = (
+                await _settle_title_identity(tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key))
+            )
         has_tmdb_id = _TMDB_ID_RE.match(tmdb_id) is not None
 
     canonical_id = _canonical_rating_id(imdb_id, anime_key, tmdb_id)
@@ -9187,10 +9333,20 @@ async def get_poster(
             # backdrop-to-portrait, original-art and logo rules apply unchanged.
             _cm_meta = await cinemeta.fetch_cinemeta_metadata(client, imdb_id, type)
             if _cm_meta is None:
+                # TVDB lists titles neither TMDB nor Cinemeta do (small
+                # documentaries, parodies, web series), and a request carrying
+                # only a tvdb: id lands here with no IMDb id at all.  Same
+                # tuple shape, so nothing below needs to know.
+                _cm_meta = await tvdb.fetch_tvdb_metadata(
+                    client, media_type=type,
+                    tvdb_id_hint=_parse_tvdb_stremio_id(tmdb_id),
+                    imdb_id=imdb_id or None, language=rcfg.logo_language,
+                )
+            if _cm_meta is None:
                 # No entry, or Cinemeta is unavailable — the genre canvas, and
                 # the render is kept out of the composite cache (below) so an
                 # outage isn't pinned for the cache TTL.
-                logger.info(f"Cinemeta has nothing for {imdb_id} — fallback canvas will be served")
+                logger.info(f"Cinemeta has nothing for {imdb_id or tmdb_id} — fallback canvas will be served")
                 _cm_meta = cinemeta.empty_metadata()
                 _cinemeta_missing = True
             (
@@ -9690,7 +9846,7 @@ async def get_poster(
                 _bd_avoid = _cfg.TEXTLESS_TEXT_DETECTION and _vote_detection_ok
                 _tvdb_bg, _tvdb_bg_id = await tvdb.tvdb_backdrop(
                     client, media_type=type, imdb_id=effective_imdb_id,
-                    tmdb_id=tmdb_id, avoid_text=_bd_avoid,
+                    tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"), avoid_text=_bd_avoid,
                 )
             # Opt-in TVDB poster as a further no-art rescue (TVDB_USE_POSTERS).
             # A real poster — even one carrying its own title — beats a genre
@@ -9700,7 +9856,7 @@ async def get_poster(
             if (_tvdb_bg is None and _cfg.TVDB_USE_POSTERS and tvdb.tvdb_enabled()):
                 _tvdb_ps, _tvdb_ps_id = await tvdb.tvdb_poster(
                     client, media_type=type, language=rcfg.logo_language,
-                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id,
+                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"),
                 )
             if _tvdb_bg is not None:
                 if await _tvdb_is_clean(_tvdb_bg, _tvdb_bg_id):
@@ -9801,7 +9957,7 @@ async def get_poster(
                         and _detection_vote_ok(_vc)):
                     _tvdb_bg, _tvdb_bg_id = await tvdb.tvdb_backdrop(
                         client, media_type=type, imdb_id=effective_imdb_id,
-                        tmdb_id=tmdb_id, avoid_text=True,
+                        tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"), avoid_text=True,
                     )
                 # Third rescue tier (opt-in, TVDB_USE_POSTERS): a TVDB poster.
                 # Only a no-language one — TVDB's language-tagged posters nearly
@@ -9815,7 +9971,7 @@ async def get_poster(
                         and _detection_vote_ok(_vc)):
                     _tvdb_ps, _tvdb_ps_id = await tvdb.tvdb_poster(
                         client, media_type=type, language=rcfg.logo_language,
-                        imdb_id=effective_imdb_id, tmdb_id=tmdb_id,
+                        imdb_id=effective_imdb_id, tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"),
                         textless_only=True,
                     )
                 if _tvdb_bg is not None and await _tvdb_is_clean(_tvdb_bg, _tvdb_bg_id):
@@ -9975,7 +10131,7 @@ async def get_poster(
                     original_language=tmdb_data.get("original_language"),
                     logo_priority=rcfg.logo_priority,
                     secondary_language=_effective_secondary,
-                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id,
+                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"),
                 )
 
             async def _metahub():
@@ -10916,6 +11072,13 @@ async def get_poster(
         if _render_fut is not None and not _render_fut.done():
             _render_fut.set_exception(exc)
         status = exc.response.status_code
+        _endpoint = "tv" if type in ("tv", "series") else "movie"
+        if has_tmdb_id and _is_tmdb_title_404(exc, _endpoint, tmdb_id):
+            # The title itself is gone from TMDB — a deleted duplicate a
+            # catalog or our id map still points at (see mark_tmdb_id_gone).
+            # Marked, the next request goes by the IMDb id instead.
+            mark_tmdb_id_gone(tmdb_id, _endpoint, imdb_id or None)
+            raise HTTPException(status_code=404, detail=f"TMDB {_endpoint}/{tmdb_id} no longer exists")
         if status == 404:
             # Metahub art the probe vouched for has gone: forget the probe so
             # the next request re-checks (and falls through to the canvas)
@@ -10925,7 +11088,6 @@ async def get_poster(
             # TMDB returned metadata with a poster/image path that no longer exists.
             # Invalidate the (per-language) metadata cache so the next request
             # re-fetches fresh data.
-            _endpoint = "tv" if type in ("tv", "series") else "movie"
             # The row the render read: keyed by the secondary language too
             # when a custom logo priority uses one.
             delete_cached_tmdb_metadata(tmdb_metadata_cache_key(

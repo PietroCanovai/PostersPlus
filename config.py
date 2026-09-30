@@ -66,6 +66,8 @@ CUSTOM_ART_DIR        = "/app/cache/custom_art"
 PRESET_ART_DIR        = "/app/cache/preset_art"
 # Label fonts the operator uploaded in the dashboard (Fonts), with their index.
 CUSTOM_FONT_DIR       = "/app/cache/custom_fonts"
+# The dashboard Logs view's copy of the log (log_store.py).
+LOG_DIR               = "/app/cache/logs"
 
 # Environment
 
@@ -226,6 +228,8 @@ KITSU_API_BASE        = _env('KITSU_API_BASE', "https://kitsu.io/api/edge", grou
 # Ordered list of all configured server-side MDBList keys (primary first).
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
+
+LOG_VIEWER_MAX_MB     = max(0, int(_env('LOG_VIEWER_MAX_MB', "20", group='Caching', kind='int', label='Dashboard log size (MB)', help="Disk kept for the dashboard's Logs view, a searchable copy of the container log in the cache volume. The oldest lines go once it is full; 20 MB holds roughly 100,000 lines. 0 turns the Logs view off. docker logs is unaffected either way.", min=0, max=1000, advanced=True) or "0"))
 
 # Uvicorn worker processes.  Read by entrypoint.sh (from the settings file,
 # then the environment) before Python starts; declared here so the dashboard
