@@ -3,6 +3,7 @@ import { api, toast, Toast, n, ago, when, duration } from './common.js';
 import { Library } from './library.js';
 import { Editor } from './editor.js';
 import { Style } from './style.js';
+import { Notch } from './notch.js';
 
 function useHash() {
   const [h, setH] = useState(location.hash.slice(1) || 'library');
@@ -396,6 +397,7 @@ function App() {
       <div class="brand">Posters+ <span>Studio</span></div>
       ${nav('library', 'Library', status && status.items.needs_match ? html`<span class="chip warn">${status.items.needs_match}</span>` : '')}
       ${nav('style', 'Style', status && status.style_draft ? html`<span class="chip warn" title="Changes not applied yet">draft</span>` : '')}
+      ${nav('notch', 'Notch', '')}
       ${nav('activity', 'Activity', problems ? html`<span class="chip bad">${problems}</span>` : (status && status.progress.running ? html`<span class="chip info">running</span>` : ''))}
       ${nav('settings', 'Settings', '')}
       <div class="spacer"></div>
@@ -406,6 +408,7 @@ function App() {
         : page === 'run' ? html`<${RunDetail} id=${arg} />`
         : page === 'activity' ? html`<${Activity} status=${status} refresh=${refresh} />`
         : page === 'style' ? html`<${Style} refreshStatus=${refresh} />`
+        : page === 'notch' ? html`<${Notch} refreshStatus=${refresh} />`
         : page === 'title' ? html`<${Editor} id=${arg} review=${query === 'review'} key=${arg} />`
         : status && !status.configured ? html`<${Activity} status=${status} refresh=${refresh} />`
         : html`<${Library} />`}

@@ -128,6 +128,8 @@ input[type=color].unset { opacity: .35; }
   border: 1px solid var(--border); cursor: pointer; display: block; }
 .sample-grid figcaption { font-size: 12.5px; color: var(--text-2); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sash-list { margin-top: 8px; max-height: 420px; overflow: auto; }
+.sash-list.tall { max-height: 640px; }
+.notch-box { margin: 4px 0 10px; }
 .sash-list .list-row { padding: 6px 12px; }
 .sash-list .list-row.off .t { color: var(--text-3); }
 button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }

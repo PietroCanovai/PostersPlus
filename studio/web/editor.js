@@ -1,6 +1,7 @@
 import { html, useState, useEffect, useRef, useMemo, useCallback } from './vendor/preact-htm.js';
 import { api, toast, go, nav, thumbUrl, fullImageUrl, ago } from './common.js';
 import { chipsFor } from './library.js';
+import { sashName } from './notch.js';
 
 const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours' };
 const MODES = [
@@ -145,6 +146,7 @@ export function Editor({ id, review }) {
   const [pick, setPick] = useState(null);         // colour being eyedropped
   const [link, setLink] = useState('');
   const [localStyle, setLocalStyle] = useState(null);
+  const [notch, setNotch] = useState(null);       // what the notch can say for this title
   const saveTimer = useRef(null);
   const previewImg = useRef(null);
 
@@ -156,6 +158,10 @@ export function Editor({ id, review }) {
     load();
     api(`/title/${id}/candidates`).then(setCands).catch(ex => setCands({ error: ex.message, candidates: { posters: [], backdrops: [], logos: [] } }));
   }, [id]);
+  useEffect(() => {
+    if (tab !== 'look') return;
+    api(`/title/${id}/notch`).then(setNotch).catch(ex => setNotch({ available: false, reason: ex.message }));
+  }, [tab, id, ts]);
 
   const idx = nav.ids.indexOf(id);
   const prevId = idx > 0 ? nav.ids[idx - 1] : null;
@@ -292,6 +298,13 @@ export function Editor({ id, review }) {
       await refresh();
     } catch (ex) { toast(ex.message, true); }
     setBusy(false);
+  }
+  async function toggleSashOff(slot) {
+    const off = new Set(notch.off);
+    if (off.has(slot)) off.delete(slot); else off.add(slot);
+    const style = { ...t.title.style };
+    if (off.size) style.sash_off = [...off].join(','); else delete style.sash_off;
+    await call(`/title/${id}`, { method: 'PUT', body: { style } }, off.has(slot) ? 'That label is off for this title' : 'Label allowed again');
   }
   async function markReviewed() {
     await api(`/title/${id}`, { method: 'PUT', body: { reviewed: true } }).catch(() => {});
@@ -534,6 +547,18 @@ export function Editor({ id, review }) {
                 placeholder=${t.item.jf_type === 'Season' ? 'Season number (automatic)' : 'Automatic (awards, new season, …)'}
                 onInput=${e => setStyle('notch_label', e.target.value.trim() ? e.target.value : null)} />
             </div>
+            ${notch && (notch.available ? html`<div class="notch-box">
+              <div class="hint-sm">The notch says now: <strong>${notch.shown ? notch.shown.label : 'nothing'}</strong>${notch.custom_label ? ' (your text)' : ''}.
+                ${notch.candidates.length ? ' Labels this title qualifies for (switch one off for this title only):' : ' No label applies to this title right now.'}</div>
+              ${notch.candidates.length > 0 && html`<div class="list sash-list">${notch.candidates.map(c => {
+                const off = notch.off.includes(c.slot);
+                const globallyOff = !off && !notch.priority.includes(c.slot);
+                return html`<div class="list-row ${off || globallyOff ? 'off' : ''}">
+                  <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked=${!off} disabled=${globallyOff} onChange=${() => toggleSashOff(c.slot)} />
+                    <span><span class="t">${c.label}</span><span class="d" style="display:block">${sashName(c.slot)}${globallyOff ? ' · off for every title (Notch page)' : ''}</span></span></label></div>`;
+              })}</div>`}
+              <button class="link" onClick=${() => go('notch')}>Label order and notable lists →</button>
+            </div>` : html`<p class="hint-sm">${notch.reason}</p>`)}
             ${t.stage && html`<div class="slider-row">
               <label for="tpl">Design</label>
               <select id="tpl" value=${styleValue('studio_template') || ''} onChange=${e => setStyle('studio_template', e.target.value || null)}>

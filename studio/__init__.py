@@ -33,10 +33,12 @@ class _RevalidatedStatic(StaticFiles):
 
 def install(app) -> None:
     from .api_library import router as library_router
+    from .api_notch import router as notch_router
     from .api_style import router as style_router
     app.include_router(router)
     app.include_router(library_router)
     app.include_router(style_router)
+    app.include_router(notch_router)
     app.mount("/studio/static", _RevalidatedStatic(directory=WEB_DIR), name="studio-static")
 
 

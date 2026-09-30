@@ -57,6 +57,14 @@ Changes are a **draft**: they show in the previews on six of your titles (*Other
 
 Titles keep their own overrides on top of the style.
 
+## Notch
+
+The label at the top of a poster (**Notch** in the menu). A poster shows the first label on the list that applies to its title.
+
+- **Labels**: every label with what triggers it and where the data comes from (MDBList for Oscar/Emmy awards, Metacritic, cult and true-story; PostersPlus's own data for Golden Globes and festival prizes; TMDB for trending, seasons and release status; your lists for notable studios, directors and cast). Switch labels on or off and move them up. This is part of the style, so it's a draft until you **Apply** it.
+- **Notable lists**: who counts as a notable director, studio or cast member, and what the notch prints for them (e.g. "Ghibli" for Studio Ghibli). Search TMDB to add someone; names must match TMDB's. **Save** updates posters in the next run; **Back to the built-in list** undoes your list.
+- **Per title**, in the editor's *Colours & layout* tab: what the notch says now, every label the title qualifies for, a switch to turn any of them off for that title only, and **Notch text** to write your own.
+
 ## Theatre (StageMedia)
 
 Recordings imported by the Encora plugin have no TMDB entry, only a StageMedia show id. Add your **StageMedia API key** in Settings (and switch the Theatre library on), and Studio makes their posters from StageMedia's artwork, or your uploads. Every recording of the same show shares one set of rules.

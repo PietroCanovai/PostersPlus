@@ -1,18 +1,6 @@
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { api, toast, go } from './common.js';
 
-const SASH_LABELS = {
-  watchlist: 'On your watchlist', wins: 'Oscar / Emmy winner', gg_wins: 'Golden Globe winner', festival: 'Festival prize',
-  pic_noms: 'Oscar / Emmy nominee', metacritic: 'Metacritic must-see', gg_noms: 'Golden Globe nominee',
-  studio: 'Notable studio', director: 'Notable director', cast: 'Notable cast', trending: 'Trending',
-  new_season: 'New season', returning: 'Returning', premiere: 'Premiere', just_added: 'Just added',
-  season_finale: 'Season finale', cult: 'Cult classic', foreign: 'Foreign language', newly_streaming: 'Newly streaming',
-  true_story: 'True story', short_film: 'Short film', mini_series: 'Mini series', binge_ready: 'Binge ready',
-  trending_broad: 'Trending (lower ranks)', cinema: 'In cinemas', streaming: 'Streaming', physical: 'Disc release',
-  production: 'In production', ended: 'Ended', cancelled: 'Cancelled', airing: 'Airing', renewed: 'Renewed',
-};
-const sashLabel = s => SASH_LABELS[s] || s.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-
 const LOGO_PRIORITY = [
   ['native,english,original,neutral,text', 'The title’s own language, then English'],
   ['english,native,original,neutral,text', 'English first'],
@@ -55,23 +43,6 @@ function fmt(ctl, v) {
   return v;
 }
 
-function SashList({ sash, onChange }) {
-  const active = sash.active;
-  const inactive = sash.all.filter(s => !active.includes(s));
-  const move = (i, d) => { const a = [...active]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; onChange(a); };
-  return html`<div>
-    <p class="hint-sm">The first label that applies to a title is the one shown. Switch labels off or move them up.</p>
-    <div class="list sash-list">${active.map((s, i) => html`<div class="list-row">
-      <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked onChange=${() => onChange(active.filter(x => x !== s))} /><span class="t">${sashLabel(s)}</span></label>
-      <button class="icon" onClick=${() => move(i, -1)} disabled=${i === 0} aria-label="Move up">↑</button>
-      <button class="icon" onClick=${() => move(i, 1)} disabled=${i === active.length - 1} aria-label="Move down">↓</button>
-    </div>`)}
-    ${inactive.map(s => html`<div class="list-row off">
-      <label class="switch" style="padding:0;flex:1"><input type="checkbox" onChange=${() => onChange([...active, s])} /><span class="t">${sashLabel(s)}</span></label>
-    </div>`)}</div>
-  </div>`;
-}
-
 export function Style({ refreshStatus }) {
   const [s, setS] = useState(null);
   const [params, setParams] = useState(null);
@@ -96,12 +67,6 @@ export function Style({ refreshStatus }) {
   }
   const value = k => (params[k] !== undefined ? params[k] : s.defaults[k]);
   const set = (k, v) => { const next = { ...params }; if (v === null || v === undefined || v === s.defaults[k]) delete next[k]; else next[k] = String(v); save(next); };
-  function setSash(active) {
-    const next = { ...params };
-    next.sash_priority = active.length ? active.join(',') : s.sash.all.map(x => '-' + x).join(',');
-    setS({ ...s, sash: { ...s.sash, active } });
-    save(next);
-  }
   async function act(path, body, msg) {
     setBusy(true);
     try { const d = await api(path, { method: 'POST', body: body || {} }); take(d); if (msg) toast(msg); refreshStatus(); return d; }
@@ -165,7 +130,7 @@ export function Style({ refreshStatus }) {
               <select id=${ctl.k} value=${v} onChange=${e => set(ctl.k, e.target.value)}>${opts.map(([o, l]) => html`<option value=${o}>${l}</option>`)}</select>
               ${custom ? '' : html`<span class="val">default</span>`}</div>`;
           })}
-          ${title === 'Notch' && html`<${SashList} sash=${s.sash} onChange=${setSash} />`}
+          ${title === 'Notch' && html`<div class="row" style="margin-top:8px"><button onClick=${() => go('notch')}>Choose which labels the notch shows →</button></div>`}
         </div>`)}
         <div class="card">
           <h3>Advanced</h3>

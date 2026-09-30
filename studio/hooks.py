@@ -65,6 +65,10 @@ def apply_params(cfg, params: dict, parse_hex) -> None:
     cfg.fade_color = parse_hex(params.get("fade_color"))
     cfg.logo_color = parse_hex(params.get("logo_color"))
     cfg.notch_text_color = parse_hex(params.get("notch_text_color"))
+    off = {s.strip() for s in (params.get("sash_off") or "").split(",") if s.strip()}
+    if off:
+        # This title's own "never show" labels, taken out of whatever order applies.
+        cfg.sash_priority = [s for s in cfg.sash_priority if s not in off]
     label = " ".join((params.get("notch_label") or "").split())
     if label and len(label) <= 40 and label.isprintable():
         cfg.notch_label = label
@@ -118,6 +122,21 @@ def recolor_logo(logo, color: tuple, mode: str = "solid"):
     else:
         out = Image.new("RGBA", rgba.size, (*color, 255))
     out.putalpha(alpha)
+    return out
+
+
+def sash_candidates(meta) -> list[dict]:
+    """Every notch label a title qualifies for, whether or not it's switched on:
+    [{"slot", "label"}] in the full default order (for the editor's "could show")."""
+    import discovery
+    out = []
+    for slot in discovery.ALL_PRIORITY_SLOTS:
+        try:
+            label = discovery._evaluate_slot(slot, meta)
+        except Exception:
+            label = None
+        if label:
+            out.append({"slot": slot, "label": label})
     return out
 
 

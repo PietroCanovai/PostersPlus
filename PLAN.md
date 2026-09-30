@@ -243,7 +243,7 @@ Session cookies, `FORWARDED_ALLOW_IPS`, tunnel hostname + Cloudflare Access (wit
 - Uploads of every kind: posters (with or without their own title), **backdrops** (framed to 2:3 like TMDB's), **logos** (PNG with transparency). Each kind appears in its own tab next to the providers' images.
 - Custom images stay out of the Artwork tab's clean-up of unused `custom:` files (the fork checks its own table too).
 
-*7b. What the notch can say, from Studio.* The notch shows the first label in the priority list that applies to a title. The data behind each label:
+*7b. What the notch can say, from Studio.* **Done 2026-09-30** (Notch page, notable lists, per-title label switches, "could show"). The notch shows the first label in the priority list that applies to a title. The data behind each label:
 - **Awards** (Oscar/Emmy/Globe wins and nominations, Metacritic must-see, cult, true story, age rating): MDBList, keyed by IMDb id.
 - **Festival prizes**: PostersPlus's own festival data (`festivals.py`).
 - **Notable studio / director / cast**: curated lists in `discovery.py`, overridable in `/app/cache/discovery_overrides.json` (the admin dashboard's *Sash lists* view and its API `/admin/api/sash-lists`, with TMDB search for people and companies).

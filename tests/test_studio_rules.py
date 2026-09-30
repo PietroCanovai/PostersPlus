@@ -191,6 +191,9 @@ class HookTests(unittest.TestCase):
         self.assertEqual((cfg.art_poster, cfg.art_crop, cfg.fade_color), ("/abc.jpg", "0.5000,0.5000,2.000", (16, 32, 48)))
         self.assertEqual((cfg.notch_label, cfg.notch_text_color), ("Season 2", (255, 255, 255)))
         self.assertEqual(main.build_request_config({"notch_label": "x" * 41}).notch_label, "")
+        # A title's own "never show" labels come out of whatever order applies.
+        cfg = main.build_request_config({"sash_priority": "wins,trending,cast", "sash_off": "trending,festival"})
+        self.assertEqual(cfg.sash_priority, ["wins", "cast"])
         # Defaults leave the composite cache signature exactly as before.
         self.assertNotIn("art_poster", main._render_config_signature(main.build_request_config({})))
 

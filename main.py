@@ -10581,6 +10581,8 @@ async def get_poster(
                 "upcoming_release_date": discovery_meta.upcoming_release_date,
                 "upcoming_release_window": discovery_meta.upcoming_release_window,
                 "sash_priority":     _sash_priority,
+                # Fork hook (Studio): every label this title qualifies for, in priority order.
+                "sash_candidates":   _studio_hooks.sash_candidates(discovery_meta),
                 "badge_display_mode":rcfg.badge_display_mode,
                 "rating_display_mode":rcfg.rating_display_mode,
                 "rating_hidden_unreleased": _hide_unreleased,
