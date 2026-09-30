@@ -34,9 +34,9 @@ function Preview({ src, shape, onPick, picking }) {
   const img = useRef(null);
   return html`<div class="preview ${shape} ${picking ? 'picking' : ''}">
     ${shown && html`<img ref=${img} src=${shown} alt="" onClick=${e => onPick && onPick(e, img.current)} crossorigin="anonymous"
-      onError=${() => setFailed(true)} />`}
+      onError=${() => { setShown(null); setFailed(true); }} />`}
     ${next && html`<img class="loading" src=${next} alt="" onLoad=${() => { setShown(next); setNext(null); }}
-      onError=${() => { setNext(null); setFailed(true); }} />`}
+      onError=${() => { setNext(null); setShown(null); setFailed(true); }} />`}
     ${next && html`<span class="spin" aria-label="Loading"></span>`}
     ${failed && !next && html`<span class="pv-empty">Nothing to show</span>`}
   </div>`;
@@ -390,7 +390,7 @@ export function Editor({ id, review }) {
     const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
     previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
     caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin keeps its own' : ch.mode === 'pinned' ? 'Pinned'
-      : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
+      : t.stage ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
   const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length, never: never.poster.size + never.logo.size, styled: false });
