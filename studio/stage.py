@@ -150,6 +150,8 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
     from PIL import Image
 
     merged = {**dict(parse_qsl(style, keep_blank_values=True)), **params}
+    template = merged.pop("studio_template", "")
+    venue = merged.pop("playbill_venue", None)
     poster = merged.pop("art_poster", "")
     crop_token = merged.pop("art_crop", "")
     own_title = merged.pop("art_original", "") in ("1", "true")
@@ -173,6 +175,13 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
             logger.warning(f"Studio: theatre logo {logo_ref} failed ({exc}); using the title as text")
 
     def _compose() -> bytes:
+        if template == "playbill":
+            from . import playbill
+            art = Image.open(io.BytesIO(data))
+            out = playbill.compose(art, size=size, logo=logo,
+                                   venue=playbill.venue_from_name(row["name"]) if venue is None else venue,
+                                   crop=(crop.x, crop.y, crop.zoom))
+            return main._encode_poster(out)
         art = Image.open(io.BytesIO(data)).convert("RGB")
         art = art.crop(crop.box(art.width, art.height)).resize(size, Image.Resampling.LANCZOS)
         image = art.convert("RGBA")

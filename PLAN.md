@@ -1,6 +1,6 @@
 # PostersPlus Studio — plan
 
-Status (2026-09-30): **Phases 0–3 done and live; Phase 4 (style editor) built.** Phases 5–6 to go. Execute phase by phase; each phase ends with something testable on the real server.
+Status (2026-09-30): **Phases 0–5 done and live** (theatre needs the user's StageMedia key; season posters are behind a Settings switch). **Phase 6**: bulk actions, backups and the user guide (STUDIO.md) done; remote access through the Cloudflare tunnel waits for the user (see section 12). Execute phase by phase; each phase ends with something testable on the real server.
 
 Deviations from the plan as written:
 - Staging ran in the main container with uploads switched off (Studio's default) rather than a second `postersplus-dev` container: read-only toward Jellyfin, same effect, no duplicate cache.

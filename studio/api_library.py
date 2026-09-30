@@ -359,6 +359,44 @@ async def push(jf_id: str):
                   "message": run["message"], "items": items})
 
 
+# ── Bulk actions (the Library's selection) ──────────────────────────────────
+
+BULK_ACTIONS = ("hands_off", "manage", "reset", "reviewed", "unreviewed", "push")
+_bulk_tasks: set[asyncio.Task] = set()
+
+
+@router.post("/bulk")
+async def bulk(request: Request):
+    body = await _body(request)
+    ids, action = body.get("jf_ids"), body.get("action")
+    if action not in BULK_ACTIONS:
+        raise HTTPException(status_code=400, detail="Unknown action")
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids) or len(ids) > 5000:
+        raise HTTPException(status_code=400, detail="jf_ids must be a list of Jellyfin ids")
+    rows = [r for r in (db.query_one("SELECT * FROM items WHERE jf_id = ?", (i,)) for i in ids) if r]
+    keys = {rules.title_key(r): r["name"] for r in rows}
+    if action == "push":
+        if not prefs.get("uploads_enabled"):
+            raise HTTPException(status_code=400, detail="Uploads are off in Settings, so nothing can be sent")
+        if engine._run_lock.locked():
+            raise HTTPException(status_code=409, detail="A run is in progress; try again when it finishes")
+        every = sorted({s["jf_id"] for k in keys for s in _siblings(k)} | {r["jf_id"] for r in rows})
+        task = asyncio.create_task(engine.run(trigger="manual", dry_run=False, item_ids=every))
+        _bulk_tasks.add(task)
+        task.add_done_callback(_bulk_tasks.discard)
+        return _json({"started": True, "items": len(every)})
+    for key, name in keys.items():
+        if action == "reset":
+            rules.reset_title(key)
+            continue
+        rules.ensure_title(key, name)
+        if action in ("hands_off", "manage"):
+            rules.set_hands_off(key, action == "hands_off")
+        else:
+            rules.mark_reviewed(key, action == "reviewed")
+    return _json({"titles": len(keys)})
+
+
 # ── Matching titles Jellyfin couldn't ───────────────────────────────────────
 
 @router.get("/tmdb/search")

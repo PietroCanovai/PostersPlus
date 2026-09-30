@@ -490,6 +490,16 @@ export function Editor({ id, review }) {
                 placeholder=${t.item.jf_type === 'Season' ? 'Season number (automatic)' : 'Automatic (awards, new season, …)'}
                 onInput=${e => setStyle('notch_label', e.target.value.trim() ? e.target.value : null)} />
             </div>
+            ${t.stage && html`<div class="slider-row">
+              <label for="tpl">Design</label>
+              <select id="tpl" value=${styleValue('studio_template') || ''} onChange=${e => setStyle('studio_template', e.target.value || null)}>
+                <option value="">Posters+ style</option><option value="playbill">Playbill</option></select>
+            </div>`}
+            ${t.stage && styleValue('studio_template') === 'playbill' && html`<div class="slider-row">
+              <label for="venue">Venue</label>
+              <input id="venue" type="text" maxlength="60" style="flex:1" value=${styleValue('playbill_venue') || ''}
+                placeholder="Taken from the recording's name" onInput=${e => setStyle('playbill_venue', e.target.value.trim() ? e.target.value : null)} />
+            </div>`}
             ${editLook && editLook.crop && html`<button onClick=${() => setCrop({ path: editLook.poster, initial: Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +editLook.crop.split(',')[i]])),
               then: v => call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { crop: v } }, 'Frame saved') })}>Adjust the frame</button>`}
           </div>`}

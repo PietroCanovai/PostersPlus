@@ -307,6 +307,34 @@ async def scan():
     return _json(counts)
 
 
+# ── Backup ──────────────────────────────────────────────────────────────────
+
+@api.get("/backup")
+async def download_backup():
+    from . import backup
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return JSONResponse(backup.export(), headers={
+        **_NO_STORE, "Content-Disposition": f'attachment; filename="studio-rules-{stamp}.json"'})
+
+
+@api.post("/restore")
+async def restore_backup(request: Request):
+    from . import backup
+    try:
+        counts = backup.restore(await request.json())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _json(counts)
+
+
+@api.get("/backups")
+async def list_backups():
+    from . import backup
+    folder = backup.backup_dir()
+    files = sorted((f for f in os.listdir(folder) if f.endswith(".json")), reverse=True)
+    return _json({"folder": folder, "files": files})
+
+
 # ── Jellyfin thumbnails (the browser never sees the API key) ────────────────
 
 @api.get("/thumb/{item_id}")

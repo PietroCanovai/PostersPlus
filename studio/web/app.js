@@ -294,6 +294,26 @@ function StageSettings({ s, reload }) {
   <//>`;
 }
 
+function BackupSettings() {
+  const [list, setList] = useState(null);
+  useEffect(() => { api('/backups').then(setList).catch(() => {}); }, []);
+  async function restore(file) {
+    if (!file) return;
+    if (!confirm('Replace every rule in Studio with the ones in this backup?')) return;
+    try {
+      const r = await api('/restore', { method: 'POST', body: JSON.parse(await file.text()) });
+      toast(`Restored ${r.titles} titles and ${r.looks} looks`);
+    } catch (ex) { toast(ex.message, true); }
+  }
+  return html`<${Section} title="Backup" sub="Everything you decided in Studio: pins, rotations, Never lists, colours and the style. API keys are never included.">
+    <div class="row">
+      <a href="/studio/api/backup" download><button>Download a backup</button></a>
+      <label class="btn">Restore from a file<input type="file" accept="application/json,.json" hidden onChange=${e => restore(e.target.files[0])} /></label>
+    </div>
+    <p class="hint-sm">Studio also saves one automatically after every nightly run and keeps the last 14${list && list.files.length ? ` (${list.files.length} so far, in the cache volume's studio-backups folder)` : ''}.</p>
+  <//>`;
+}
+
 function StyleSettings() {
   return html`<${Section} title="Poster style" sub="The look every poster gets, with live previews on your own titles.">
     <button onClick=${() => { location.hash = 'style'; }}>Open the style editor</button>
@@ -325,6 +345,7 @@ function Settings({ onLogout }) {
     <${SyncSettings} s=${s} reload=${reload} />
     <${StageSettings} s=${s} reload=${reload} />
     <${StyleSettings} />
+    <${BackupSettings} />
     <${VersionCard} />
     <${Section} title="Advanced" sub="The original PostersPlus pages, for everything Studio doesn't cover yet.">
       <div class="row"><a href="/admin" target="_blank"><button>Admin dashboard</button></a>

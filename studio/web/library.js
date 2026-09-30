@@ -40,10 +40,11 @@ export function chipsFor(it) {
   return c;
 }
 
-function Tile({ it, onOpen }) {
+function Tile({ it, onOpen, selecting, selected }) {
   const chips = chipsFor(it);
-  return html`<button type="button" class="tile" onClick=${onOpen} title=${it.name}>
+  return html`<button type="button" class="tile ${selected ? 'selected' : ''}" onClick=${onOpen} title=${it.name} aria-pressed=${selecting ? selected : undefined}>
     <span class="tile-img">
+      ${selecting && html`<span class="tile-select">${selected ? '✓' : ''}</span>`}
       <img loading="lazy" alt="" src=${`/studio/api/thumb/${it.jf_id}?h=360&tag=${encodeURIComponent(it.jf_image_tag || '')}`}
         onError=${e => { e.target.style.visibility = 'hidden'; }} />
       ${chips.length > 0 && html`<span class="tile-chips">${chips.slice(0, 3).map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}</span>`}
@@ -60,8 +61,11 @@ export function Library() {
   const [lib, setLib] = useState(sessionStorage.getItem('lib.lib') || '');
   const [filter, setFilter] = useState(sessionStorage.getItem('lib.filter') || 'all');
   const [sort, setSort] = useState(sessionStorage.getItem('lib.sort') || 'name');
+  const [selecting, setSelecting] = useState(false);
+  const [sel, setSel] = useState(new Set());
 
-  useEffect(() => { api('/library').then(setData).catch(ex => toast(ex.message, true)); }, []);
+  const reload = () => api('/library').then(setData).catch(ex => toast(ex.message, true));
+  useEffect(() => { reload(); }, []);
   useEffect(() => {
     sessionStorage.setItem('lib.q', q); sessionStorage.setItem('lib.lib', lib);
     sessionStorage.setItem('lib.filter', filter); sessionStorage.setItem('lib.sort', sort);
@@ -88,6 +92,19 @@ export function Library() {
     nav.label = filter === 'all' && !lib && !q ? 'your library' : 'this list';
     go(`title/${it.jf_id}${review ? '?review' : ''}`);
   }
+  function toggle(it) {
+    const next = new Set(sel);
+    if (next.has(it.jf_id)) next.delete(it.jf_id); else next.add(it.jf_id);
+    setSel(next);
+  }
+  async function bulk(action, label) {
+    if (action === 'reset' && !confirm(`Forget every choice for ${sel.size} titles (looks, Never lists, colours)?`)) return;
+    try {
+      const r = await api('/bulk', { method: 'POST', body: { jf_ids: [...sel], action } });
+      toast(action === 'push' ? `Sending ${r.items} posters to Jellyfin (see Activity)` : `${label}: ${r.titles} titles`);
+      setSel(new Set()); setSelecting(false); reload();
+    } catch (ex) { toast(ex.message, true); }
+  }
   function startReview() {
     const first = tiles.find(t => !t.reviewed && t.status !== 'left_alone') || tiles[0];
     if (first) open(first, true);
@@ -100,8 +117,21 @@ export function Library() {
   return html`
     <div class="page-head">
       <div><h1>Library</h1><p>${n(tiles.length)} of ${n(new Set(data.items.map(i => i.title_key)).size)} titles · ${n(reviewed)} of ${n(reviewable)} reviewed</p></div>
-      <button class="primary" onClick=${startReview} disabled=${!tiles.length}>Review one by one</button>
+      <div class="row">
+        <button onClick=${() => { setSelecting(!selecting); setSel(new Set()); }}>${selecting ? 'Done selecting' : 'Select'}</button>
+        <button class="primary" onClick=${startReview} disabled=${!tiles.length}>Review one by one</button>
+      </div>
     </div>
+    ${selecting && html`<div class="notice info bulk-bar">
+      <p><strong>${sel.size} selected.</strong> <button class="link" onClick=${() => setSel(new Set(tiles.map(t => t.jf_id)))}>Select all ${tiles.length} shown</button>
+        ${sel.size ? html` · <button class="link" onClick=${() => setSel(new Set())}>Clear</button>` : ''}</p>
+      <div class="row">
+        <button onClick=${() => bulk('hands_off', 'Hands off')} disabled=${!sel.size}>Hands off</button>
+        <button onClick=${() => bulk('manage', 'Managed again')} disabled=${!sel.size}>Manage again</button>
+        <button onClick=${() => bulk('reviewed', 'Marked reviewed')} disabled=${!sel.size}>Mark reviewed</button>
+        <button onClick=${() => bulk('push')} disabled=${!sel.size}>Push now</button>
+        <button class="danger" onClick=${() => bulk('reset', 'Reset')} disabled=${!sel.size}>Reset rules</button>
+      </div></div>`}
     <div class="toolbar">
       <input type="search" placeholder="Search titles" value=${q} onInput=${e => setQ(e.target.value)} aria-label="Search titles" />
       <select value=${filter} onChange=${e => setFilter(e.target.value)} aria-label="Filter">
@@ -114,6 +144,7 @@ export function Library() {
       ${data.libraries.map(l => html`<button class=${lib === l ? 'on' : ''} onClick=${() => setLib(l)}>${l}</button>`)}
     </div>
     ${tiles.length
-      ? html`<div class="tiles">${tiles.map(it => html`<${Tile} key=${it.jf_id} it=${it} onOpen=${() => open(it)} />`)}</div>`
+      ? html`<div class="tiles">${tiles.map(it => html`<${Tile} key=${it.jf_id} it=${it} selecting=${selecting}
+          selected=${sel.has(it.jf_id)} onOpen=${() => (selecting ? toggle(it) : open(it))} />`)}</div>`
       : html`<div class="empty">Nothing matches.</div>`}`;
 }

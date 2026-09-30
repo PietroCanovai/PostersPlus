@@ -404,6 +404,11 @@ async def scheduler_loop() -> None:
             if due(now) and not _run_lock.locked():
                 db.set_setting("last_scheduled_date", now.date().isoformat())
                 await run(trigger="schedule", dry_run=False)
+                try:
+                    from . import backup
+                    backup.write_daily()
+                except Exception:
+                    logger.exception("Studio: nightly rules backup failed")
         except Exception:
             logger.exception("Studio scheduler")
         await asyncio.sleep(30)

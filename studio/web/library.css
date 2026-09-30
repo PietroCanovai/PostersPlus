@@ -21,6 +21,11 @@ input[type=search] { font: inherit; color: var(--text); background: var(--bg); b
 .tile-chips .chip { font-size: 11px; padding: 1px 8px; background: #0d0e11e6; }
 .tile-check { position: absolute; right: 6px; bottom: 6px; width: 24px; height: 24px; border-radius: 50%;
   background: var(--ok); color: #06150d; font-weight: 800; font-size: 14px; display: grid; place-items: center; }
+.tile.selected .tile-img { outline: 3px solid var(--accent); outline-offset: 2px; }
+.tile-select { position: absolute; right: 6px; top: 6px; width: 26px; height: 26px; border-radius: 50%; z-index: 2;
+  border: 2px solid #fff; background: #0008; color: var(--accent-ink); font-weight: 800; display: grid; place-items: center; }
+.tile.selected .tile-select { background: var(--accent); border-color: var(--accent); }
+.bulk-bar { position: sticky; top: 8px; z-index: 4; }
 .tile-name { font-weight: 560; font-size: 14px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-meta { color: var(--text-3); font-size: 12.5px; margin-top: -4px; }
 @media (max-width: 760px) {
