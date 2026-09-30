@@ -7,8 +7,10 @@ them itself with the same compositor: the chosen StageMedia poster (or your
 upload) framed to 2:3, then build_poster with the global style and the
 title's look — fades, your logo or the show's name as text, colours.
 
-API: GET https://stagemedia.me/api/images?show_id=<id>, Authorization: Bearer
-<key> → {"posters": [url, ...]}.  No title search exists.
+API: GET https://stagemedia.me/api/images?show_id=<id>&actor_ids=<ids>,
+Authorization: Bearer <key> → {"posters": [url, ...], "performers": [...]}.
+actor_ids is required (400 "No actors" without it); the Encora plugin sends
+its recording's performer ids, or 1 when it has none.  No title search exists.
 """
 from __future__ import annotations
 
@@ -79,7 +81,10 @@ async def posters(show_id: str, *, force: bool = False) -> list[str]:
         return hit[1]
     try:
         async with httpx.AsyncClient(timeout=15.0) as http:
-            r = await http.get(API, params={"show_id": show_id},
+            # The API refuses a request without actor_ids ("No actors").  Posters
+            # belong to the show; the ids only pick performer photos, so this
+            # sends the same placeholder the Encora plugin falls back to.
+            r = await http.get(API, params={"show_id": show_id, "actor_ids": "1"},
                                headers={"Authorization": f"Bearer {key()}", "Accept": "application/json",
                                         "User-Agent": "PostersPlus-Studio/1.0"})
     except httpx.HTTPError as exc:
