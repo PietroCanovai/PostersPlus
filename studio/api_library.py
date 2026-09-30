@@ -465,8 +465,8 @@ async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str 
 
 @router.get("/title/{jf_id}/frames")
 async def frames(jf_id: str):
-    """Frames from your own files: the chapter images Jellyfin extracted (a
-    film's, or a show's first episodes')."""
+    """Frames: TMDB's episode stills for shows, then the chapter images
+    Jellyfin extracted from your files (a film's, or a show's first episodes')."""
     row = _item(jf_id)
     jf = engine.shared_client()
     targets = [row["jf_id"]]
@@ -489,7 +489,33 @@ async def frames(jf_id: str):
                     out.append({"path": f"jf-chapter:{it['Id']}:{i}", "provider": "frame", "language": None,
                                 "thumb": f"/studio/api/thumb/{it['Id']}?type=Chapter/{i}&h=300&tag={ch['ImageTag']}",
                                 "name": f"{it.get('Name', '')[:30]} · {secs // 60}:{secs % 60:02d}"})
-    return _json({"frames": out[:120]})
+    out = out[:120]
+    # Official episode stills from TMDB for shows (a season's own, or the first seasons').
+    tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
+    if tmdb_id and row["jf_type"] in ("Series", "Season") and not engine.is_stage(row):
+        out = await _episode_stills(tmdb_id, [int(row["season_number"] or 0)] if row["jf_type"] == "Season" else [1, 2, 3]) + out
+    return _json({"frames": out})
+
+
+async def _episode_stills(tmdb_id: str, seasons: list[int]) -> list[dict]:
+    import config as _cfg
+    import main
+    if not _cfg.SERVER_TMDB_KEY:
+        return []
+    out = []
+    for n in seasons:
+        try:
+            r = await main._proxy_tmdb_get(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{n}", {"api_key": _cfg.SERVER_TMDB_KEY})
+        except Exception:
+            continue
+        if r.status_code != 200:
+            continue
+        for ep in r.json().get("episodes") or []:
+            if ep.get("still_path"):
+                out.append({"path": ep["still_path"], "provider": "tmdb", "language": None,
+                            "thumb": f"https://image.tmdb.org/t/p/w300{ep['still_path']}",
+                            "name": f"S{n}E{ep.get('episode_number')} · {(ep.get('name') or '')[:28]}"})
+    return out
 
 
 @router.post("/title/{jf_id}/frames/import")
@@ -499,7 +525,8 @@ async def import_frame(jf_id: str, request: Request):
     from . import artwork, uploads
     row, body = _item(jf_id), await _body(request)
     path = str(body.get("path") or "")
-    if not path.startswith("jf-chapter:"):
+    # A Jellyfin chapter image, or a TMDB episode still (a TMDB image path).
+    if not (path.startswith("jf-chapter:") or (path.startswith("/") and "/" not in path[1:] and len(path) < 80)):
         raise HTTPException(status_code=400, detail="Not a frame")
     try:
         data = await artwork.fetch(path)

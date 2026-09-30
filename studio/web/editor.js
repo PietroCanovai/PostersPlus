@@ -5,6 +5,9 @@ import { sashName } from './notch.js';
 import { StyleControls, GROUPS } from './controls.js';
 
 const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours', stagemedia: 'StageMedia', frame: 'Frame' };
+// Curated sites without an API: opened in a new tab, their images added by link.
+const POSTER_SITES = [['ThePosterDB', 'https://theposterdb.com/search?term=']];
+const FRAME_SITES = [['FilmGrab', 'https://film-grab.com/?s='], ['Screencaps', 'https://movie-screencaps.com/?s=']];
 const SLOTS = [['poster', 'Poster'], ['backdrop', 'Backdrop'], ['logo', 'Logo'], ['thumb', 'Thumb']];
 const JF_TYPE = { poster: 'Primary', backdrop: 'Backdrop', logo: 'Logo', thumb: 'Thumb' };
 // Old looks kept colours apart from their style; now everything is style parameters.
@@ -286,7 +289,7 @@ export function Editor({ id, review }) {
     }
     setBusy(false);
     await refresh();
-    if (ok) { toast(`${ok} ${KIND_WORD[k]}${ok > 1 ? 's' : ''} added`); if (k !== 'logo') setArt(k === 'backdrop' ? 'backdrops' : 'yours'); }
+    if (ok) { toast(`${ok} ${KIND_WORD[k]}${ok > 1 ? 's' : ''} added`); if (k !== 'logo' && slot === 'poster') setArt(k === 'backdrop' ? 'backdrops' : 'yours'); }
   }
   async function addLink(k) {
     if (!link.trim()) return;
@@ -407,7 +410,7 @@ export function Editor({ id, review }) {
     return b;
   };
   const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
-  const uploadKind = art === 'backdrops' ? 'backdrop' : 'poster';
+  const uploadKind = art === 'backdrops' || art === 'frames' ? 'backdrop' : 'poster';
 
   const artPane = html`
     <div class="toolbar">
@@ -415,17 +418,18 @@ export function Editor({ id, review }) {
       ${['textless', 'titled', 'backdrops'].includes(art) && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
         <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
     </div>
-    ${art !== 'frames' && html`<div class="own-row dropzone" ...${drop(uploadKind)}>
+    ${html`<div class="own-row dropzone" ...${drop(uploadKind)}>
       <label class="btn">Upload<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, uploadKind); e.target.value = ''; }} /></label>
       <input type="url" placeholder="Image link" value=${link} onInput=${e => setLink(e.target.value)} />
       <button onClick=${() => addLink(uploadKind)} disabled=${!link || busy}>Add</button>
-      <a class="hint-sm" target="_blank" rel="noopener noreferrer" href=${`https://theposterdb.com/search?term=${encodeURIComponent(t.item.name)}`}>ThePosterDB ↗</a>
+      ${(art === 'frames' ? FRAME_SITES : POSTER_SITES).map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
+        href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
     </div>`}
     ${art === 'frames'
       ? (frames === null ? html`<div class="empty">Loading…</div>`
         : frames.length ? html`<div class="cands backdrops">${frames.map(f => html`<${Card} key=${f.path} c=${f} kind="backdrops" badges=${[]} onFocus=${() => importFrame(f)}>
             <button onClick=${() => importFrame(f)} disabled=${busy}>Add to backdrops</button></${Card}>`)}</div>`
-        : html`<div class="empty">No frames: Jellyfin hasn't extracted chapter images for this title.</div>`)
+        : html`<div class="empty">No frames here. Jellyfin makes them when chapter image extraction is on for the library; the sites above have curated stills.</div>`)
       : !cands ? html`<div class="empty">Loading…</div>`
       : list.length ? html`<div class="cands ${listKind}">${list.map(c => {
           const isNever = never.poster.has(c.path), inRot = rotation.some(l => l.poster === c.path);
