@@ -113,6 +113,35 @@ class PlaybillTests(unittest.TestCase):
         self.assertEqual(out.getpixel((250, 600)), (200, 30, 30))             # the art below it
         self.assertEqual(out.getpixel((0, 400)), playbill.INK)                 # black frame
 
+    def test_stage_render_both_designs(self):
+        """The real theatre renderer (compositor included), with art served locally."""
+        try:
+            import main  # noqa: F401  (needs the Linux image's libraries)
+        except Exception:
+            self.skipTest("renderer not importable here")
+        import asyncio
+        import io
+        from PIL import Image
+        from studio import stage
+        buf = io.BytesIO()
+        Image.new("RGB", (900, 1350), (120, 20, 20)).save(buf, format="JPEG")
+        art = buf.getvalue()
+
+        async def fake_posters(show_id, force=False):
+            return ["https://stagemedia.me/storage/posters/x.jpg"]
+
+        async def fake_bytes(url):
+            return art
+        saved = stage.posters, stage.image_bytes
+        stage.posters, stage.image_bytes = fake_posters, fake_bytes
+        try:
+            row = {"jf_id": "t", "name": "Hadestown", "stage_show_id": "2045", "productions": "Broadway|West End"}
+            for extra in ({}, {"studio_template": "playbill"}, {"studio_template": "playbill", "playbill_venue": "WALTER KERR"}):
+                data, ctype = asyncio.run(stage.render(row, "top_gradient=off", extra, 500))
+                self.assertEqual(Image.open(io.BytesIO(data)).size, (500, 750))
+        finally:
+            stage.posters, stage.image_bytes = saved
+
     def test_venue(self):
         from studio import playbill
         self.assertEqual(playbill.venue_from_name("Hadestown - Broadway, 09-02-2024 - x"), "BROADWAY")

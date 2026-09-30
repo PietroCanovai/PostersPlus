@@ -187,15 +187,17 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
         except Exception as exc:
             logger.warning(f"Studio: theatre logo {logo_ref} failed ({exc}); using the title as text")
 
+    # The venue: yours, else the recording's name ("Show - Broadway, date - …"),
+    # else the show's first production in Jellyfin (its seasons: Broadway, West End…).
+    from . import playbill as _playbill
+    playbill_venue = venue if venue is not None else (
+        _playbill.venue_from_name(row["name"]) or (row.get("productions") or "").split("|")[0].upper())
+
     def _compose() -> bytes:
         if template == "playbill":
             from . import playbill
             art = Image.open(io.BytesIO(data))
-            if venue is None:
-                # The recording's name ("Show - Broadway, date - …"), else the show's
-                # first production in Jellyfin (its seasons: Broadway, West End…).
-                venue = playbill.venue_from_name(row["name"]) or (row.get("productions") or "").split("|")[0].upper()
-            out = playbill.compose(art, size=size, logo=logo, venue=venue,
+            out = playbill.compose(art, size=size, logo=logo, venue=playbill_venue,
                                    crop=(crop.x, crop.y, crop.zoom))
             return main._encode_poster(out)
         art = Image.open(io.BytesIO(data)).convert("RGB")
