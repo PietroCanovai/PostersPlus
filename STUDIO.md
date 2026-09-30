@@ -49,7 +49,7 @@ Backdrops of exactly the size in Settings (1920×1080 by default) come first, th
 
 ### Backdrop, Logo, Thumb
 
-*Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render, the Thumb source in Settings) is drawn on whatever art it has, a pinned image included. The Thumb tab has *Art*, *Logo* (the poster's, the title as text, none for art that already shows the title, or any logo) and *Style* (art, logo position, bands, the info line and badge); the Style page's **Thumbs** switch sets that style for the library. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
+Each tab has its own Upload / link / drop row (your backdrops and logos are shared with the Poster section). *Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render, the Thumb source in Settings) is drawn on whatever art it has, a pinned image included. The Thumb tab has *Art*, *Logo* (the poster's, the title as text, none for art that already shows the title, or any logo) and *Style* (art, logo position, bands, the info line and badge); the Style page's **Thumbs** switch sets that style for the library. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
 
 Titles Jellyfin couldn't match show a **Which title is this?** panel; the match is kept in Studio only.
 

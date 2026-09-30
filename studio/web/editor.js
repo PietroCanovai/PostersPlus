@@ -455,19 +455,22 @@ export function Editor({ id, review }) {
   const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
   const uploadKind = art === 'backdrops' || art === 'frames' ? 'backdrop' : 'poster';
 
+  const uploadRow = (k, sites = []) => html`<div class="own-row dropzone" ...${drop(k)}>
+      <label class="btn">Upload<input type="file" multiple accept=${k === 'logo' ? 'image/png,image/webp' : 'image/png,image/jpeg,image/webp'} hidden
+        onChange=${e => { upload(e.target.files, k); e.target.value = ''; }} /></label>
+      <input type="url" placeholder=${k === 'logo' ? 'Logo link' : 'Image link'} value=${link} onInput=${e => setLink(e.target.value)} />
+      <button onClick=${() => addLink(k)} disabled=${!link || busy}>Add</button>
+      ${sites.map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
+        href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
+    </div>`;
+
   const artPane = html`
     <div class="toolbar">
       <${Seg} small value=${art} onChange=${setArt} options=${artTabs} />
       ${['textless', 'titled', 'backdrops'].includes(art) && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
         <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
     </div>
-    ${html`<div class="own-row dropzone" ...${drop(uploadKind)}>
-      <label class="btn">Upload<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, uploadKind); e.target.value = ''; }} /></label>
-      <input type="url" placeholder="Image link" value=${link} onInput=${e => setLink(e.target.value)} />
-      <button onClick=${() => addLink(uploadKind)} disabled=${!link || busy}>Add</button>
-      ${(art === 'frames' ? FRAME_SITES : POSTER_SITES).map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
-        href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
-    </div>`}
+    ${uploadRow(uploadKind, art === 'frames' ? FRAME_SITES : POSTER_SITES)}
     ${(art === 'frames' ? frames === null : !cands) ? html`<div class="empty">Loading…</div>`
       : list.length ? html`<div class="cands ${listKind}">${list.map(c => {
           const isNever = never.poster.has(c.path), inRot = rotation.some(l => l.poster === c.path);
@@ -489,13 +492,11 @@ export function Editor({ id, review }) {
   const logos = [...mine('logo'), ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
   const many = looks.length > 1;
   const logoPane = html`
-    <div class="own-row dropzone" ...${drop('logo')}>
+    <div class="own-row">
       <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic</button>
       <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
-      <label class="btn">Upload<input type="file" multiple accept="image/png,image/webp" hidden onChange=${e => { upload(e.target.files, 'logo'); e.target.value = ''; }} /></label>
-      <input type="url" placeholder="Logo link" value=${link} onInput=${e => setLink(e.target.value)} />
-      <button onClick=${() => addLink('logo')} disabled=${!link || busy}>Add</button>
     </div>
+    ${uploadRow('logo')}
     ${!cands ? html`<div class="empty">Loading…</div>` : html`<div class="cands logos">${logos.map(c => {
       const isNever = never.logo.has(c.path), used = editLook && editLook.logo === c.path;
       const b = [];
@@ -554,6 +555,7 @@ export function Editor({ id, review }) {
       return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
         onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
         <button onClick=${() => pinArt(c)} disabled=${busy}>Pin</button>
+        ${c.provider === 'custom' && html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`}
       </${Card}>`;
     })}</div>`;
     const logoGrid = html`
@@ -563,14 +565,16 @@ export function Editor({ id, review }) {
       </div>
       <div class="cands logos">${[...mine('logo'), ...all.logos].map(c => html`<${Card} key=${c.path} c=${c} kind="logos"
         badges=${ch.logo === c.path ? [['Used', 'info']] : []} onFocus=${() => setArtChoice(k, { logo: c.path })}>
-        <button onClick=${() => setArtChoice(k, { logo: c.path })} disabled=${busy}>Use</button></${Card}>`)}</div>`;
+        <button onClick=${() => setArtChoice(k, { logo: c.path })} disabled=${busy}>Use</button>
+        ${c.provider === 'custom' && html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`}</${Card}>`)}</div>`;
     return html`
       <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
         options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
       ${ch.mode === 'auto' && (t.stage ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
       ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
-      ${part === 'art' ? artGrid : part === 'logo' ? logoGrid
+      ${part === 'art' ? html`${uploadRow(k === 'logo' ? 'logo' : 'backdrop', k === 'logo' ? [] : FRAME_SITES)}${artGrid}`
+        : part === 'logo' ? html`${uploadRow('logo')}${logoGrid}`
         : lib && html`<${StyleControls} values=${titleValues} inherited=${libEff} from="library"
           onSet=${(key, v) => setStyleKey(key, v, 'title')} groups=${THUMB_GROUPS} />`}`;
   }
