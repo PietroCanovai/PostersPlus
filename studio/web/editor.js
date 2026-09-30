@@ -197,7 +197,7 @@ export function Editor({ id, review }) {
       return call(`/title/${id}/looks`, { method: 'POST', body: { ...fields, pin: true } }, 'Pinned. Pick the poster below.');
     }
     await call(`/title/${id}`, { method: 'PUT', body: { mode: m } },
-      m === 'rotation' && !rotation.length ? 'Now add posters to the rotation with ↻ below.' : null);
+      m === 'rotation' && !rotation.length ? 'Now add posters to the rotation with ↻ Rotate below.' : null);
   }
   function withCrop(path, kind, then) {
     if (kind === 'backdrops') setCrop({ path, initial: null, then });
@@ -386,8 +386,8 @@ export function Editor({ id, review }) {
               <img src=${l.poster ? thumbUrl(l.poster, l.crop ? 'backdrops' : 'posters') : ''} alt="" referrerpolicy="no-referrer" class=${l.crop ? 'cropped' : ''} />
               ${l.look_id === t.today_look_id ? html`<span class="chip ok">Today</span>` : t.upcoming[0] === l.look_id ? html`<span class="chip">Next</span>` : ''}
             </button>`)}</div>
-            <p class="hint-sm">Click one to change its logo and colours. Remove it with ↻ on its card below.</p>`
-          : html`<p class="hint-sm">Nothing yet. Press ↻ on any poster below to add it.</p>`}
+            <p class="hint-sm">Click one to change its logo and colours. Remove it with ↻ Rotate on its card below.</p>`
+          : html`<p class="hint-sm">Nothing yet. Press ↻ Rotate on any poster below to add it.</p>`}
         </div>`}
 
         <div class="seg" role="tablist">
@@ -415,7 +415,7 @@ export function Editor({ id, review }) {
             return html`<${Card} key=${c.path} c=${c} kind=${kindOf} badges=${posterBadges(c)} dim=${isNever}
               actions=${html`
                 <button onClick=${() => usePoster(c, kindOf)} disabled=${busy || isNever} title="Always use this poster">Pin</button>
-                <button onClick=${() => toggleRotation(c, kindOf)} disabled=${busy || isNever} class=${rotation.some(l => l.poster === c.path) ? 'on' : ''} title="Add to (or remove from) the daily rotation">↻</button>
+                <button onClick=${() => toggleRotation(c, kindOf)} disabled=${busy || isNever} class=${rotation.some(l => l.poster === c.path) ? 'on' : ''} title="Add to (or remove from) the daily rotation">↻<span class="lbl"> Rotate</span></button>
                 <button onClick=${() => toggleNever('poster', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''} title="Never use this one automatically">${isNever ? 'Allow' : 'Never'}</button>`} />`;
           })}</div>` : html`<div class="empty">None here.</div>`}`}
 
