@@ -1,0 +1,19 @@
+# Server copy lives at /home/serverino/docker/postersplus/compose.yaml.
+# Keep the two in step. Secrets stay in .env (ADMIN_KEY) and in the cache
+# volume's settings.json (provider keys), never here.
+services:
+  postersplus:
+    image: ghcr.io/pietrocanovai/postersplus:latest
+    container_name: postersplus
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Rome
+      # Jellyfin gets real JPEGs (the default is WebP).
+      - IMAGE_FORMAT=jpeg
+      - JPEG_QUALITY=92
+    ports:
+      - "8183:8000"
+    volumes:
+      - ./postersplus-cache:/app/cache

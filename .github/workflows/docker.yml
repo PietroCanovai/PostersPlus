@@ -1,25 +1,23 @@
 name: Build and Push Docker Image
 
+# Fork (PietroCanovai/PostersPlus): builds the Studio image from the `studio`
+# branch only, amd64 only (the server is x86_64), and bakes the commit into the
+# image so Studio can show its version and spot updates.
+
 on:
   push:
     branches:
-      - main
-      - dev
-    tags:
-      - 'v*'
+      - studio
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.gitignore'
-      - '.dockerignore'
       - '.env.example'
       - '.devcontainer/**'
       - 'discovery_overrides.example.json'
-      - '.github/**'
       - 'Showcase/**'
-  # Manual trigger from the Actions tab — useful for re-publishing :latest
-  # after a registry-state hiccup, or when paths-ignore swallowed a push
-  # that you actually want rebuilt.
+      - 'deploy/**'
+  # Manual trigger from the Actions tab, e.g. to rebuild after a registry hiccup.
   workflow_dispatch:
 
 jobs:
@@ -32,9 +30,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -50,31 +45,27 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ghcr.io/umbraprojects/postersplus
-          # Disable the metadata-action's automatic :latest behaviour — its
-          # default (latest=auto) adds :latest to every semver tag push, so
-          # parallel v1.0.0 / v1.0.1 / v1.0.2 builds race to claim it and
-          # the last one to finish wins (which is rarely the highest version).
-          # The explicit type=raw rule below owns :latest exclusively now.
+          images: ghcr.io/pietrocanovai/postersplus
           flavor: |
             latest=false
           tags: |
-            # main branch → :latest and :main
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            # branch push → :<branch-name> (main, dev)
-            type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/heads/') }}
-            # version tag (v1.2.3) → :1.2.3, :1.2, :1
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - name: Build date
+        id: date
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

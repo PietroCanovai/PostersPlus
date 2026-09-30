@@ -95,6 +95,12 @@ RUN python3 -m compileall -q -l /app \
 # renders run ~10-20% slower from page-faulting fresh mappings.
 ENV MALLOC_MMAP_THRESHOLD_=4194304
 
+# Fork: the commit and build date Studio shows as its version (CI passes them).
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+ENV STUDIO_GIT_COMMIT=${GIT_COMMIT} \
+    STUDIO_BUILD_DATE=${BUILD_DATE}
+
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.
 #

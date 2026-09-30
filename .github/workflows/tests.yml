@@ -6,11 +6,10 @@ name: Tests
 on:
   pull_request:
     branches:
-      - dev
-      - main
+      - studio
   push:
     branches:
-      - dev
+      - studio
     paths-ignore:
       - '**.md'
       - 'LICENSE'
