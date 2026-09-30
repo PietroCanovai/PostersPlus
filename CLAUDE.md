@@ -16,7 +16,7 @@ Fork of [UmbraProjects/PostersPlus](https://github.com/UmbraProjects/PostersPlus
 
 `serverino-lazarus`, 192.168.1.55, Ubuntu 24.04 x86_64, TZ Europe/Rome. Stack: `/home/serverino/docker/postersplus` (`compose.yaml`, `.env`, `postersplus-cache/`, `update.sh`). Port 8183 → 8000. This PC maps the server root as `Z:` (Samba). Jellyfin at :8096.
 
-Remote: `https://postersplus.biscuitgalaxy.lol` through the host's cloudflared (locally managed tunnel `320bce2f…`, config `/etc/cloudflared/config.yml`, restart needs sudo: the user). Meant to sit behind Cloudflare Access. `ACCESS_KEY` is set in the server's `.env` (Studio passes it on loopback; `/poster` without it is 403) and `FORWARDED_ALLOW_IPS=192.168.16.1` (the postersplus network's gateway, which is how host cloudflared arrives).
+Remote: `https://postersplus.biscuitgalaxy.lol` through the host's cloudflared (tunnel `320bce2f…`). **The tunnel is managed from the Cloudflare dashboard** (Zero Trust → Networks → Tunnels → Public hostnames): cloudflared runs the dashboard's ingress (see `curl 127.0.0.1:20241/config` on the server), so `/etc/cloudflared/config.yml` ingress rules are ignored. Hostnames are added in the dashboard by the user. Meant to sit behind Cloudflare Access. `ACCESS_KEY` is set in the server's `.env` (Studio passes it on loopback; `/poster` without it is 403) and `FORWARDED_ALLOW_IPS=192.168.16.1` (the postersplus network's gateway, which is how host cloudflared arrives).
 
 ## Deploy
 
