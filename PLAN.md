@@ -257,6 +257,18 @@ Planned in Studio:
 - **Per title**: turn off labels for that title only (e.g. no "Trending" on this one), besides the custom notch text that already exists. Implemented as a per-title `sash_priority` override in the title's style.
 - **Custom labels**: fixed text per title (done: *Notch text*), and a check of which labels a title qualifies for right now (via the renderer's `debug=1` metadata), shown in the editor as "Could show: Oscar Winner · Notable Director · Trending #12".
 
+**Phase 8 — Editor rework, Jellyfin's other images, frames** (requested 2026-09-30)
+
+*8a. Fixes.* No toast for rotate add/remove; clicking a rotation look (strip) reliably selects and previews it; a newly added look becomes the selected one; clicking any candidate previews it as it would look (logo, style), without saving; the crop dialog darkens only the image outside the frame, never its own buttons; posters can be framed too (not only backdrops); "Use for all looks" for a logo; find out why some previews are slow and fix it.
+
+*8b. Style at every level, one control set.* Library (Style page) → title (all its posters) → one poster (look). The same grouped controls everywhere (logo size and position, fades, tint, notch, colours), each showing where its value comes from, with reset. In the editor a scope switch: *This poster / Whole title*.
+
+*8c. Editor and mobile pass.* One cohesive layout: preview on the left (sticky; on mobile on top), image slot tabs, compact mode switch, looks strip, sub-tabs Art / Logo / Style. Less text, no duplicate buttons, large touch targets, works at 360 px.
+
+*8d. Jellyfin's other images.* Besides the Primary poster: **Backdrop**, **Logo** and **Thumb**, per title (Pin / Automatic / Leave Jellyfin's), plus library rules in Settings for the automatic pick: backdrops within a size you set (e.g. at least 1920×1080, 16:9, textless first), logo by the style's language order, thumb as PostersPlus's landscape render or a titled backdrop. Uploaded only when changed, reverts put back, like posters.
+
+*8e. Frames.* Screen grabs as a source: Jellyfin's own chapter images (frames from your files, when Jellyfin has extracted them), TMDB episode stills for shows, and the providers' backgrounds. Usable as backdrops, thumbs, or framed into posters.
+
 ## 10. Upstream merge playbook
 
 `git fetch upstream` → `git checkout studio` → `git merge upstream/dev` → resolve conflicts (expected only at the hook points listed in CLAUDE.md) → CI green → push → `update.sh` on the server. Never rewrite upstream code we don't need to; keep hooks tiny and calling into `studio/`.

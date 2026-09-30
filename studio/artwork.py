@@ -1,0 +1,249 @@
+"""Jellyfin's other images: Backdrop, Logo and Thumb.
+
+Unlike the Primary poster these aren't composed from a style (except the
+Thumb's "landscape" source): Studio picks an image and sends it as it is.
+
+Per title and kind: automatic, pinned (a path, optionally framed), or keep
+(leave Jellyfin's).  Automatic follows the library rules in Settings:
+  backdrop  the providers' backgrounds that meet a minimum size (default
+            1920x1080), optionally 16:9 and textless, best first
+  logo      PostersPlus's own pick in the style's language order (/logo)
+  thumb     PostersPlus's landscape render (logo + style over a backdrop),
+            or the best backdrop with the title on it
+A kind is only managed once switched on in Settings.
+"""
+from __future__ import annotations
+
+import io
+import json
+import logging
+import time
+from urllib.parse import parse_qsl, urlencode
+
+import httpx
+
+from . import db, prefs, rules
+
+logger = logging.getLogger("studio")
+
+KINDS = ("backdrop", "logo", "thumb")
+JF_TYPE = {"backdrop": "Backdrop", "logo": "Logo", "thumb": "Thumb"}
+MODES = ("auto", "pinned", "keep")
+ASPECT = {"backdrop": 16 / 9, "thumb": 16 / 9}
+
+DEFAULT_RULES = {
+    "backdrop": {"enabled": False, "min_w": 1920, "min_h": 1080, "wide_only": True, "textless": True},
+    "logo": {"enabled": False},
+    "thumb": {"enabled": False, "source": "landscape"},
+}
+
+
+def library_rules() -> dict:
+    saved = db.get_setting("jf_art") or {}
+    return {k: {**DEFAULT_RULES[k], **(saved.get(k) or {})} for k in KINDS}
+
+
+def set_library_rules(new: dict) -> dict:
+    cur = library_rules()
+    for kind, vals in (new or {}).items():
+        if kind not in KINDS or not isinstance(vals, dict):
+            continue
+        for k, v in vals.items():
+            if k not in DEFAULT_RULES[kind]:
+                continue
+            if isinstance(DEFAULT_RULES[kind][k], bool):
+                cur[kind][k] = bool(v)
+            elif isinstance(DEFAULT_RULES[kind][k], int):
+                cur[kind][k] = max(0, min(10000, int(v)))
+            elif k == "source" and v in ("landscape", "backdrop"):
+                cur[kind][k] = v
+    db.set_setting("jf_art", cur)
+    return cur
+
+
+# ── Per-title choices ───────────────────────────────────────────────────────
+
+def choice(title_key: str, kind: str) -> dict:
+    row = db.query_one("SELECT * FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
+    return row or {"title_key": title_key, "kind": kind, "mode": "auto", "path": "", "crop": ""}
+
+
+def set_choice(title_key: str, kind: str, mode: str, path: str = "", crop: str = "") -> dict:
+    if kind not in KINDS or mode not in MODES:
+        raise ValueError("bad kind or mode")
+    if mode == "pinned" and not path:
+        raise ValueError("pin which image?")
+    if mode == "auto" and not path:
+        db.execute("DELETE FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
+    else:
+        db.execute("INSERT INTO jf_art (title_key, kind, mode, path, crop, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                   "ON CONFLICT(title_key, kind) DO UPDATE SET mode=excluded.mode, path=excluded.path, "
+                   "crop=excluded.crop, updated_at=excluded.updated_at",
+                   (title_key, kind, mode, path if mode == "pinned" else "", crop or "", time.time()))
+    return choice(title_key, kind)
+
+
+def managed(title_key: str, kind: str) -> bool:
+    """Whether Studio sends this image for this title."""
+    c = choice(title_key, kind)
+    if c["mode"] == "keep":
+        return False
+    return c["mode"] == "pinned" or library_rules()[kind]["enabled"]
+
+
+# ── Picking ─────────────────────────────────────────────────────────────────
+
+def _fits(c: dict, r: dict) -> bool:
+    w, h = c.get("width") or 0, c.get("height") or 0
+    if w < r["min_w"] or h < r["min_h"]:
+        return False
+    if r["wide_only"] and h and abs(w / h - 16 / 9) > 0.02:
+        return False
+    return True
+
+
+def auto_backdrop(cands: dict, r: dict | None = None) -> str | None:
+    """The best background meeting the rules, textless first if asked; None
+    when nothing qualifies (Jellyfin's stays)."""
+    r = r or library_rules()["backdrop"]
+    ok = [c for c in cands.get("backdrops") or [] if _fits(c, r)]
+    if r["textless"]:
+        ok.sort(key=lambda c: c.get("language") is not None)   # stable: providers' order within each
+    return ok[0]["path"] if ok else None
+
+
+def titled_backdrop(cands: dict, languages: list[str]) -> str | None:
+    """A backdrop with the title on it, in the first language that has one."""
+    tagged = [c for c in cands.get("backdrops") or [] if c.get("language")]
+    for lang in languages + [None]:
+        for c in tagged:
+            if lang is None or (c["language"] or "").split("-")[0] == lang:
+                return c["path"]
+    return None
+
+
+def fits_rules(c: dict) -> bool:
+    return _fits(c, library_rules()["backdrop"])
+
+
+# ── Getting the bytes ───────────────────────────────────────────────────────
+
+async def fetch(path: str) -> bytes:
+    """An image as stored: TMDB path (original size), provider url, custom
+    upload, StageMedia url, or jf-chapter:<item>:<index> (a frame Jellyfin
+    extracted from the file)."""
+    if path.startswith("custom:"):
+        import art_overrides
+        data = art_overrides.custom_art_bytes(path)
+        if data is None:
+            raise RuntimeError("That uploaded image is missing")
+        return data
+    if path.startswith("jf-chapter:"):
+        from . import engine
+        _, item_id, index = path.split(":")
+        data, _ = await engine.shared_client().image(item_id, f"Chapter/{int(index)}")
+        return data
+    from . import stage
+    if stage.is_stage_host(path):
+        return await stage.image_bytes(path)
+    url = path if path.startswith("http") else f"https://image.tmdb.org/t/p/original{path}"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=8.0), follow_redirects=True) as http:
+        r = await http.get(url)
+    if r.status_code != 200:
+        raise RuntimeError(f"Image download failed (HTTP {r.status_code})")
+    return r.content
+
+
+def _frame(data: bytes, crop: str, aspect: float, max_w: int = 3840) -> tuple[bytes, str]:
+    """The image framed to *aspect* (x,y,zoom as the poster frames), as JPEG;
+    PNGs (logos) and unframed images pass through."""
+    from PIL import Image
+    im = Image.open(io.BytesIO(data))
+    if not crop:
+        fmt = (im.format or "JPEG").upper()
+        return data, "image/png" if fmt == "PNG" else "image/webp" if fmt == "WEBP" else "image/jpeg"
+    x, y, zoom = (float(p) for p in crop.split(","))
+    im = im.convert("RGB")
+    base_w = min(im.width, im.height * aspect)
+    cw = base_w / max(1.0, zoom)
+    ch = cw / aspect
+    left, top = (im.width - cw) * x, (im.height - ch) * y
+    im = im.crop((round(left), round(top), round(left + cw), round(top + ch)))
+    if im.width > max_w:
+        im = im.resize((max_w, round(max_w / aspect)), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, format="JPEG", quality=92)
+    return out.getvalue(), "image/jpeg"
+
+
+async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None = None) -> tuple[bytes, str] | None:
+    """The image Studio would send for this item and kind, or None to leave
+    Jellyfin's.  *draft* ({mode, path, crop}) previews an unsaved choice."""
+    from . import engine
+    key = rules.title_key(row)
+    c = draft or choice(key, kind)
+    if c["mode"] == "keep":
+        return None
+    if c["mode"] == "pinned" and c.get("path"):
+        return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
+    if engine.is_stage(row) or not (row.get("manual_tmdb_id") or row.get("tmdb_id")):
+        return None   # nothing to pick from automatically
+    if row.get("jf_type") == "Season":
+        return None
+    import config as _cfg
+    style = dict(parse_qsl(prefs.get("style_applied"), keep_blank_values=True))
+    media = "tv" if row["jf_type"] == "Series" else "movie"
+    tmdb_id = row.get("manual_tmdb_id") or row["tmdb_id"]
+    if kind == "logo":
+        lang = style.get("logo_language") or "en"
+        params = {"tmdb_id": tmdb_id, "type": media, "lang": lang}
+        if row.get("imdb_id"):
+            params["imdb_id"] = row["imdb_id"]
+        if _cfg.ACCESS_KEY:
+            params["access_key"] = _cfg.ACCESS_KEY
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as http:
+            r = await http.get(f"{engine.LOOPBACK}/logo?{urlencode(params)}")
+        if r.status_code != 200:
+            return None
+        return r.content, r.headers.get("content-type", "image/png").split(";")[0]
+    if kind == "thumb" and library_rules()["thumb"]["source"] == "landscape":
+        res = rules.resolve(key)
+        extra = {k: v for k, v in res.params.items() if not k.startswith("art_")}
+        extra["shape"] = "landscape"
+        url = engine.poster_url(row, prefs.get("style_applied"), resolution=500, with_quality=False,
+                                access_key=_cfg.ACCESS_KEY or "", extra=extra)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
+            return await engine.render(http, url)
+    cands = await (cands_loader or _load_cands)(media, tmdb_id)
+    if kind == "backdrop":
+        path = auto_backdrop(cands)
+    else:
+        path = titled_backdrop(cands, [style.get("logo_language") or "en", "en"]) or auto_backdrop(cands)
+    return _frame(await fetch(path), "", 16 / 9) if path else None
+
+
+async def _load_cands(media: str, tmdb_id: str) -> dict:
+    from . import candidates
+    return (await candidates.for_title(media, tmdb_id))["candidates"]
+
+
+# ── Pushed state ────────────────────────────────────────────────────────────
+
+def state(jf_id: str, kind: str) -> dict:
+    return db.query_one("SELECT * FROM item_images WHERE jf_id = ? AND kind = ?", (jf_id, kind)) or {}
+
+
+def record_seen(jf_id: str, kind: str, tag: str | None) -> None:
+    db.execute("INSERT INTO item_images (jf_id, kind, seen_tag) VALUES (?, ?, ?) "
+               "ON CONFLICT(jf_id, kind) DO UPDATE SET seen_tag = excluded.seen_tag", (jf_id, kind, tag))
+
+
+def record_pushed(jf_id: str, kind: str, image_hash: str, tag: str | None) -> None:
+    db.execute("INSERT INTO item_images (jf_id, kind, pushed_hash, pushed_tag, seen_tag, pushed_at) "
+               "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(jf_id, kind) DO UPDATE SET pushed_hash = excluded.pushed_hash, "
+               "pushed_tag = excluded.pushed_tag, seen_tag = excluded.seen_tag, pushed_at = excluded.pushed_at",
+               (jf_id, kind, image_hash, tag, tag, time.time()))
+
+
+def summary_json(title_key: str) -> str:
+    return json.dumps({k: choice(title_key, k) for k in KINDS})

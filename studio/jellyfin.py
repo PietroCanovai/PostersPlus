@@ -14,7 +14,7 @@ import httpx
 _AUTH = ('MediaBrowser Client="PostersPlus Studio", Device="server", '
          'DeviceId="postersplus-studio", Version="1.0", Token="{token}"')
 _PAGE = 200
-ITEM_FIELDS = "ProviderIds,MediaSources,MediaStreams,Path,ProductionYear"
+ITEM_FIELDS = "ProviderIds,MediaSources,MediaStreams,Path,ProductionYear,Chapters"
 
 
 class JellyfinError(Exception):
@@ -40,6 +40,13 @@ class Item:
     stage_show_id: str | None
     image_tag: str | None  # ImageTags.Primary: changes whenever the Primary image does
     raw: dict = field(repr=False, default_factory=dict)
+
+    def tag(self, kind: str) -> str | None:
+        """The current tag of another image type: backdrop (the first), logo, thumb."""
+        if kind == "backdrop":
+            tags = self.raw.get("BackdropImageTags") or []
+            return tags[0] if tags else None
+        return (self.raw.get("ImageTags") or {}).get({"logo": "Logo", "thumb": "Thumb"}[kind])
 
 
 def item_from_json(d: dict) -> Item:
@@ -164,15 +171,31 @@ class Client:
         return resp.content, resp.headers.get("content-type", "image/jpeg")
 
     async def upload_primary(self, item_id: str, image: bytes, content_type: str) -> None:
-        """Jellyfin wants the body base64-encoded and a real image MIME type."""
+        await self.upload_image(item_id, "Primary", image, content_type)
+
+    async def upload_image(self, item_id: str, image_type: str, image: bytes, content_type: str,
+                           index: int | None = None) -> None:
+        """Jellyfin wants the body base64-encoded and a real image MIME type.
+        Backdrops go to an index (0 = the main one) so they replace, not add."""
+        path = f"/Items/{item_id}/Images/{image_type}" + (f"/{index}" if index is not None else "")
         try:
-            resp = await self._http.post(f"/Items/{item_id}/Images/Primary",
-                                         content=base64.b64encode(image),
-                                         headers={"Content-Type": content_type})
+            resp = await self._http.post(path, content=base64.b64encode(image), headers={"Content-Type": content_type})
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Upload failed ({type(exc).__name__})") from exc
         if resp.status_code >= 400:
             raise JellyfinError(f"Upload refused: HTTP {resp.status_code}")
+
+    async def image(self, item_id: str, image_type: str, max_height: int | None = None) -> tuple[bytes, str]:
+        """Any image of an item (Backdrop means the first); max_height=None is the stored file."""
+        params = {"maxHeight": max_height, "quality": 85} if max_height else {}
+        suffix = "/0" if image_type == "Backdrop" else ""
+        try:
+            resp = await self._http.get(f"/Items/{item_id}/Images/{image_type}{suffix}", params=params)
+        except httpx.HTTPError as exc:
+            raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
+        if resp.status_code != 200:
+            raise JellyfinError(f"No {image_type.lower()} ({resp.status_code})")
+        return resp.content, resp.headers.get("content-type", "image/jpeg")
 
 
 # ── Quality tokens from the file's own media info (ported) ──────────────────

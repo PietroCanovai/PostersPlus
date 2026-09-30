@@ -50,7 +50,9 @@ def _sash_info(style: str) -> dict:
 CONTROLLED = ("logo_max_w_ratio", "logo_max_h_ratio", "logo_bottom_ratio", "logo_bottom_anchor", "logo_priority",
               "top_gradient", "bottom_gradient", "vignette_poster_color_bottom", "show_award_sash", "sash_mode",
               "sash_badge_style", "sash_badge_pos", "sash_badge_size_w", "sash_badge_size_h",
-              "rating_display_mode", "badge_display_mode", "fallback_bg_style", "label_font")
+              "rating_display_mode", "badge_display_mode", "fallback_bg_style", "label_font",
+              # The editor's shared controls (colours default to automatic).
+              "logo_color", "logo_color_mode", "fade_color", "tint_color", "notch_text_color", "notch_label")
 
 
 def _defaults() -> dict:
@@ -59,6 +61,8 @@ def _defaults() -> dict:
     out = {}
     for k in CONTROLLED:
         v = getattr(cfg, k, None)
+        if isinstance(v, tuple):   # a parsed colour
+            v = "%02x%02x%02x" % v
         out[k] = ("true" if v else "false") if isinstance(v, bool) else ("" if v is None else str(v))
     return out
 

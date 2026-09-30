@@ -143,6 +143,9 @@ def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
     })
     if item.type != "Series":
         row["quality"] = ",".join(quality_tokens(item.raw))
+    from . import artwork
+    for kind in artwork.KINDS:
+        artwork.record_seen(item.id, kind, item.tag(kind))
     row["status"] = _item_status(row, policy)
     if old is None:
         db.execute(
@@ -328,6 +331,9 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                                                     access_key, dry_run, force, run_id,
                                                     advance=trigger == "schedule")
                             counts[action] = counts.get(action, 0) + 1
+                            if action not in ("skipped", "error"):
+                                for extra in await _process_art(row, jf, dry_run, force, run_id):
+                                    counts[extra] = counts.get(extra, 0) + 1
                             progress.done += 1
                             progress.counts = dict(counts)
 
@@ -416,6 +422,53 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
         db.execute("UPDATE items SET status = ?, last_error = ? WHERE jf_id = ?", (ERROR, msg[:500], jf_id))
         db.log_run_item(run_id, jf_id, name, "error", msg[:500])
         return "error"
+
+
+async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
+    """Backdrop, Logo and Thumb for one item, where Studio manages them.
+    Same rules as the poster: send only what changed (noise ignored), put
+    back what Jellyfin replaced."""
+    from . import artwork
+    key, jf_id, name = rules.title_key(row), row["jf_id"], row["name"]
+    actions = []
+    for kind in artwork.KINDS:
+        if not artwork.managed(key, kind):
+            continue
+        label = artwork.JF_TYPE[kind]
+        try:
+            res = await artwork.resolve(row, kind)
+            if res is None:
+                continue
+            data, ctype = res
+            image_hash = hashlib.sha256(data).hexdigest()
+            st = artwork.state(jf_id, kind)
+            reverted = bool(st.get("pushed_tag") and st.get("seen_tag") and st["seen_tag"] != st["pushed_tag"])
+            if not force and not reverted and st.get("pushed_hash") == image_hash:
+                continue
+            if not force and not reverted and st.get("pushed_hash"):
+                try:
+                    current, _ = await jf.image(jf_id, label)
+                except JellyfinError:
+                    current = None
+                if current is not None and looks_the_same(current, data):
+                    if not dry_run:
+                        artwork.record_pushed(jf_id, kind, image_hash, st.get("pushed_tag"))
+                    continue
+            reason = "reverted" if reverted else ("changed" if st.get("pushed_hash") else "new")
+            if dry_run:
+                db.log_run_item(run_id, jf_id, name, "would_upload", f"{label}: {reason}")
+                actions.append("would_upload")
+                continue
+            await jf.upload_image(jf_id, label, data, ctype, index=0 if kind == "backdrop" else None)
+            fresh = await jf.item(jf_id)
+            artwork.record_pushed(jf_id, kind, image_hash, fresh.tag(kind))
+            act = "reverted" if reverted else "uploaded"
+            db.log_run_item(run_id, jf_id, name, act, f"{label}: {reason}")
+            actions.append(act)
+        except Exception as exc:
+            db.log_run_item(run_id, jf_id, name, "error", f"{label}: {str(exc)[:300] or type(exc).__name__}")
+            actions.append("error")
+    return actions
 
 
 # ── Schedule ────────────────────────────────────────────────────────────────

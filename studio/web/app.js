@@ -295,6 +295,29 @@ function StageSettings({ s, reload }) {
   <//>`;
 }
 
+function ArtRules({ s, reload }) {
+  const r = s.jf_art;
+  async function put(kind, patch) {
+    try { await api('/settings', { method: 'PUT', body: { jf_art: { [kind]: patch } } }); reload(); }
+    catch (ex) { toast(ex.message, true); }
+  }
+  const sw = (kind, label, sub) => html`<label class="switch"><input type="checkbox" checked=${r[kind].enabled} onChange=${e => put(kind, { enabled: e.target.checked })} />
+    <span><span class="t">${label}</span>${sub && html`<span class="d" style="display:block">${sub}</span>`}</span></label>`;
+  return html`<${Section} title="Jellyfin images" sub="Automatic picks besides the poster. Off: Jellyfin keeps its own unless you pin one in a title.">
+    ${sw('backdrop', 'Backdrops')}
+    ${r.backdrop.enabled && html`<div class="rule-row">
+      <label>At least <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_w} onChange=${e => put('backdrop', { min_w: +e.target.value })} />
+        × <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_h} onChange=${e => put('backdrop', { min_h: +e.target.value })} /></label>
+      <label class="own-check"><input type="checkbox" checked=${r.backdrop.wide_only} onChange=${e => put('backdrop', { wide_only: e.target.checked })} /> 16:9 only</label>
+      <label class="own-check"><input type="checkbox" checked=${r.backdrop.textless} onChange=${e => put('backdrop', { textless: e.target.checked })} /> Textless first</label>
+    </div>`}
+    ${sw('logo', 'Logos', 'The same logo the posters use.')}
+    ${sw('thumb', 'Thumbs')}
+    ${r.thumb.enabled && html`<div class="rule-row"><label>From <select value=${r.thumb.source} onChange=${e => put('thumb', { source: e.target.value })}>
+      <option value="landscape">Landscape poster (logo + your style)</option><option value="backdrop">Backdrop with the title</option></select></label></div>`}
+  <//>`;
+}
+
 function BackupSettings() {
   const [list, setList] = useState(null);
   useEffect(() => { api('/backups').then(setList).catch(() => {}); }, []);
@@ -344,6 +367,7 @@ function Settings({ onLogout }) {
     <${JellyfinSettings} s=${s} reload=${reload} />
     ${s.jellyfin_url && s.jellyfin_api_key_set && html`<${LibrarySettings} />`}
     <${SyncSettings} s=${s} reload=${reload} />
+    <${ArtRules} s=${s} reload=${reload} />
     <${StageSettings} s=${s} reload=${reload} />
     <${StyleSettings} />
     <${BackupSettings} />

@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS uploads (
     added_at  REAL NOT NULL,
     PRIMARY KEY (title_key, path)
 );
+CREATE TABLE IF NOT EXISTS jf_art (
+    title_key  TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    mode       TEXT NOT NULL,
+    path       TEXT NOT NULL DEFAULT '',
+    crop       TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (title_key, kind)
+);
+CREATE TABLE IF NOT EXISTS item_images (
+    jf_id       TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    pushed_hash TEXT,
+    pushed_tag  TEXT,
+    seen_tag    TEXT,
+    pushed_at   REAL,
+    PRIMARY KEY (jf_id, kind)
+);
 CREATE TABLE IF NOT EXISTS never (
     title_key TEXT NOT NULL,
     kind      TEXT NOT NULL,

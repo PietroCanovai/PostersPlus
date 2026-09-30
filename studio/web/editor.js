@@ -1,44 +1,49 @@
-import { html, useState, useEffect, useRef, useMemo, useCallback } from './vendor/preact-htm.js';
+import { html, useState, useEffect, useRef, useCallback } from './vendor/preact-htm.js';
 import { api, toast, go, nav, thumbUrl, fullImageUrl, ago } from './common.js';
 import { chipsFor } from './library.js';
 import { sashName } from './notch.js';
+import { StyleControls, GROUPS } from './controls.js';
 
-const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours' };
-const MODES = [
-  ['auto', 'Automatic', 'PostersPlus picks the best poster, skipping anything you marked Never.'],
-  ['pinned', 'Pinned', 'Always the same look: the poster, logo and colours you choose.'],
-  ['rotation', 'Daily rotation', 'A different look each night, shuffled, no repeats until all have had their day.'],
-];
-// Look colours: [key in look.colors, parameter in a title style, label, help]
-const COLORS = [
-  ['tint', 'tint_color', 'Notch colour', 'The frosted notch at the top (normally sampled from the poster).'],
-  ['fade', 'fade_color', 'Fade colour', 'The dark fade behind the logo.'],
-  ['sash_text', 'notch_text_color', 'Notch text', 'The label inside the notch.'],
-  ['logo', 'logo_color', 'Logo colour', 'Recolours the logo (solid or tinted).'],
-];
-const STYLE_CONTROLS = [
-  { key: 'logo_max_w_ratio', label: 'Logo width', min: 0.4, max: 0.95, step: 0.01, def: 0.74, fmt: v => `${Math.round(v * 100)}%` },
-  { key: 'logo_max_h_ratio', label: 'Logo height limit', min: 0.1, max: 0.45, step: 0.01, def: 0.24, fmt: v => `${Math.round(v * 100)}%` },
-  { key: 'logo_bottom_ratio', label: 'Logo distance from bottom', min: 0, max: 0.3, step: 0.005, def: 0.05, fmt: v => `${Math.round(v * 100)}%` },
-];
+const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours', stagemedia: 'StageMedia', frame: 'Frame' };
+const SLOTS = [['poster', 'Poster'], ['backdrop', 'Backdrop'], ['logo', 'Logo'], ['thumb', 'Thumb']];
+const JF_TYPE = { poster: 'Primary', backdrop: 'Backdrop', logo: 'Logo', thumb: 'Thumb' };
+// Old looks kept colours apart from their style; now everything is style parameters.
+const LEGACY_COLORS = { tint: 'tint_color', fade: 'fade_color', sash_text: 'notch_text_color', logo: 'logo_color', logo_mode: 'logo_color_mode' };
+const lookStyle = l => {
+  const out = {};
+  for (const [k, p] of Object.entries(LEGACY_COLORS)) if (l.colors && l.colors[k]) out[p] = l.colors[k];
+  return { ...out, ...(l.style || {}) };
+};
+const ownTitle = (c, kind) => kind === 'posters' && (c.provider === 'custom' ? !!c.own_title : !!c.language);
+const cropToObj = s => (s ? Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +s.split(',')[i]])) : null);
+const cropToStr = c => (c ? `${c.x},${c.y},${c.zoom}` : '');
 
-function posterKind(c) { return c.kind || 'posters'; }
-// Whether a poster already carries the title (so no logo goes on top): a
-// provider's language-tagged poster, or your upload marked that way.
-function ownTitle(c, kind) {
-  if (kind !== 'posters') return false;
-  return c.provider === 'custom' ? !!c.own_title : !!c.language;
+// ── Preview: keeps the last image until the next one has loaded ─────────────
+function Preview({ src, shape, onPick, picking }) {
+  const [shown, setShown] = useState(src);
+  const [next, setNext] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { if (src !== shown) { setNext(src); setFailed(false); } }, [src]);
+  const img = useRef(null);
+  return html`<div class="preview ${shape} ${picking ? 'picking' : ''}">
+    ${shown && html`<img ref=${img} src=${shown} alt="" onClick=${e => onPick && onPick(e, img.current)} crossorigin="anonymous"
+      onError=${() => setFailed(true)} />`}
+    ${next && html`<img class="loading" src=${next} alt="" onLoad=${() => { setShown(next); setNext(null); }}
+      onError=${() => { setNext(null); setFailed(true); }} />`}
+    ${next && html`<span class="spin" aria-label="Loading"></span>`}
+    ${failed && !next && html`<span class="pv-empty">Nothing to show</span>`}
+  </div>`;
 }
 
-// ── Crop dialog: a 2:3 window on a wide image (same maths as the Artwork tab) ──
-function CropDialog({ src, initial, onSave, onClose }) {
+// ── Framing: a window of *aspect* on an image; darkens only the image ───────
+function CropDialog({ src, aspect, initial, actions, onClose }) {
   const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1, ...(initial || {}) });
   const img = useRef(null);
   const [geo, setGeo] = useState(null);
   const measure = useCallback(() => {
     const el = img.current; if (!el || !el.naturalWidth) return;
     const dw = el.clientWidth, dh = el.clientHeight;
-    const cw = Math.min(dw, dh * 2 / 3) / crop.zoom, ch = cw * 1.5;
+    const cw = Math.min(dw, dh * aspect) / crop.zoom, ch = cw / aspect;
     setGeo({ dw, dh, cw, ch, left: (dw - cw) * crop.x, top: (dh - ch) * crop.y });
   }, [crop]);
   useEffect(() => { measure(); }, [crop]);
@@ -57,12 +62,11 @@ function CropDialog({ src, initial, onSave, onClose }) {
     e.preventDefault();
     const stage = e.currentTarget, rect = stage.getBoundingClientRect();
     const inside = e.target.classList.contains('crop-win');
-    const startLeft = inside ? geo.left : e.clientX - rect.left - geo.cw / 2;
-    const startTop = inside ? geo.top : e.clientY - rect.top - geo.ch / 2;
+    const sl = inside ? geo.left : e.clientX - rect.left - geo.cw / 2, st = inside ? geo.top : e.clientY - rect.top - geo.ch / 2;
     const x0 = e.clientX, y0 = e.clientY;
     const move = ev => {
-      const left = Math.min(Math.max(startLeft + ev.clientX - x0, 0), geo.dw - geo.cw);
-      const top = Math.min(Math.max(startTop + ev.clientY - y0, 0), geo.dh - geo.ch);
+      const left = Math.min(Math.max(sl + ev.clientX - x0, 0), geo.dw - geo.cw);
+      const top = Math.min(Math.max(st + ev.clientY - y0, 0), geo.dh - geo.ch);
       setCrop(c => ({ ...c, x: geo.dw > geo.cw ? left / (geo.dw - geo.cw) : 0.5, y: geo.dh > geo.ch ? top / (geo.dh - geo.ch) : 0.5 }));
     };
     move(e);
@@ -70,104 +74,109 @@ function CropDialog({ src, initial, onSave, onClose }) {
     stage.onpointermove = move;
     stage.onpointerup = stage.onpointercancel = () => { stage.onpointermove = null; };
   }
+  const value = () => ({ x: +crop.x.toFixed(4), y: +crop.y.toFixed(4), zoom: +crop.zoom.toFixed(3) });
   return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div class="dialog wide" role="dialog" aria-label="Frame the poster">
-      <h2>Frame the poster</h2>
-      <p class="sub">Drag the frame (or use the arrow keys). The logo goes near the bottom.</p>
+    <div class="dialog wide" role="dialog" aria-label="Frame">
       <div class="crop-stage" onPointerDown=${drag}>
         <img ref=${img} src=${src} alt="" referrerpolicy="no-referrer" draggable="false" onLoad=${measure} />
         ${geo && html`<div class="crop-win" style=${`left:${geo.left}px;top:${geo.top}px;width:${geo.cw}px;height:${geo.ch}px`}></div>`}
       </div>
-      <label class="field" style="margin:14px 0 0;display:block"><span style="font-weight:580">Zoom ${crop.zoom.toFixed(2)}×</span>
-        <input type="range" min="1" max="4" step="0.05" value=${crop.zoom} onInput=${e => setCrop(c => ({ ...c, zoom: +e.target.value }))} style="width:100%" /></label>
-      <div class="row" style="justify-content:flex-end;margin-top:12px">
-        <button onClick=${onClose}>Cancel</button>
-        <button class="primary" onClick=${() => onSave({ x: +crop.x.toFixed(4), y: +crop.y.toFixed(4), zoom: +crop.zoom.toFixed(3) })}>Use this frame</button>
+      <div class="crop-bar">
+        <label class="zoom">Zoom <input type="range" min="1" max="4" step="0.05" value=${crop.zoom} onInput=${e => setCrop(c => ({ ...c, zoom: +e.target.value }))} />
+          <span>${crop.zoom.toFixed(1)}×</span></label>
+        <div class="row">
+          <button onClick=${onClose}>Cancel</button>
+          ${actions.map(a => html`<button class=${a.primary ? 'primary' : ''} onClick=${() => { onClose(); a.run(value()); }}>${a.label}</button>`)}
+        </div>
       </div>
     </div></div>`;
 }
 
-// ── Matching a title Jellyfin couldn't ──────────────────────────────────────
 function MatchPanel({ t, onDone }) {
   const [q, setQ] = useState(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''));
   const [res, setRes] = useState(null);
   const type = t.item.jf_type === 'Series' ? 'tv' : 'movie';
   async function search(e) {
     if (e) e.preventDefault();
-    try { setRes((await api(`/tmdb/search?type=${type}&q=${encodeURIComponent(q)}`)).results); }
-    catch (ex) { toast(ex.message, true); }
+    try { setRes((await api(`/tmdb/search?type=${type}&q=${encodeURIComponent(q)}`)).results); } catch (ex) { toast(ex.message, true); }
   }
   useEffect(() => { search(); }, []);
-  async function link(id) {
-    try { await api(`/items/${t.item.jf_id}/match`, { method: 'PUT', body: { tmdb_id: id } }); toast('Linked. Studio will make its poster.'); onDone(); }
-    catch (ex) { toast(ex.message, true); }
+  async function link(tmdb) {
+    try { await api(`/items/${t.item.jf_id}/match`, { method: 'PUT', body: { tmdb_id: tmdb } }); onDone(); } catch (ex) { toast(ex.message, true); }
   }
   return html`<div class="card">
-    <h2>Find this title on TMDB</h2>
-    <p class="sub">Jellyfin has no TMDB id for it, so Studio can't find artwork. Pick the right one; this only changes Studio, not Jellyfin's metadata.</p>
-    <form class="row" onSubmit=${search} style="margin-bottom:14px">
-      <input type="search" value=${q} onInput=${e => setQ(e.target.value)} style="flex:1" />
-      <button class="primary">Search</button></form>
+    <h2>Which title is this?</h2>
+    <form class="row" onSubmit=${search} style="margin:10px 0"><input type="search" value=${q} onInput=${e => setQ(e.target.value)} style="flex:1" /><button class="primary">Search TMDB</button></form>
     ${res && (res.length ? html`<div class="list">${res.map(r => html`<div class="list-row">
         ${r.thumb ? html`<img src=${r.thumb} alt="" class="mini-poster" referrerpolicy="no-referrer" />` : html`<span class="mini-poster"></span>`}
         <div class="grow"><div class="name">${r.title}${r.year ? ` (${r.year})` : ''}</div><div class="meta">${r.overview}</div></div>
-        <button onClick=${() => link(r.tmdb_id)}>This one</button></div>`)}</div>`
-      : html`<div class="empty">Nothing found. Try another spelling.</div>`)}
+        <button onClick=${() => link(r.tmdb_id)}>This one</button></div>`)}</div>` : html`<div class="empty">Nothing found.</div>`)}
   </div>`;
 }
 
-// ── Candidate cards ─────────────────────────────────────────────────────────
-function Card({ c, kind, badges, actions, dim, extra }) {
-  const meta = [PROVIDERS[c.provider] || c.provider, c.language || (kind === 'logos' ? 'no language' : kind === 'posters' ? 'no text' : ''),
-    c.width ? `${c.width}×${c.height}` : ''].filter(Boolean).join(' · ');
-  return html`<div class="cand ${kind} ${dim ? 'dim' : ''}">
-    <div class="cand-img">
+// ── A candidate image ───────────────────────────────────────────────────────
+function Card({ c, kind, focused, badges, onFocus, onFrame, children, extra }) {
+  const meta = c.name || [PROVIDERS[c.provider] || c.provider, c.language || '', c.width ? `${c.width}×${c.height}` : ''].filter(Boolean).join(' · ');
+  return html`<div class="cand ${kind} ${focused ? 'focused' : ''}">
+    <button class="cand-img" onClick=${onFocus} title="Preview">
       <img loading="lazy" referrerpolicy="no-referrer" alt="" src=${c.thumb || thumbUrl(c.path, kind)}
         onError=${e => { if (e.target.src !== fullImageUrl(c.path)) e.target.src = fullImageUrl(c.path); }} />
       ${badges.length > 0 && html`<span class="cand-badges">${badges.map(([l, cl]) => html`<span class="chip ${cl}">${l}</span>`)}</span>`}
-    </div>
-    <div class="cand-meta">${c.name ? c.name : meta}</div>
+    </button>
+    ${onFrame && html`<button class="frame-btn" onClick=${onFrame} title="Frame">⤢</button>`}
+    <div class="cand-meta">${meta}</div>
     ${extra}
-    <div class="cand-actions">${actions}</div>
+    <div class="cand-actions">${children}</div>
   </div>`;
+}
+
+function Seg({ value, options, onChange, small }) {
+  return html`<div class="seg ${small ? 'small' : ''}" role="tablist">${options.map(([v, l, extra]) => html`<button role="tab"
+    aria-selected=${value === v} class=${value === v ? 'on' : ''} disabled=${extra === 'disabled'} onClick=${() => value !== v && onChange(v)}>${l}</button>`)}</div>`;
 }
 
 // ── The editor ──────────────────────────────────────────────────────────────
 export function Editor({ id, review }) {
   const [t, setT] = useState(null);
   const [cands, setCands] = useState(null);
-  const [tab, setTab] = useState('posters');
-  const [pkind, setPkind] = useState('textless');
+  const [frames, setFrames] = useState(null);
+  const [lib, setLib] = useState(null);
+  const [slot, setSlot] = useState('poster');
+  const [sub, setSub] = useState('art');
+  const [art, setArt] = useState('textless');
   const [source, setSource] = useState('all');
-  const [sel, setSel] = useState(null);           // look being edited (rotation)
-  const [ts, setTs] = useState(Date.now());       // preview cache-buster
+  const [focus, setFocus] = useState(null);         // {look: id} | {c, kind, crop}
+  const [scope, setScope] = useState('look');
+  const [draft, setDraft] = useState(null);         // unsaved style: {target, values}
+  const [ts, setTs] = useState(Date.now());
   const [busy, setBusy] = useState(false);
-  const [crop, setCrop] = useState(null);         // {path, initial, then}
-  const [pick, setPick] = useState(null);         // colour being eyedropped
+  const [crop, setCrop] = useState(null);           // {src, aspect, initial, actions}
+  const [pick, setPick] = useState(null);           // colour param being eyedropped
   const [link, setLink] = useState('');
-  const [localStyle, setLocalStyle] = useState(null);
-  const [notch, setNotch] = useState(null);       // what the notch can say for this title
+  const [notch, setNotch] = useState(null);
   const saveTimer = useRef(null);
-  const previewImg = useRef(null);
 
   const load = useCallback(async () => {
     try { setT(await api(`/title/${id}`)); } catch (ex) { toast(ex.message, true); }
   }, [id]);
   useEffect(() => {
-    setT(null); setCands(null); setSel(null); setLocalStyle(null); setTab('posters');
+    setT(null); setCands(null); setFrames(null); setFocus(null); setDraft(null); setNotch(null); setSlot('poster'); setSub('art');
     load();
     api(`/title/${id}/candidates`).then(setCands).catch(ex => setCands({ error: ex.message, candidates: { posters: [], backdrops: [], logos: [] } }));
   }, [id]);
+  useEffect(() => { if (!lib) api('/style').then(setLib).catch(() => {}); }, []);
+  const framesAsked = useRef(null);
   useEffect(() => {
-    if (tab !== 'look') return;
-    api(`/title/${id}/notch`).then(setNotch).catch(ex => setNotch({ available: false, reason: ex.message }));
-  }, [tab, id, ts]);
+    if ((art === 'frames' || slot === 'backdrop' || slot === 'thumb') && framesAsked.current !== id) {
+      framesAsked.current = id;
+      api(`/title/${id}/frames`).then(d => setFrames(d.frames)).catch(() => setFrames([]));
+    }
+  }, [art, slot, id]);
 
   const idx = nav.ids.indexOf(id);
   const prevId = idx > 0 ? nav.ids[idx - 1] : null;
   const nextId = idx >= 0 && idx < nav.ids.length - 1 ? nav.ids[idx + 1] : null;
   const goTo = other => go(`title/${other}${review ? '?review' : ''}`);
-
   useEffect(() => {
     const onKey = e => {
       if (crop || /INPUT|TEXTAREA|SELECT/.test(document.activeElement && document.activeElement.tagName)) return;
@@ -194,386 +203,378 @@ export function Editor({ id, review }) {
   const pinned = looks.find(l => l.look_id === t.title.pinned_look_id);
   const rotation = looks.filter(l => l.in_rotation);
   const never = { poster: new Set(t.never.poster || []), logo: new Set(t.never.logo || []) };
-  const editLook = mode === 'pinned' ? pinned
-    : mode === 'rotation' ? (rotation.find(l => l.look_id === sel) || rotation.find(l => l.look_id === t.today_look_id) || rotation[0])
-    : null;
+  const focusedLook = focus && focus.look ? looks.find(l => l.look_id === focus.look) : null;
+  const editLook = focusedLook
+    || (mode === 'pinned' ? pinned : mode === 'rotation' ? (rotation.find(l => l.look_id === t.today_look_id) || rotation[0]) : null);
+  const all = (cands && cands.candidates) || { posters: [], backdrops: [], logos: [] };
   const autoPoster = cands && cands.auto && cands.auto.poster;
   const autoLogo = cands && cands.auto && cands.auto.logo;
+  const mine = k => t.uploads.filter(u => u.kind === k).map(u => ({ path: u.path, provider: 'custom', language: null, own_title: u.own_title, name: u.name }));
+  const libEff = lib ? { ...lib.defaults, ...lib.applied_params } : {};
 
-  // ── Actions ──
+  // ── Poster actions ──
+  const lookFields = (c, kind, cropVal) => ({ poster: c.path, crop: cropVal || '', own_title: ownTitle(c, kind) });
+  async function pin(c, kind, cropVal) {
+    const fields = lookFields(c, kind, cropVal);
+    if (pinned) {
+      await call(`/looks/${pinned.look_id}`, { method: 'PUT', body: fields });
+      if (mode !== 'pinned') await call(`/title/${id}`, { method: 'PUT', body: { mode: 'pinned', pinned_look_id: pinned.look_id } });
+      setFocus({ look: pinned.look_id });
+    } else {
+      const r = await call(`/title/${id}/looks`, { method: 'POST', body: { ...fields, pin: true } });
+      if (r && r.look) setFocus({ look: r.look.look_id });
+    }
+  }
+  async function addToRotation(c, kind, cropVal) {
+    const r = await call(`/title/${id}/looks`, { method: 'POST', body: { ...lookFields(c, kind, cropVal), in_rotation: true } });
+    if (r && r.look) setFocus({ look: r.look.look_id });
+  }
+  async function toggleRotation(c, kind) {
+    const existing = rotation.find(l => l.poster === c.path);
+    if (existing) {
+      await call(`/looks/${existing.look_id}`, { method: 'DELETE' });
+      if (focus && focus.look === existing.look_id) setFocus(null);
+    } else if (kind === 'backdrops') {
+      frame(c, kind, 'rotate');
+    } else addToRotation(c, kind);
+  }
+  function frame(c, kind, then) {
+    const aspect = 2 / 3;
+    const acts = then === 'rotate' ? [{ label: 'Add to rotation', primary: true, run: v => addToRotation(c, kind, cropToStr(v)) }]
+      : then === 'pin' ? [{ label: 'Pin', primary: true, run: v => pin(c, kind, cropToStr(v)) }]
+      : [{ label: 'Preview', run: v => setFocus({ c, kind, crop: cropToStr(v) }) },
+         { label: '↻ Rotation', run: v => addToRotation(c, kind, cropToStr(v)) },
+         { label: 'Pin', primary: true, run: v => pin(c, kind, cropToStr(v)) }];
+    setCrop({ src: fullImageUrl(c.path), aspect, initial: focus && focus.c && focus.c.path === c.path ? cropToObj(focus.crop) : null, actions: acts });
+  }
+  function frameLook(l) {
+    setCrop({ src: fullImageUrl(l.poster), aspect: 2 / 3, initial: cropToObj(l.crop),
+      actions: [{ label: 'Save frame', primary: true, run: v => call(`/looks/${l.look_id}`, { method: 'PUT', body: { crop: cropToStr(v) } }) }] });
+  }
   async function setMode(m) {
     if (m === 'pinned') {
       if (pinned) return call(`/title/${id}`, { method: 'PUT', body: { mode: 'pinned', pinned_look_id: pinned.look_id } });
       const base = editLook || rotation[0];
-      const fields = base ? { poster: base.poster, crop: base.crop, own_title: base.own_title, logo: base.logo, colors: base.colors, style: base.style }
-        : { poster: '', logo: '' };
-      return call(`/title/${id}/looks`, { method: 'POST', body: { ...fields, pin: true } }, 'Pinned. Pick the poster below.');
+      const r = await call(`/title/${id}/looks`, { method: 'POST', body: base
+        ? { poster: base.poster, crop: base.crop, own_title: base.own_title, logo: base.logo, style: lookStyle(base), pin: true }
+        : { poster: '', logo: '', pin: true } });
+      if (r && r.look) setFocus({ look: r.look.look_id });
+      return null;
     }
-    await call(`/title/${id}`, { method: 'PUT', body: { mode: m } },
-      m === 'rotation' && !rotation.length ? 'Now add posters to the rotation with ↻ Rotate below.' : null);
+    setFocus(null);
+    return call(`/title/${id}`, { method: 'PUT', body: { mode: m } });
   }
-  function withCrop(path, kind, then) {
-    if (kind === 'backdrops') setCrop({ path, initial: null, then });
-    else then('');
+  const toggleNever = (k, path) => call(`/title/${id}/never`, { method: 'PUT', body: { kind: k, ref: path, on: !never[k].has(path) } });
+  async function useLogo(path, everywhere = false) {
+    if (everywhere) return call(`/title/${id}/looks-logo`, { method: 'PUT', body: { logo: path } });
+    if (editLook) return call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { logo: path } });
+    const r = await call(`/title/${id}/looks`, { method: 'POST', body: { poster: '', logo: path, pin: true } });
+    if (r && r.look) setFocus({ look: r.look.look_id });
+    return r;
   }
-  function usePoster(c, kind) {
-    withCrop(c.path, kind, async cropVal => {
-      const fields = { poster: c.path, crop: cropVal || '', own_title: ownTitle(c, kind) };
-      if (pinned) {
-        await call(`/looks/${pinned.look_id}`, { method: 'PUT', body: fields });
-        if (mode !== 'pinned') await call(`/title/${id}`, { method: 'PUT', body: { mode: 'pinned', pinned_look_id: pinned.look_id } });
-        toast('Pinned');
-      } else {
-        await call(`/title/${id}/looks`, { method: 'POST', body: { ...fields, pin: true } }, 'Pinned');
-      }
-    });
-  }
-  function toggleRotation(c, kind) {
-    const existing = rotation.find(l => l.poster === c.path);
-    if (existing) return call(`/looks/${existing.look_id}`, { method: 'DELETE' }, 'Removed from the rotation');
-    withCrop(c.path, kind, cropVal => call(`/title/${id}/looks`, {
-      method: 'POST', body: { poster: c.path, crop: cropVal || '', own_title: ownTitle(c, kind), in_rotation: true },
-    }, mode === 'rotation' ? 'Added to the rotation' : 'Added to the rotation (switched to Daily rotation)'));
-  }
-  function toggleNever(kindName, path) {
-    const on = !never[kindName].has(path);
-    return call(`/title/${id}/never`, { method: 'PUT', body: { kind: kindName, ref: path, on } },
-      on ? 'Never used automatically again' : 'Allowed again');
-  }
-  async function useLogo(path) {
-    if (editLook) return call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { logo: path } }, 'Logo set');
-    return call(`/title/${id}/looks`, { method: 'POST', body: { poster: '', logo: path, pin: true } }, 'Logo set (this title is now pinned, poster still automatic)');
-  }
-  // Your own images join the title's library; using one is a separate click.
-  const KIND_WORD = { poster: 'posters', backdrop: 'backdrops', logo: 'logos' };
-  function showKind(kindName) {
-    if (kindName === 'logo') setTab('logos');
-    else { setTab('posters'); setPkind(kindName === 'backdrop' ? 'backdrops' : 'yours'); }
-  }
-  async function upload(files, kindName) {
+
+  // ── Your images ──
+  const KIND_WORD = { poster: 'poster', backdrop: 'backdrop', logo: 'logo' };
+  async function upload(files, k) {
     const list = [...(files || [])].filter(f => f && f.type.startsWith('image/'));
     if (!list.length) return;
     setBusy(true);
     let ok = 0;
     for (const f of list) {
-      try {
-        await api(`/title/${id}/image?kind=${kindName}&name=${encodeURIComponent(f.name.slice(0, 100))}`, { method: 'POST', raw: f });
-        ok += 1;
-      } catch (ex) { toast(`${f.name}: ${ex.message}`, true); }
+      try { await api(`/title/${id}/image?kind=${k}&name=${encodeURIComponent(f.name.slice(0, 100))}`, { method: 'POST', raw: f }); ok += 1; }
+      catch (ex) { toast(`${f.name}: ${ex.message}`, true); }
     }
     setBusy(false);
     await refresh();
-    if (ok) { showKind(kindName); toast(`Added ${ok} ${ok === 1 ? KIND_WORD[kindName].replace(/s$/, '') : KIND_WORD[kindName]} to your images`); }
+    if (ok) { toast(`${ok} ${KIND_WORD[k]}${ok > 1 ? 's' : ''} added`); if (k !== 'logo') setArt(k === 'backdrop' ? 'backdrops' : 'yours'); }
   }
-  async function useLink(kindName) {
+  async function addLink(k) {
     if (!link.trim()) return;
-    setBusy(true);
-    try {
-      await api(`/title/${id}/image-link`, { method: 'POST', body: { url: link.trim(), kind: kindName } });
-      setLink(''); await refresh(); showKind(kindName); toast('Added to your images');
-    } catch (ex) { toast(ex.message, true); }
-    setBusy(false);
+    const r = await call(`/title/${id}/image-link`, { method: 'POST', body: { url: link.trim(), kind: k } }, 'Added');
+    if (r) { setLink(''); if (k !== 'logo') setArt(k === 'backdrop' ? 'backdrops' : 'yours'); }
   }
-  function dropTo(kindName) {
-    return {
-      onDragOver: e => { e.preventDefault(); e.currentTarget.classList.add('drag'); },
-      onDragLeave: e => e.currentTarget.classList.remove('drag'),
-      onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove('drag'); upload(e.dataTransfer.files, kindName); },
-    };
+  const drop = k => ({
+    onDragOver: e => { e.preventDefault(); e.currentTarget.classList.add('drag'); },
+    onDragLeave: e => e.currentTarget.classList.remove('drag'),
+    onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove('drag'); upload(e.dataTransfer.files, k); },
+  });
+  const removeUpload = c => confirm('Delete this image?') && call(`/title/${id}/uploads?path=${encodeURIComponent(c.path)}`, { method: 'DELETE' });
+  const setOwnTitle = (c, on) => call(`/title/${id}/uploads`, { method: 'PUT', body: { path: c.path, own_title: on } });
+  const importFrame = async f => {
+    const r = await call(`/title/${id}/frames/import`, { method: 'POST', body: { path: f.path, name: f.name } }, 'Frame added to backdrops');
+    if (r) setArt('backdrops');
+  };
+
+  // ── Jellyfin's other images ──
+  const setArtChoice = (k, body) => call(`/title/${id}/art/${k}`, { method: 'PUT', body });
+  function frameArt(c, k) {
+    setCrop({ src: fullImageUrl(c.path), aspect: 16 / 9, initial: null,
+      actions: [{ label: 'Pin', primary: true, run: v => setArtChoice(k, { mode: 'pinned', path: c.path, crop: cropToStr(v) }) }] });
   }
-  async function removeUpload(c) {
-    if (!confirm('Delete this image from your images?')) return;
-    await call(`/title/${id}/uploads?path=${encodeURIComponent(c.path)}`, { method: 'DELETE' }, 'Deleted');
+
+  // ── Style ──
+  const styleTarget = scope === 'look' && editLook ? 'look' : 'title';
+  const savedStyle = styleTarget === 'look' ? lookStyle(editLook) : t.title.style;
+  const values = draft && draft.target === styleTarget && (styleTarget === 'title' || draft.look === editLook.look_id) ? draft.values : savedStyle;
+  const inherited = styleTarget === 'look' ? { ...libEff, ...t.title.style } : libEff;
+  function setStyleKey(k, v) {
+    const next = { ...values };
+    if (v === null || v === undefined) delete next[k]; else next[k] = String(v);
+    const d = { target: styleTarget, look: editLook && editLook.look_id, values: next };
+    setDraft(d);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        if (d.target === 'look') await api(`/looks/${d.look}`, { method: 'PUT', body: { style: d.values, colors: {} } });
+        else await api(`/title/${id}`, { method: 'PUT', body: { style: { ...d.values } } });
+        await load(); setDraft(null); setTs(Date.now());
+      } catch (ex) { toast(ex.message, true); }
+    }, 600);
   }
-  const setOwnTitle = (c, on) => call(`/title/${id}/uploads`, { method: 'PUT', body: { path: c.path, own_title: on } },
-    on ? 'Used as it is, without a logo' : 'Your logo goes on top of it');
+  function eyedrop(e, img) {
+    if (!pick || !img) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const r = img.getBoundingClientRect();
+    const [cr, cg, cb] = ctx.getImageData(Math.floor((e.clientX - r.left) / r.width * img.naturalWidth),
+      Math.floor((e.clientY - r.top) / r.height * img.naturalHeight), 1, 1).data;
+    setStyleKey(pick, [cr, cg, cb].map(x => x.toString(16).padStart(2, '0')).join(''));
+    setPick(null);
+  }
+  async function toggleSashOff(slotName) {
+    const off = new Set(notch.off);
+    if (off.has(slotName)) off.delete(slotName); else off.add(slotName);
+    const style = { ...t.title.style };
+    if (off.size) style.sash_off = [...off].join(','); else delete style.sash_off;
+    await call(`/title/${id}`, { method: 'PUT', body: { style } });
+    setNotch({ ...notch, off: [...off] });
+  }
   async function push() {
     setBusy(true);
     try {
       const r = await api(`/title/${id}/push`, { method: 'POST', body: {} });
       const c = r.counts || {};
-      toast(r.status !== 'done' ? (r.message || 'Push failed')
-        : c.error ? `Failed: ${(r.items.find(i => i.action === 'error') || {}).detail || 'error'}`
-        : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? 'Skipped (hands off or no match)' : 'Jellyfin already had this poster', !!(c.error || r.status !== 'done'));
+      toast(r.status !== 'done' ? (r.message || 'Push failed') : c.error ? `Failed: ${(r.items.find(i => i.action === 'error') || {}).detail || 'error'}`
+        : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? 'Skipped' : 'Jellyfin already has it', !!(c.error || r.status !== 'done'));
       await refresh();
     } catch (ex) { toast(ex.message, true); }
     setBusy(false);
-  }
-  async function toggleSashOff(slot) {
-    const off = new Set(notch.off);
-    if (off.has(slot)) off.delete(slot); else off.add(slot);
-    const style = { ...t.title.style };
-    if (off.size) style.sash_off = [...off].join(','); else delete style.sash_off;
-    await call(`/title/${id}`, { method: 'PUT', body: { style } }, off.has(slot) ? 'That label is off for this title' : 'Label allowed again');
   }
   async function markReviewed() {
     await api(`/title/${id}`, { method: 'PUT', body: { reviewed: true } }).catch(() => {});
     if (nextId) goTo(nextId); else { toast('That was the last one'); await refresh(); }
   }
 
-  // Colours and style: saved (debounced) on the look being edited, or on the title.
-  const styleOf = () => (editLook ? { colors: { ...editLook.colors }, style: { ...editLook.style } } : { title: { ...t.title.style } });
-  const current = localStyle || styleOf();
-  function colorValue(key, param) { return current.title ? current.title[param] : current.colors[key]; }
-  function styleValue(key) { return current.title ? current.title[key] : current.style[key]; }
-  function change(fn) {
-    const next = JSON.parse(JSON.stringify(current));
-    fn(next);
-    setLocalStyle(next);
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        if (next.title) await api(`/title/${id}`, { method: 'PUT', body: { style: next.title } });
-        else await api(`/looks/${editLook.look_id}`, { method: 'PUT', body: { colors: next.colors, style: next.style } });
-        await load(); setLocalStyle(null); setTs(Date.now());
-      } catch (ex) { toast(ex.message, true); }
-    }, 700);
-  }
-  function setColor(key, param, hex) {
-    change(s => {
-      if (s.title) { if (hex) s.title[param] = hex.replace('#', ''); else delete s.title[param]; }
-      else { if (hex) s.colors[key] = hex.replace('#', ''); else delete s.colors[key]; }
-    });
-  }
-  function setStyle(key, value) {
-    change(s => { const tgt = s.title || s.style; if (value === null || value === undefined) delete tgt[key]; else tgt[key] = String(value); });
-  }
-  function eyedrop(e) {
-    if (!pick) return;
-    const img = previewImg.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    const r = img.getBoundingClientRect();
-    const x = Math.floor((e.clientX - r.left) / r.width * img.naturalWidth), y = Math.floor((e.clientY - r.top) / r.height * img.naturalHeight);
-    const [cr, cg, cb] = ctx.getImageData(x, y, 1, 1).data;
-    const hex = [cr, cg, cb].map(v => v.toString(16).padStart(2, '0')).join('');
-    setColor(pick[0], pick[1], hex);
-    setPick(null);
+  // ── What the preview shows ──
+  let previewSrc, shape = 'portrait', caption;
+  if (slot === 'poster') {
+    if (focus && focus.c) {
+      const d = { poster: focus.c.path, crop: focus.crop || '', own_title: ownTitle(focus.c, focus.kind),
+        logo: editLook ? editLook.logo : '', style: editLook ? lookStyle(editLook) : {} };
+      previewSrc = `/studio/api/preview/${id}?w=500&look=${encodeURIComponent(JSON.stringify(d))}&_=${ts}`;
+      caption = 'Preview · not saved';
+    } else {
+      previewSrc = `/studio/api/preview/${id}?w=500${editLook ? `&look_id=${editLook.look_id}` : ''}&_=${ts}`;
+      caption = !editLook ? 'Automatic' : mode === 'rotation' ? (editLook.look_id === t.today_look_id ? 'Today' : `Look ${rotation.indexOf(editLook) + 1} of ${rotation.length}`) : 'Pinned';
+    }
+  } else {
+    shape = slot === 'logo' ? 'logo' : 'wide';
+    const ch = t.art[slot];
+    const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
+    previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
+    caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin’s own' : ch.mode === 'pinned' ? 'Pinned' : 'Automatic';
   }
 
-  // ── Preview ──
-  const previewSrc = `/studio/api/preview/${id}?w=500${editLook ? `&look_id=${editLook.look_id}` : ''}&_=${ts}`;
-  const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length,
-    never: never.poster.size + never.logo.size, styled: false });
+  const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length, never: never.poster.size + never.logo.size, styled: false });
 
-  // ── Posters tab ──
-  const all = (cands && cands.candidates) || { posters: [], backdrops: [], logos: [] };
-  const mine = kindName => t.uploads.filter(u => u.kind === kindName)
-    .map(u => ({ path: u.path, provider: 'custom', language: null, own_title: u.own_title, name: u.name }));
-  const customPosters = mine('poster'), customBackdrops = mine('backdrop'), customLogos = mine('logo');
-  const posterList = pkind === 'backdrops' ? [...customBackdrops, ...all.backdrops]
-    : pkind === 'yours' ? customPosters
-    : all.posters.filter(c => (pkind === 'textless' ? !c.language : !!c.language));
-  const shownPosters = posterList.filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
-  const kindOf = pkind === 'backdrops' ? 'backdrops' : 'posters';
-  function posterBadges(c) {
+  // ── Poster: Art ──
+  const artTabs = [['textless', 'No text'], ['titled', 'With title'], ['backdrops', 'Backdrops'], ['frames', 'Frames'], ['yours', `Yours${mine('poster').length ? ` ${mine('poster').length}` : ''}`]];
+  let list = [], listKind = 'posters';
+  if (art === 'backdrops') { list = [...mine('backdrop'), ...all.backdrops]; listKind = 'backdrops'; }
+  else if (art === 'yours') list = mine('poster');
+  else if (art === 'titled') list = all.posters.filter(c => c.language);
+  else if (art === 'textless') list = all.posters.filter(c => !c.language);
+  if (art !== 'frames' && art !== 'yours') list = list.filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
+  const posterBadges = c => {
     const b = [];
-    if (pinned && pinned.poster === c.path && mode === 'pinned') b.push(['Pinned', 'info']);
-    if (rotation.some(l => l.poster === c.path)) b.push(['In rotation', 'info']);
-    if (!pinned && mode === 'auto' && autoPoster && autoPoster.path === c.path) b.push(['Automatic pick', 'ok']);
+    if (mode === 'pinned' && pinned && pinned.poster === c.path) b.push(['Pinned', 'info']);
+    if (rotation.some(l => l.poster === c.path)) b.push(['Rotation', 'info']);
+    if (mode === 'auto' && autoPoster && autoPoster.path === c.path) b.push(['Auto', 'ok']);
     if (never.poster.has(c.path)) b.push(['Never', 'bad']);
     return b;
+  };
+  const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
+  const uploadKind = art === 'backdrops' ? 'backdrop' : 'poster';
+
+  const artPane = html`
+    <div class="toolbar">
+      <${Seg} small value=${art} onChange=${setArt} options=${artTabs} />
+      ${['textless', 'titled', 'backdrops'].includes(art) && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
+        <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
+    </div>
+    ${art !== 'frames' && html`<div class="own-row dropzone" ...${drop(uploadKind)}>
+      <label class="btn">Upload<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, uploadKind); e.target.value = ''; }} /></label>
+      <input type="url" placeholder="Image link" value=${link} onInput=${e => setLink(e.target.value)} />
+      <button onClick=${() => addLink(uploadKind)} disabled=${!link || busy}>Add</button>
+      <a class="hint-sm" target="_blank" rel="noopener noreferrer" href=${`https://theposterdb.com/search?term=${encodeURIComponent(t.item.name)}`}>ThePosterDB ↗</a>
+    </div>`}
+    ${art === 'frames'
+      ? (frames === null ? html`<div class="empty">Loading…</div>`
+        : frames.length ? html`<div class="cands backdrops">${frames.map(f => html`<${Card} key=${f.path} c=${f} kind="backdrops" badges=${[]} onFocus=${() => importFrame(f)}>
+            <button onClick=${() => importFrame(f)} disabled=${busy}>Add to backdrops</button></${Card}>`)}</div>`
+        : html`<div class="empty">No frames: Jellyfin hasn't extracted chapter images for this title.</div>`)
+      : !cands ? html`<div class="empty">Loading…</div>`
+      : list.length ? html`<div class="cands ${listKind}">${list.map(c => {
+          const isNever = never.poster.has(c.path), inRot = rotation.some(l => l.poster === c.path);
+          return html`<${Card} key=${c.path} c=${c} kind=${listKind} focused=${isFocused(c)} badges=${posterBadges(c)}
+            onFocus=${() => (listKind === 'backdrops' ? frame(c, listKind) : setFocus({ c, kind: listKind, crop: '' }))}
+            onFrame=${() => frame(c, listKind)}
+            extra=${c.provider === 'custom' && listKind === 'posters' ? html`<label class="own-check"><input type="checkbox" checked=${!!c.own_title} onChange=${e => setOwnTitle(c, e.target.checked)} /> Has title</label>` : null}>
+            <button onClick=${() => (listKind === 'backdrops' ? frame(c, listKind, 'pin') : pin(c, listKind))} disabled=${busy || isNever}>Pin</button>
+            <button class=${inRot ? 'on' : ''} onClick=${() => toggleRotation(c, listKind)} disabled=${busy || isNever} title="Daily rotation">↻</button>
+            ${c.provider === 'custom'
+              ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`
+              : html`<button class=${isNever ? 'on-bad' : ''} onClick=${() => toggleNever('poster', c.path)} disabled=${busy} title=${isNever ? 'Allow again' : 'Never use'}>⊘</button>`}
+          </${Card}>`;
+        })}</div>`
+      : html`<div class="empty">${art === 'yours' ? 'Upload, paste a link or drop images here.' : 'None.'}</div>`}`;
+
+  // ── Poster: Logo ──
+  const logos = [...mine('logo'), ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom');
+  const many = looks.length > 1;
+  const logoPane = html`
+    <div class="own-row dropzone" ...${drop('logo')}>
+      <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic</button>
+      <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
+      <label class="btn">Upload<input type="file" multiple accept="image/png,image/webp" hidden onChange=${e => { upload(e.target.files, 'logo'); e.target.value = ''; }} /></label>
+      <input type="url" placeholder="Logo link" value=${link} onInput=${e => setLink(e.target.value)} />
+      <button onClick=${() => addLink('logo')} disabled=${!link || busy}>Add</button>
+    </div>
+    ${!cands ? html`<div class="empty">Loading…</div>` : html`<div class="cands logos">${logos.map(c => {
+      const isNever = never.logo.has(c.path), used = editLook && editLook.logo === c.path;
+      const b = [];
+      if (used) b.push(['Used', 'info']);
+      if (!used && autoLogo === c.path && (!editLook || !editLook.logo)) b.push(['Auto', 'ok']);
+      if (isNever) b.push(['Never', 'bad']);
+      return html`<${Card} key=${c.path} c=${c} kind="logos" badges=${b} onFocus=${() => useLogo(c.path)}>
+        <button onClick=${() => useLogo(c.path)} disabled=${busy || isNever}>Use</button>
+        ${many && html`<button onClick=${() => useLogo(c.path, true)} disabled=${busy || isNever} title="Use on every look">All</button>`}
+        ${c.provider === 'custom'
+          ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`
+          : html`<button class=${isNever ? 'on-bad' : ''} onClick=${() => toggleNever('logo', c.path)} disabled=${busy} title=${isNever ? 'Allow again' : 'Never use'}>⊘</button>`}
+      </${Card}>`;
+    })}</div>`}`;
+
+  // ── Poster: Style ──
+  const extraGroups = t.stage ? [['Theatre', [
+    { k: 'studio_template', t: 'select', label: 'Design', options: [['', 'Posters+'], ['playbill', 'Playbill']] },
+    { k: 'playbill_venue', t: 'text', label: 'Venue', placeholder: 'Automatic' },
+  ]]] : [];
+  const stylePane = html`
+    <${Seg} small value=${styleTarget} onChange=${setScope}
+      options=${[['look', 'This poster', editLook ? '' : 'disabled'], ['title', 'Whole title']]} />
+    ${lib ? html`<${StyleControls} values=${values} inherited=${inherited} from=${styleTarget === 'look' ? 'title' : 'library'}
+      onSet=${setStyleKey} pickColor=${k => setPick(k)} groups=${[...GROUPS, ...extraGroups]} />` : html`<div class="empty">Loading…</div>`}
+    ${!t.stage && html`<details class="labels" onToggle=${e => { if (e.target.open && !notch) api(`/title/${id}/notch`).then(setNotch).catch(ex => setNotch({ available: false, reason: ex.message })); }}>
+      <summary>Notch labels for this title</summary>
+      ${!notch ? html`<div class="empty">Loading…</div>` : !notch.available ? html`<p class="hint-sm">${notch.reason}</p>` : html`
+        <p class="hint-sm">Now: <strong>${notch.shown ? notch.shown.label : 'nothing'}</strong></p>
+        ${notch.candidates.length ? html`<div class="list sash-list">${notch.candidates.map(c => {
+          const off = notch.off.includes(c.slot), gOff = !off && !notch.priority.includes(c.slot);
+          return html`<div class="list-row ${off || gOff ? 'off' : ''}"><label class="switch" style="padding:0;flex:1">
+            <input type="checkbox" checked=${!off && !gOff} disabled=${gOff} onChange=${() => toggleSashOff(c.slot)} />
+            <span><span class="t">${c.label}</span><span class="d" style="display:block">${sashName(c.slot)}${gOff ? ' · off in Notch' : ''}</span></span></label></div>`;
+        })}</div>` : html`<p class="hint-sm">No label applies right now.</p>`}`}
+    </details>`}`;
+
+  // ── Other images ──
+  function otherPane(k) {
+    const ch = t.art[k];
+    const pool = k === 'logo' ? [...mine('logo'), ...all.logos]
+      : [...mine('backdrop'), ...all.backdrops, ...(frames || [])];
+    const r = t.art.rules.backdrop;
+    const fits = c => k !== 'backdrop' || !c.width
+      || (c.width >= r.min_w && c.height >= r.min_h && (!r.wide_only || Math.abs(c.width / c.height - 16 / 9) < 0.02));
+    return html`
+      <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
+        options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
+      ${ch.mode === 'auto' && !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`}
+      <div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
+        const b = [];
+        if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
+        if (k === 'backdrop' && c.width && !fits(c)) b.push(['Too small', 'warn']);
+        const isFrame = c.path.startsWith('jf-chapter:');
+        return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
+          onFocus=${() => setFocus({ art: c, crop: '' })} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
+          <button onClick=${() => setArtChoice(k, { mode: 'pinned', path: c.path })} disabled=${busy}>Pin</button>
+          ${isFrame && html`<button onClick=${() => importFrame(c)} disabled=${busy} title="Also add to your backdrops">+</button>`}
+        </${Card}>`;
+      })}</div>`;
   }
 
-  const lookLabel = editLook
-    ? (mode === 'pinned' ? 'the pinned look' : `rotation look ${rotation.indexOf(editLook) + 1} of ${rotation.length}`)
-    : 'this title (automatic poster)';
+  const lookBar = slot === 'poster' && focusedLook ? html`<div class="look-bar">
+      ${focusedLook.poster && html`<button onClick=${() => frameLook(focusedLook)}>⤢ Frame</button>`}
+      ${focusedLook.in_rotation && html`<button onClick=${() => { setFocus(null); call(`/looks/${focusedLook.look_id}`, { method: 'DELETE' }); }}>Remove</button>`}
+    </div>` : null;
 
   return html`
-    ${review && html`<div class="notice info review-bar"><p><strong>Reviewing</strong> ${idx >= 0 ? `${idx + 1} of ${nav.ids.length} in ${nav.label}` : ''}. Fix what's wrong, then press <strong>Looks good</strong> (or Enter). ← → move without marking.</p>
+    ${review && html`<div class="notice info review-bar"><p>${idx >= 0 ? `${idx + 1} / ${nav.ids.length}` : ''}</p>
       <div class="row"><button onClick=${() => go('library')}>Stop</button><button class="primary" onClick=${markReviewed}>Looks good ✓</button></div></div>`}
-    <div class="page-head">
-      <div>
-        <a href="#library">← Library</a>${t.parent ? html` · <a href=${`#title/${t.parent}`}>← the show</a>` : ''}
-        <h1 style="margin-top:8px">${t.item.name}${t.item.year ? html` <span class="dim-text">(${t.item.year})</span>` : ''}</h1>
-        <p>${t.item.library_name}${t.siblings.length > 1 ? ` · ${t.siblings.length} copies in Jellyfin share these rules` : ''}${t.item.pushed_at ? ` · sent to Jellyfin ${ago(t.item.pushed_at)}` : ''}
-          ${chips.length ? html` ${chips.map(([l, c]) => html`<span class="chip ${c}" style="margin-left:4px">${l}</span>`)}` : ''}</p>
+    <div class="ed-head">
+      <div class="grow">
+        <div class="crumbs"><a href="#library">Library</a>${t.parent ? html` · <a href=${`#title/${t.parent}`}>Show</a>` : ''}</div>
+        <h1>${t.item.name}${t.item.year ? html` <span class="dim-text">${t.item.year}</span>` : ''}</h1>
+        <div class="head-chips">${chips.map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}${t.item.pushed_at ? html`<span class="dim-text">sent ${ago(t.item.pushed_at)}</span>` : ''}</div>
       </div>
-      <div class="row">
-        <button onClick=${() => prevId && goTo(prevId)} disabled=${!prevId} aria-label="Previous title">←</button>
-        <button onClick=${() => nextId && goTo(nextId)} disabled=${!nextId} aria-label="Next title">→</button>
-      </div>
+      <div class="row nav-btns"><button onClick=${() => prevId && goTo(prevId)} disabled=${!prevId} aria-label="Previous">←</button>
+        <button onClick=${() => nextId && goTo(nextId)} disabled=${!nextId} aria-label="Next">→</button></div>
     </div>
 
     ${!matched && html`<${MatchPanel} t=${t} onDone=${() => { refresh(); api(`/title/${id}/candidates`).then(setCands); }} />`}
 
     <div class="editor">
       <aside class="ed-side">
-        <div class="preview ${pick ? 'picking' : ''}">
-          <img ref=${previewImg} src=${previewSrc} alt="Poster preview" onClick=${eyedrop} key=${previewSrc} />
-          ${pick && html`<div class="pick-hint">Click the poster to pick the ${pick[2].toLowerCase()}</div>`}
-        </div>
-        <div class="ed-caption">${mode === 'rotation' && editLook ? (editLook.look_id === t.today_look_id ? 'Today’s look' : 'Previewing a rotation look') : 'What Jellyfin gets'}${t.title.hands_off ? ' — but Hands off is on, so Studio won’t send it' : ''}</div>
-        <div class="row" style="margin-top:12px">
+        <${Preview} src=${previewSrc} shape=${shape} picking=${!!pick} onPick=${eyedrop} />
+        <div class="ed-caption">${pick ? 'Click the preview to pick a colour' : caption}</div>
+        ${lookBar}
+        <div class="row side-actions">
           <button class="primary" onClick=${push} disabled=${busy || !matched || t.title.hands_off}>Push now</button>
-          <button onClick=${() => call(`/title/${id}`, { method: 'PUT', body: { hands_off: !t.title.hands_off } }, t.title.hands_off ? 'Studio manages this title again' : 'Hands off: Studio will leave its poster alone')}>
-            ${t.title.hands_off ? 'Manage again' : 'Hands off'}</button>
+          <button class=${t.title.hands_off ? 'on' : ''} onClick=${() => call(`/title/${id}`, { method: 'PUT', body: { hands_off: !t.title.hands_off } })}
+            title="Studio leaves this title's images alone">Hands off</button>
         </div>
-        <p class="hint-sm">Changes save by themselves and reach Jellyfin tonight, or right away with Push now.</p>
         <div class="now-in-jf">
-          <img src=${`/studio/api/thumb/${t.item.jf_id}?h=240&tag=${encodeURIComponent(t.item.jf_image_tag || '')}`} alt="" />
-          <div><div style="font-weight:580">In Jellyfin now</div>
-            <div class="hint-sm">${t.item.status === 'ok' ? 'Studio’s poster' : t.item.status === 'new' ? 'Not sent by Studio yet' : t.item.status}</div>
-            ${looks.length || t.never.poster.length || t.never.logo.length || Object.keys(t.title.style).length
-              ? html`<button class="link danger" style="margin-top:6px" onClick=${() => confirm('Forget every choice for this title (looks, Never lists, colours)?') && call(`/title/${id}/reset`, { method: 'POST', body: {} }, 'Back to automatic')}>Reset this title</button>` : ''}
-          </div>
+          <img class=${shape} src=${`/studio/api/thumb/${t.item.jf_id}?h=240&type=${JF_TYPE[slot]}&_=${ts}`} alt="" onError=${e => { e.target.style.visibility = 'hidden'; }} />
+          <div><div class="hint-sm" style="margin:0">In Jellyfin</div>
+            ${(looks.length || t.never.poster.length || t.never.logo.length || Object.keys(t.title.style).length) ? html`<button class="link danger"
+              onClick=${() => confirm('Forget every choice for this title?') && call(`/title/${id}/reset`, { method: 'POST', body: {} })}>Reset title</button>` : ''}</div>
         </div>
       </aside>
 
       <section class="ed-main">
-        <div class="mode-pick">${MODES.map(([m, label, help]) => html`<button class=${mode === m ? 'on' : ''} onClick=${() => mode !== m && setMode(m)} disabled=${busy || !matched}>
-          <span class="t">${label}</span><span class="d">${help}</span></button>`)}</div>
+        <${Seg} value=${slot} onChange=${v => { setSlot(v); setFocus(null); }} options=${t.stage ? [SLOTS[0]] : SLOTS} />
 
-        ${t.seasons.length > 0 && html`<div class="card rot">
-          <h3>Seasons (${t.seasons.length})</h3>
-          <div class="rot-strip">${t.seasons.map(s => html`<button class="rot-item" onClick=${() => go(`title/${s.jf_id}`)} title=${s.name}>
-            <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.jf_image_tag || '')}`} alt="" />
-            <span class="chip">${s.number === 0 ? 'Specials' : `S${s.number}`}</span></button>`)}</div>
-          <p class="hint-sm">Seasons use this show's colours and layout unless you change them in the season.</p>
-        </div>`}
-        ${mode === 'rotation' && html`<div class="card rot">
-          <h3>In the rotation (${rotation.length})</h3>
-          ${rotation.length ? html`<div class="rot-strip">${rotation.map(l => html`<button class="rot-item ${editLook && editLook.look_id === l.look_id ? 'on' : ''}" onClick=${() => { setSel(l.look_id); setLocalStyle(null); }}>
-              <img src=${l.poster ? thumbUrl(l.poster, l.crop ? 'backdrops' : 'posters') : ''} alt="" referrerpolicy="no-referrer" class=${l.crop ? 'cropped' : ''} />
-              ${l.look_id === t.today_look_id ? html`<span class="chip ok">Today</span>` : t.upcoming[0] === l.look_id ? html`<span class="chip">Next</span>` : ''}
-            </button>`)}</div>
-            <p class="hint-sm">Click one to change its logo and colours. Remove it with ↻ Rotate on its card below.</p>`
-          : html`<p class="hint-sm">Nothing yet. Press ↻ Rotate on any poster below to add it.</p>`}
-        </div>`}
+        ${t.seasons.length > 0 && slot === 'poster' && html`<div class="strip">${t.seasons.map(s => html`<button class="strip-item" onClick=${() => go(`title/${s.jf_id}`)} title=${s.name}>
+          <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.jf_image_tag || '')}`} alt="" />
+          <span class="chip">${s.number === 0 ? 'SP' : `S${s.number}`}</span></button>`)}</div>`}
 
-        <div class="seg" role="tablist">
-          ${[['posters', 'Posters'], ['logos', 'Logos'], ['look', 'Colours & layout']].map(([k, l]) => html`<button class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}
-        </div>
-
-        ${cands && cands.error && html`<div class="notice warn"><p>${cands.error}</p></div>`}
-
-        ${tab === 'posters' && html`
-          <div class="toolbar">
-            <div class="seg small">${[['textless', 'No text'], ['titled', 'With title'], ['backdrops', 'Backdrops'], ['yours', 'Yours']].map(([k, l]) => html`<button class=${pkind === k ? 'on' : ''} onClick=${() => setPkind(k)}>${l}</button>`)}</div>
-            ${pkind !== 'yours' && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
-              <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
+        ${slot === 'poster' && html`
+          <div class="mode-row">
+            <${Seg} small value=${mode} onChange=${setMode} options=${[['auto', 'Automatic'], ['pinned', 'Pinned'], ['rotation', 'Daily rotation']]} />
+            ${mode === 'rotation' && html`<span class="hint-sm">${rotation.length ? `${rotation.length} looks, shuffled daily` : 'Add posters with ↻'}</span>`}
           </div>
-          <div class="own-row dropzone" ...${dropTo(pkind === 'backdrops' ? 'backdrop' : 'poster')}>
-            <label class="btn">Upload posters<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, 'poster'); e.target.value = ''; }} /></label>
-            <label class="btn">Upload backdrops<input type="file" multiple accept="image/png,image/jpeg,image/webp" hidden onChange=${e => { upload(e.target.files, 'backdrop'); e.target.value = ''; }} /></label>
-            <input type="url" placeholder="…or paste an image link (ThePosterDB download links work)" value=${link} onInput=${e => setLink(e.target.value)} />
-            <button onClick=${() => useLink(pkind === 'backdrops' ? 'backdrop' : 'poster')} disabled=${!link || busy}>Add link</button>
-            <a class="hint-sm" target="_blank" rel="noopener noreferrer" href=${`https://theposterdb.com/search?term=${encodeURIComponent(t.item.name)}`}>ThePosterDB ↗</a>
-            <span class="hint-sm drop-hint">or drop images here (they go to ${pkind === 'backdrops' ? 'backdrops' : 'your posters'})</span>
-          </div>
-          ${pkind === 'yours' && html`<p class="hint-sm">Your images stay here until you delete them. Pin or rotate any of them; tick <em>Has its title</em> on a poster that already shows the title, so no logo goes on top.</p>`}
-          ${pkind === 'titled' && html`<p class="hint-sm">These carry their own title, so Studio uses them as they are, with no logo on top.</p>`}
-          ${pkind === 'backdrops' && html`<p class="hint-sm">Wide images: Studio asks you to frame a poster-shaped part of it.</p>`}
-          ${!cands ? html`<div class="empty">Loading artwork…</div>` : shownPosters.length ? html`<div class="cands">${shownPosters.map(c => {
-            const isNever = never.poster.has(c.path);
-            return html`<${Card} key=${c.path} c=${c} kind=${kindOf} badges=${posterBadges(c)} dim=${isNever}
-              actions=${html`
-                <button onClick=${() => usePoster(c, kindOf)} disabled=${busy || isNever} title="Always use this poster">Pin</button>
-                <button onClick=${() => toggleRotation(c, kindOf)} disabled=${busy || isNever} class=${rotation.some(l => l.poster === c.path) ? 'on' : ''} title="Add to (or remove from) the daily rotation">↻<span class="lbl"> Rotate</span></button>
-                ${c.provider === 'custom'
-                  ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete from your images">✕</button>`
-                  : html`<button onClick=${() => toggleNever('poster', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''} title="Never use this one automatically">${isNever ? 'Allow' : 'Never'}</button>`}`}
-              extra=${c.provider === 'custom' && kindOf === 'posters' ? html`<label class="own-check"><input type="checkbox" checked=${!!c.own_title} onChange=${e => setOwnTitle(c, e.target.checked)} /> Has its title</label>` : null} />`;
-          })}</div>` : html`<div class="empty">${pkind === 'yours' ? 'No images of your own yet: upload some, paste a link, or drop files above.' : 'None here.'}</div>`}`}
-
-        ${tab === 'logos' && html`
-          <p class="hint-sm">The logo for ${lookLabel}.</p>
-          <div class="own-row">
-            <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic logo</button>
-            <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
-          </div>
-          <div class="own-row dropzone" ...${dropTo('logo')}>
-            <label class="btn">Upload logos<input type="file" multiple accept="image/png,image/webp" hidden onChange=${e => { upload(e.target.files, 'logo'); e.target.value = ''; }} /></label>
-            <input type="url" placeholder="…or paste a logo link" value=${link} onInput=${e => setLink(e.target.value)} />
-            <button onClick=${() => useLink('logo')} disabled=${!link || busy}>Add link</button>
-            <span class="hint-sm drop-hint">or drop PNGs here (transparent background works best)</span>
-          </div>
-          ${!cands ? html`<div class="empty">Loading logos…</div>` : html`<div class="cands logos">${[...customLogos, ...all.logos].filter(c => source === 'all' || c.provider === source || c.provider === 'custom').map(c => {
-            const isNever = never.logo.has(c.path);
-            const used = editLook && editLook.logo === c.path;
-            const b = [];
-            if (used) b.push(['Used', 'info']);
-            if (!used && autoLogo === c.path && (!editLook || !editLook.logo)) b.push(['Automatic pick', 'ok']);
-            if (isNever) b.push(['Never', 'bad']);
-            return html`<${Card} key=${c.path} c=${c} kind="logos" badges=${b} dim=${isNever}
-              actions=${html`<button onClick=${() => useLogo(c.path)} disabled=${busy || isNever}>Use</button>
-                ${c.provider === 'custom'
-                  ? html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete from your images">✕</button>`
-                  : html`<button onClick=${() => toggleNever('logo', c.path)} disabled=${busy} class=${isNever ? 'on-bad' : ''}>${isNever ? 'Allow' : 'Never'}</button>`}`} />`;
-          })}</div>`}`}
-
-        ${tab === 'look' && html`
-          <p class="hint-sm">Editing ${lookLabel}. Anything left on Automatic follows the global style.</p>
-          <div class="card">
-            <h3 style="margin-bottom:10px">Colours</h3>
-            ${COLORS.map(([key, param, label, help]) => {
-              const v = colorValue(key, param);
-              return html`<div class="color-row">
-                <div class="grow"><div style="font-weight:580">${label}</div><div class="hint-sm">${help}</div></div>
-                <input type="color" value=${v ? '#' + v : '#888888'} onInput=${e => setColor(key, param, e.target.value)} aria-label=${label} class=${v ? '' : 'unset'} />
-                <button onClick=${() => setPick([key, param, label])} title="Pick from the poster">Pick</button>
-                <button onClick=${() => setColor(key, param, null)} disabled=${!v}>${v ? 'Automatic' : 'Automatic ✓'}</button>
-              </div>`;
-            })}
-            ${colorValue('logo', 'logo_color') && html`<label class="switch" style="padding-bottom:0">
-              <input type="checkbox" checked=${(current.title ? current.title.logo_color_mode : current.colors.logo_mode) === 'tint'}
-                onChange=${e => change(s => { if (s.title) { if (e.target.checked) s.title.logo_color_mode = 'tint'; else delete s.title.logo_color_mode; } else { if (e.target.checked) s.colors.logo_mode = 'tint'; else delete s.colors.logo_mode; } })} />
-              <span><span class="t">Keep the logo's shading</span><span class="d" style="display:block">Off: one solid colour. On: dark and light parts keep their contrast.</span></span></label>`}
-          </div>
-          <div class="card">
-            <h3 style="margin-bottom:10px">Layout</h3>
-            ${STYLE_CONTROLS.map(ctl => {
-              const raw = styleValue(ctl.key), v = raw !== undefined ? +raw : ctl.def;
-              return html`<div class="slider-row">
-                <label for=${ctl.key}>${ctl.label}</label>
-                <input id=${ctl.key} type="range" min=${ctl.min} max=${ctl.max} step=${ctl.step} value=${v} onInput=${e => setStyle(ctl.key, e.target.value)} />
-                <span class="val">${ctl.fmt(v)}${raw === undefined ? ' (global)' : ''}</span>
-                <button class="link" onClick=${() => setStyle(ctl.key, null)} disabled=${raw === undefined}>Reset</button>
-              </div>`;
-            })}
-            <div class="slider-row">
-              <label for="bg">Bottom fade</label>
-              <select id="bg" value=${styleValue('bottom_gradient') || ''} onChange=${e => setStyle('bottom_gradient', e.target.value || null)}>
-                <option value="">Global style</option><option value="off">Off</option><option value="low">Light</option><option value="medium">Medium</option><option value="high">Strong</option></select>
-            </div>
-            <label class="switch">
-              <input type="checkbox" checked=${styleValue('show_award_sash') !== 'false'} onChange=${e => setStyle('show_award_sash', e.target.checked ? null : 'false')} />
-              <span><span class="t">Show the notch</span><span class="d" style="display:block">The label at the top (awards, new season, …).</span></span></label>
-            <div class="slider-row">
-              <label for="nl">Notch text</label>
-              <input id="nl" type="text" maxlength="40" style="flex:1" value=${styleValue('notch_label') || ''}
-                placeholder=${t.item.jf_type === 'Season' ? 'Season number (automatic)' : 'Automatic (awards, new season, …)'}
-                onInput=${e => setStyle('notch_label', e.target.value.trim() ? e.target.value : null)} />
-            </div>
-            ${notch && (notch.available ? html`<div class="notch-box">
-              <div class="hint-sm">The notch says now: <strong>${notch.shown ? notch.shown.label : 'nothing'}</strong>${notch.custom_label ? ' (your text)' : ''}.
-                ${notch.candidates.length ? ' Labels this title qualifies for (switch one off for this title only):' : ' No label applies to this title right now.'}</div>
-              ${notch.candidates.length > 0 && html`<div class="list sash-list">${notch.candidates.map(c => {
-                const off = notch.off.includes(c.slot);
-                const globallyOff = !off && !notch.priority.includes(c.slot);
-                return html`<div class="list-row ${off || globallyOff ? 'off' : ''}">
-                  <label class="switch" style="padding:0;flex:1"><input type="checkbox" checked=${!off && !globallyOff} disabled=${globallyOff} onChange=${() => toggleSashOff(c.slot)} />
-                    <span><span class="t">${c.label}</span><span class="d" style="display:block">${sashName(c.slot)}${globallyOff ? ' · off for every title (Notch page)' : ''}</span></span></label></div>`;
-              })}</div>`}
-              <button class="link" onClick=${() => go('notch')}>Label order and notable lists →</button>
-            </div>` : html`<p class="hint-sm">${notch.reason}</p>`)}
-            ${t.stage && html`<div class="slider-row">
-              <label for="tpl">Design</label>
-              <select id="tpl" value=${styleValue('studio_template') || ''} onChange=${e => setStyle('studio_template', e.target.value || null)}>
-                <option value="">Posters+ style</option><option value="playbill">Playbill</option></select>
-            </div>`}
-            ${t.stage && styleValue('studio_template') === 'playbill' && html`<div class="slider-row">
-              <label for="venue">Venue</label>
-              <input id="venue" type="text" maxlength="60" style="flex:1" value=${styleValue('playbill_venue') || ''}
-                placeholder="Automatic: the show's first production (Broadway, West End…)" onInput=${e => setStyle('playbill_venue', e.target.value.trim() ? e.target.value : null)} />
-            </div>`}
-            ${editLook && editLook.crop && html`<button onClick=${() => setCrop({ path: editLook.poster, initial: Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +editLook.crop.split(',')[i]])),
-              then: v => call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { crop: v } }, 'Frame saved') })}>Adjust the frame</button>`}
-          </div>`}
+          ${(mode === 'rotation' ? rotation : mode === 'pinned' && pinned ? [pinned] : []).length > 0 && html`<div class="strip">
+            ${(mode === 'rotation' ? rotation : [pinned]).map(l => html`<button class="strip-item ${editLook && editLook.look_id === l.look_id && !(focus && focus.c) ? 'on' : ''}"
+                onClick=${() => { setFocus({ look: l.look_id }); setDraft(null); }}>
+              <img src=${l.poster ? thumbUrl(l.poster, l.crop ? 'backdrops' : 'posters') : `/studio/api/preview/${id}?w=500&look_id=${l.look_id}`} alt="" referrerpolicy="no-referrer" />
+              ${mode === 'rotation' && (l.look_id === t.today_look_id ? html`<span class="chip ok">Today</span>` : t.upcoming[0] === l.look_id ? html`<span class="chip">Next</span>` : '')}
+            </button>`)}</div>`}
+          <${Seg} value=${sub} onChange=${setSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />
+          ${cands && cands.error && html`<div class="notice warn"><p>${cands.error}</p></div>`}
+          ${sub === 'art' ? artPane : sub === 'logo' ? logoPane : stylePane}`}
+        ${slot !== 'poster' && otherPane(slot)}
       </section>
     </div>
-    ${crop && html`<${CropDialog} src=${fullImageUrl(crop.path)} initial=${crop.initial}
-      onClose=${() => setCrop(null)} onSave=${v => { const then = crop.then; setCrop(null); then(v); }} />`}`;
+    ${crop && html`<${CropDialog} ...${crop} onClose=${() => setCrop(null)} />`}`;
 }

@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import auth, db, engine, prefs
+from . import artwork, auth, db, engine, prefs
 from .jellyfin import Client, JellyfinError
 
 router = APIRouter()
@@ -207,6 +207,7 @@ def _settings_payload() -> dict:
         "schedule_enabled": bool(prefs.get("schedule_enabled")),
         "schedule_time": prefs.get("schedule_time"),
         "seasons_enabled": bool(prefs.get("seasons_enabled")),
+        "jf_art": artwork.library_rules(),
         "stagemedia_key_set": bool(prefs.get("stagemedia_key")),
         "stagemedia_key_hint": _secret_hint(prefs.get("stagemedia_key") or ""),
         "resolution": int(prefs.get("resolution") or 1000),
@@ -237,6 +238,8 @@ async def put_settings(request: Request):
         prefs.set("uploads_enabled", bool(body["uploads_enabled"]))
     if "seasons_enabled" in body:
         prefs.set("seasons_enabled", bool(body["seasons_enabled"]))
+    if isinstance(body.get("jf_art"), dict):
+        artwork.set_library_rules(body["jf_art"])
     if "schedule_time" in body:
         if not prefs.valid_time(str(body["schedule_time"])):
             raise HTTPException(status_code=400, detail="Time must be HH:MM, e.g. 04:00")
@@ -338,13 +341,19 @@ async def list_backups():
 # ── Jellyfin thumbnails (the browser never sees the API key) ────────────────
 
 @api.get("/thumb/{item_id}")
-async def thumb(item_id: str, h: int = 360, tag: str = ""):
-    """Jellyfin's current poster for an item.  With *tag* (its ImageTags.Primary)
-    in the URL a new poster is a new URL, so the browser may keep this a week."""
+async def thumb(item_id: str, h: int = 360, tag: str = "", type: str = "Primary"):
+    """One of Jellyfin's images for an item (Primary by default; Backdrop,
+    Logo, Thumb or Chapter/<n>).  With *tag* in the URL a new image is a new
+    URL, so the browser may keep this a week."""
     if not item_id.isalnum() or len(item_id) > 64:
         raise HTTPException(status_code=400, detail="Bad item id")
+    import re
+    if not re.fullmatch(r"(Primary|Backdrop|Logo|Thumb|Chapter/\d{1,3})", type):
+        raise HTTPException(status_code=400, detail="Bad image type")
     try:
-        data, ctype = await engine.shared_client().primary_image(item_id, max(90, min(h, 900)))
+        jf = engine.shared_client()
+        data, ctype = (await jf.primary_image(item_id, max(90, min(h, 900))) if type == "Primary"
+                       else await jf.image(item_id, type, max(90, min(h, 1200))))
     except JellyfinError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return Response(data, media_type=ctype,

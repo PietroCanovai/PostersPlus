@@ -33,6 +33,7 @@ class FakeJellyfin:
             "lib-x": [],
         }
         self.uploads: list[tuple[str, bytes, str]] = []
+        self.art_uploads: list[tuple[str, str, bytes]] = []
         self._tag = 0
 
     def _item(self, id_, type_, name, tmdb=None, imdb=None):
@@ -69,11 +70,20 @@ class FakeJellyfin:
                 {"Id": "s1-0", "Type": "Season", "IndexNumber": 0, "Name": "Specials", "ImageTags": {}},
                 {"Id": "s1-1", "Type": "Season", "IndexNumber": 1, "Name": "Season 1", "ImageTags": {"Primary": "x"}},
             ]})
-        if path.endswith("/Images/Primary") and request.method == "POST":
-            id_ = path.split("/")[2]
-            self.uploads.append((id_, base64.b64decode(request.content), request.headers["content-type"]))
+        if "/Images/" in path and request.method == "POST":
+            parts = path.split("/")          # /Items/<id>/Images/<Type>[/<index>]
+            id_, kind = parts[2], parts[4]
             self._tag += 1
-            self.find(id_)["ImageTags"]["Primary"] = f"ours-{self._tag}"
+            it = self.find(id_)
+            if kind == "Primary":
+                self.uploads.append((id_, base64.b64decode(request.content), request.headers["content-type"]))
+                it["ImageTags"]["Primary"] = f"ours-{self._tag}"
+            else:
+                self.art_uploads.append((id_, path, base64.b64decode(request.content)))
+                if kind == "Backdrop":
+                    it["BackdropImageTags"] = [f"ours-{self._tag}"]
+                else:
+                    it["ImageTags"][kind] = f"ours-{self._tag}"
             return httpx.Response(204)
         return httpx.Response(404)
 

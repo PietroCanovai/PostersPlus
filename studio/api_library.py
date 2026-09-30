@@ -115,7 +115,15 @@ def _title_payload(row: dict) -> dict:
                     for s in db.query("SELECT * FROM items WHERE parent_jf_id = ? AND present = 1 "
                                       "ORDER BY season_number", (row["jf_id"],))],
         "parent": row.get("parent_jf_id"),
+        "art": _art_payload(key),
     }
+
+
+def _art_payload(key: str) -> dict:
+    from . import artwork
+    rules_ = artwork.library_rules()
+    return {k: {**artwork.choice(key, k), "managed": artwork.managed(key, k), "library_on": rules_[k]["enabled"]}
+            for k in artwork.KINDS} | {"rules": rules_}
 
 
 @router.get("/title/{jf_id}")
@@ -229,6 +237,20 @@ async def update_look(look_id: int, request: Request):
     except ValueError as exc:
         _bad(exc)
     return _json({"look": look})
+
+
+@router.put("/title/{jf_id}/looks-logo")
+async def logo_for_all_looks(jf_id: str, request: Request):
+    """Body {logo}: the same logo on every look of the title."""
+    row, body = _item(jf_id), await _body(request)
+    key = rules.title_key(row)
+    logo = str(body.get("logo") or "")
+    try:
+        for look in rules.looks(key):
+            rules.update_look(look["look_id"], {"logo": logo}, _validator(key))
+    except ValueError as exc:
+        _bad(exc)
+    return _json(_title_payload(row))
 
 
 @router.delete("/looks/{look_id}")
@@ -402,6 +424,91 @@ async def push(jf_id: str):
     items = db.query("SELECT name, action, detail FROM run_items WHERE run_id = ?", (run_id,))
     return _json({"run_id": run_id, "status": run["status"], "counts": json.loads(run["counts"]),
                   "message": run["message"], "items": items})
+
+
+# ── Jellyfin's other images: Backdrop, Logo, Thumb ──────────────────────────
+
+@router.put("/title/{jf_id}/art/{kind}")
+async def set_art(jf_id: str, kind: str, request: Request):
+    """Body {mode: auto|pinned|keep, path, crop}."""
+    from . import artwork
+    row, body = _item(jf_id), await _body(request)
+    key = rules.title_key(row)
+    path = str(body.get("path") or "")
+    try:
+        if path and not path.startswith("jf-chapter:"):
+            _validator(key)(path)
+        artwork.set_choice(key, kind, str(body.get("mode") or "auto"), path, rules.clean_crop(body.get("crop")))
+    except ValueError as exc:
+        _bad(exc)
+    return _json(_title_payload(row))
+
+
+@router.get("/preview-art/{jf_id}/{kind}")
+async def preview_art(jf_id: str, kind: str, mode: str | None = None, path: str = "", crop: str = ""):
+    """What Studio would send as this item's Backdrop / Logo / Thumb (the saved
+    choice, or an unsaved one given as mode/path/crop)."""
+    from . import artwork
+    if kind not in artwork.KINDS:
+        raise HTTPException(status_code=400, detail="Unknown image type")
+    row = _item(jf_id)
+    draft = {"mode": mode, "path": path, "crop": crop} if mode else None
+    try:
+        res = await artwork.resolve(row, kind, draft=draft)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Nothing to send: Jellyfin's stays")
+    data, ctype = res
+    return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=600"})
+
+
+@router.get("/title/{jf_id}/frames")
+async def frames(jf_id: str):
+    """Frames from your own files: the chapter images Jellyfin extracted (a
+    film's, or a show's first episodes')."""
+    row = _item(jf_id)
+    jf = engine.shared_client()
+    targets = [row["jf_id"]]
+    if row["jf_type"] == "Series":
+        try:
+            eps = [d async for d in jf._paged(f"/Shows/{row['jf_id']}/Episodes", Fields="Chapters")]
+        except Exception:
+            eps = []
+        targets = [e["Id"] for e in eps[:6]]
+    out = []
+    for item_id in targets:
+        try:
+            data = await jf._get("/Items", Ids=item_id, Fields="Chapters")
+        except Exception:
+            continue
+        for it in data.get("Items") or []:
+            for i, ch in enumerate(it.get("Chapters") or []):
+                if ch.get("ImageTag"):
+                    secs = int((ch.get("StartPositionTicks") or 0) / 10_000_000)
+                    out.append({"path": f"jf-chapter:{it['Id']}:{i}", "provider": "frame", "language": None,
+                                "thumb": f"/studio/api/thumb/{it['Id']}?type=Chapter/{i}&h=300&tag={ch['ImageTag']}",
+                                "name": f"{it.get('Name', '')[:30]} · {secs // 60}:{secs % 60:02d}"})
+    return _json({"frames": out[:120]})
+
+
+@router.post("/title/{jf_id}/frames/import")
+async def import_frame(jf_id: str, request: Request):
+    """A frame into your images (as a backdrop), so it can be framed into a
+    poster, pinned or rotated like any image."""
+    from . import artwork, uploads
+    row, body = _item(jf_id), await _body(request)
+    path = str(body.get("path") or "")
+    if not path.startswith("jf-chapter:"):
+        raise HTTPException(status_code=400, detail="Not a frame")
+    try:
+        data = await artwork.fetch(path)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    stored = await _store(data, "backdrop")
+    key = rules.title_key(row)
+    rules.ensure_title(key, row["name"])
+    return _json({"path": stored, "upload": uploads.add(key, "backdrop", stored, str(body.get("name") or "Frame")[:80])})
 
 
 # ── Bulk actions (the Library's selection) ──────────────────────────────────
