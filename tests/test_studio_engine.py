@@ -245,6 +245,31 @@ class TheatreTests(EngineTests.__bases__[0]):
         row = db.query_one("SELECT * FROM items WHERE jf_id = 't1'")
         self.assertEqual(rules.title_key(row), "stage:42")   # both recordings share one set of rules
 
+    def test_show_with_no_art_is_skipped_not_an_error(self):
+        prefs.set("stagemedia_key", "sm")
+
+        async def no_art(row, style, params, resolution):
+            raise self.stage.NoArt("StageMedia has no poster for this show yet")
+        self.stage.render = no_art
+        self.assertEqual(self.sync(), {"skipped": 2})
+        self.assertEqual(self.jf.uploads, [])
+        self.assertNotIn(engine.ERROR, {r["status"] for r in db.query("SELECT status FROM items")})
+
+    def test_empty_stagemedia_answer_means_no_posters(self):
+        prefs.set("stagemedia_key", "sm")
+        real = httpx.AsyncClient
+
+        class Fake(real):
+            def __init__(self, *a, **kw):
+                kw["transport"] = httpx.MockTransport(
+                    lambda r: httpx.Response(400, json={"posters": [], "performers": [], "error": "No actors"}))
+                super().__init__(*a, **kw)
+        self.stage.httpx.AsyncClient = Fake
+        try:
+            self.assertEqual(asyncio.run(self.stage.posters("9", force=True)), [])
+        finally:
+            self.stage.httpx.AsyncClient = real
+
     def test_show_name(self):
         self.assertEqual(self.stage.show_name("Hadestown - Broadway, 09-02-2024 - x"), "Hadestown")
         self.assertEqual(self.stage.show_name("Evita"), "Evita")

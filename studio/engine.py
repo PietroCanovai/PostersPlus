@@ -330,7 +330,13 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
             params = await seasons.params_for(row, params)
         if is_stage(row):
             from . import stage
-            image, ctype = await stage.render(row, style, params, resolution)
+            try:
+                image, ctype = await stage.render(row, style, params, resolution)
+            except stage.NoArt as exc:
+                if row["status"] == ERROR:
+                    db.execute("UPDATE items SET status = ?, last_error = NULL WHERE jf_id = ?", (NEW, jf_id))
+                db.log_run_item(run_id, jf_id, name, "skipped", str(exc))
+                return "skipped"
         else:
             image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
                                                          access_key=access_key, extra=params))

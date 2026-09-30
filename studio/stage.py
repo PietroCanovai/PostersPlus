@@ -37,6 +37,11 @@ class StageError(Exception):
     pass
 
 
+class NoArt(StageError):
+    """StageMedia has nothing for this show and you haven't uploaded anything:
+    the run skips it and leaves Jellyfin's poster alone."""
+
+
 def key() -> str:
     return prefs.get("stagemedia_key") or ""
 
@@ -81,12 +86,15 @@ async def posters(show_id: str, *, force: bool = False) -> list[str]:
         raise StageError(f"Can't reach StageMedia ({type(exc).__name__})")
     if r.status_code in (401, 403):
         raise StageError("StageMedia rejected the API key")
-    if r.status_code != 200:
-        raise StageError(f"StageMedia answered HTTP {r.status_code}")
     try:
-        found = [p for p in (r.json().get("posters") or []) if isinstance(p, str) and valid_poster(p)][:60]
+        data = r.json()
     except ValueError:
-        raise StageError("StageMedia sent something that isn't JSON")
+        data = None
+    # A show StageMedia has no artwork for answers 400 {"posters": [], "error": "No actors"}:
+    # that is "nothing yet", not a failure.
+    if not isinstance(data, dict) or "posters" not in data:
+        raise StageError(f"StageMedia answered HTTP {r.status_code}")
+    found = [p for p in (data.get("posters") or []) if isinstance(p, str) and valid_poster(p)][:60]
     _lists[show_id] = (time.time(), found)
     return found
 
@@ -158,7 +166,7 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
     if not poster:
         found = await posters(row["stage_show_id"])
         if not found:
-            raise StageError("StageMedia has no poster for this show yet; upload one in the editor")
+            raise NoArt("StageMedia has no poster for this show yet; upload one in the editor")
         poster = found[0]
     data = await image_bytes(poster)
     cfg = main.build_request_config(merged)
