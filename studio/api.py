@@ -302,15 +302,17 @@ async def scan():
 # ── Jellyfin thumbnails (the browser never sees the API key) ────────────────
 
 @api.get("/thumb/{item_id}")
-async def thumb(item_id: str, h: int = 360):
+async def thumb(item_id: str, h: int = 360, tag: str = ""):
+    """Jellyfin's current poster for an item.  With *tag* (its ImageTags.Primary)
+    in the URL a new poster is a new URL, so the browser may keep this a week."""
     if not item_id.isalnum() or len(item_id) > 64:
         raise HTTPException(status_code=400, detail="Bad item id")
     try:
-        async with engine.jellyfin_client() as jf:
-            data, ctype = await jf.primary_image(item_id, max(90, min(h, 900)))
+        data, ctype = await engine.shared_client().primary_image(item_id, max(90, min(h, 900)))
     except JellyfinError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=300"})
+    return Response(data, media_type=ctype,
+                    headers={"Cache-Control": f"private, max-age={604800 if tag else 300}"})
 
 
 router.include_router(api)

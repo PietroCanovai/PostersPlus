@@ -960,6 +960,7 @@ from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
 import tvdb
 import anime
 import art_overrides
+import studio.hooks as _studio_hooks  # fork hook: Studio's per-title art/colour params
 import reports
 import presets
 import custom_fonts
@@ -1936,6 +1937,17 @@ class RequestConfig:
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
     rating_text_color: tuple[int, int, int] | None = None
     sash_text_color:   tuple[int, int, int] | None = None
+    # --- Fork (Studio, studio/hooks.py): explicit per-title art and colours --
+    art_poster:        str   = ""     # poster/backdrop path (TMDB, fanart/TVDB URL, custom:…)
+    art_crop:          str   = ""     # "x,y,zoom" 2:3 window on art_poster (a backdrop)
+    art_original:      bool  = False  # art_poster carries its own title: no logo on it
+    art_logo:          str   = ""     # logo path, or "text" for the title as text
+    art_exclude:       tuple = ()     # posters/backdrops never to pick automatically
+    art_logo_exclude:  tuple = ()     # logos never to pick automatically
+    tint_color:        tuple[int, int, int] | None = None   # replaces the frosted-tint sample
+    fade_color:        tuple[int, int, int] | None = None   # colour of a tinted vignette
+    logo_color:        tuple[int, int, int] | None = None   # recolour the logo
+    logo_color_mode:   str   = "solid"                      # "solid" | "tint"
 
 
 # Settings the landscape renderer shares with portrait but wants set
@@ -2286,7 +2298,11 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
                               "rating_badge_kinds": "", "rating_badge_max": 0,
                               "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": "",
-                              "label_font": fonts.DEFAULT_LABEL_FONT}
+                              "label_font": fonts.DEFAULT_LABEL_FONT,
+                              # Fork (Studio) fields: absent at their defaults.
+                              "art_poster": "", "art_crop": "", "art_original": False, "art_logo": "",
+                              "art_exclude": (), "art_logo_exclude": (), "tint_color": None,
+                              "fade_color": None, "logo_color": None, "logo_color_mode": "solid"}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2665,6 +2681,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
     cfg.sash_text_color      = _parse_hex_color(params.get("sash_text_color"))
+    _studio_hooks.apply_params(cfg, params, _parse_hex_color)  # fork hook
 
     return cfg
 
@@ -3747,6 +3764,8 @@ def _build_poster(
     cinema_run: "graphic_badges.CinemaRun | None" = None,   # the cinema badge's facts
 ) -> Image.Image:
 
+    if logo is not None and cfg.logo_color is not None:  # fork hook (Studio): recoloured logo
+        logo = _studio_hooks.recolor_logo(logo, cfg.logo_color, cfg.logo_color_mode)
     width, height = image.size
     # The cinema disc rides with the logos into row_items.  A frosted one
     # takes the frost colour, which isn't sampled yet: it is laid out as the
@@ -3976,7 +3995,11 @@ def _build_poster(
     if _tg_preset is not None:
         # Black by default; a poster-coloured vignette swaps in a tint field
         # sampled from the art under this band, over frosted and levelled art.
-        if _top_tinted:
+        if cfg.fade_color is not None:  # fork hook (Studio): a chosen fade colour
+            top_tinted = Image.new("RGBA", (width, top_height), (*cfg.fade_color, 0))
+            top_tinted.putalpha(top_overlay)
+            image.paste(top_tinted, (0, 0), mask=top_tinted)
+        elif _top_tinted:
             _t_tint, _t_conf, _t_second, _t_cover = _fog_colour
             _vignette_frost_band(
                 image, (0, 0, width, top_height), top_overlay, cfg.vignette_color_blur,
@@ -4004,7 +4027,11 @@ def _build_poster(
     # that the user can pick the level themselves; if you'd like the lighter
     # fade those modes used to get for free, pick "medium".
     if _bg_preset is not None:
-        if _bottom_tinted:
+        if cfg.fade_color is not None:  # fork hook (Studio): a chosen fade colour
+            bottom_tinted = Image.new("RGBA", (width, bottom_height), (*cfg.fade_color, 0))
+            bottom_tinted.putalpha(bottom_overlay)
+            image.paste(bottom_tinted, (0, bottom_start), mask=bottom_tinted)
+        elif _bottom_tinted:
             _b_tint, _b_conf, _b_second, _b_cover = _fog_colour
             _vignette_frost_band(
                 image, (0, bottom_start, width, height), bottom_overlay, cfg.vignette_color_blur,
@@ -4361,6 +4388,8 @@ def _build_poster(
         if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted
             or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))) else None
     )
+    if _frost_tint is not None and cfg.tint_color is not None:  # fork hook (Studio): chosen colour
+        _frost_tint = tuple(float(c) for c in cfg.tint_color)
     # A tinted vignette and a frosted notch sample the same artwork but answer
     # different questions — the vignette asks what the band's own stretch of art is
     # made of, the notch what colour the poster is — so they can land some way
@@ -9287,6 +9316,11 @@ async def get_poster(
                 poster_path = random.choice(_pool)
                 logger.info(f"Random textless poster for {tmdb_id}: {poster_path}")
 
+        # Fork hook (Studio): art the user marked "Never" is skipped by the automatic pick.
+        if rcfg.art_exclude and not using_anime_art and not use_cinemeta:
+            poster_path, is_textless, backdrop_path = _studio_hooks.skip_excluded(
+                rcfg.art_exclude, poster_path, is_textless, backdrop_path, tmdb_data)
+
         _use_backdrop = bool(backdrop_path) and (poster_path is None or not is_textless)
         if _use_backdrop:
             logger.info(f"No textless poster for {tmdb_id} — using backdrop crop as portrait fallback")
@@ -9400,10 +9434,14 @@ async def get_poster(
                 language_order=_poster_language_order,
                 has_language=lambda language: bool(_plangs.get(language)),
             )
+        # Fork hook (Studio): the art a Studio look names beats everything above.
+        _studio_art = None if _is_landscape else _studio_hooks.poster_override(rcfg)
+        if _studio_art is not None:
+            _art_override = _studio_art
         if _art_override is not None:
             poster_path       = _art_override.path
             _use_backdrop     = False
-            _use_original_art = rcfg.use_original_art
+            _use_original_art = rcfg.art_original if _studio_art is not None else rcfg.use_original_art
             is_textless       = not _use_original_art
             logger.info(f"Operator art for {tmdb_id}: {poster_path}"
                         f"{' (original art)' if _use_original_art else ''}")
@@ -9877,6 +9915,20 @@ async def get_poster(
         _tvdb_logo_pri = _cfg.TVDB_LOGO_PRIORITY if tvdb.tvdb_enabled() else 3
 
         async def _resolve_logo():
+            nonlocal logos
+            # Fork hook (Studio): a look's own logo, the title as text, or the
+            # automatic pick without the logos marked "Never".
+            if rcfg.art_logo == "text":
+                return None
+            if rcfg.art_logo:
+                try:
+                    _chosen = await fetch_logo_image(client, rcfg.art_logo)
+                    if _chosen is not None:
+                        return _chosen
+                except Exception as exc:
+                    logger.warning(f"Studio logo for {tmdb_id} failed ({exc}) — using the usual pick")
+            if rcfg.art_logo_exclude:
+                logos = _studio_hooks.without_logos(logos, rcfg.art_logo_exclude)
             _logo_override = art_overrides.pick_logo(
                 _title_art,
                 logo_language_steps(

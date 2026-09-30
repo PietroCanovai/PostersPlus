@@ -32,7 +32,11 @@ Fork of [UmbraProjects/PostersPlus](https://github.com/UmbraProjects/PostersPlus
 - `engine.py`: scan → render each managed item through `/poster` on loopback (`127.0.0.1:8000`) → upload only if sha256 ≠ `pushed_hash`, or Jellyfin's `ImageTags.Primary` ≠ `pushed_tag` (revert → put back). `quality=` is only sent when the style draws quality (`main._uses_quality`), so renders stay cacheable. Scheduler: 04:00 local (`TZ`), catches up after downtime; enabling it after today's time waits for tomorrow.
 - `auth.py`: ADMIN_KEY via `admin._authorise` (shared lockout) → signed HttpOnly SameSite=Strict cookie (30 days, path `/studio`); non-GET calls need `X-Studio: 1`.
 - `api.py`: `/studio` page, `/studio/api/*` (login, session, status, runs, items, run/cancel, settings, jellyfin/test, libraries, scan, thumb proxy, version + GitHub update check).
-- `web/`: Preact + htm vendored (`vendor/preact-htm.js`), Inter bundled (`fonts/`), no build step, no external requests. Hash routes: `#activity`, `#run/<id>`, `#settings`.
+- `rules.py`: per-title rules. A *title* (`title_key`: `tmdb:movie:<id>`, `tmdb:tv:<id>`, or `jf:<id>` when unmatched) is shared by every Jellyfin copy of it. Modes `auto` / `pinned` (one look) / `rotation` (looks with `in_rotation`). A *look* = poster (+crop, +`own_title`) + logo (`''` auto, `text`, or a path) + colours + style. `never` lists (poster/logo). `resolve()` → render params: title style < look params; Never → `art_exclude`/`art_logo_exclude`. Rotation = shuffled deck, no repeats per cycle, advanced only by the nightly run (`advance=True`), reshuffled when the pool changes, never opening on the look just shown.
+- `hooks.py`: the renderer side (imported by main.py): parses/validates the new `/poster` params with the Artwork tab's allow-list (`art_overrides.provider_of`) and implements them. Params: `art_poster`, `art_crop`, `art_original`, `art_logo`, `art_exclude`, `art_logo_exclude`, `tint_color`, `fade_color`, `logo_color` (+`logo_color_mode`). Invalid values are ignored, like the rest of the URL parser.
+- `candidates.py`: TMDB/Fanart/TVDB posters, backdrops, logos for the editor (main's Artwork-tab helpers), cached 30 min.
+- `api_library.py`: `/studio/api/library`, `title/<jf_id>` (+`/candidates`, `/looks`, `/never`, `/image`, `/image-link`, `/push`, `/reset`), `looks/<id>`, `preview/<jf_id>` (loopback render: today's look, a saved `look_id`, or an unsaved `look` JSON), `tmdb/search`, `items/<jf_id>/match`.
+- `web/`: Preact + htm vendored (`vendor/preact-htm.js`), Inter bundled (`fonts/`), no build step. Candidate thumbnails load from the providers' CDNs (TMDB, fanart.tv, TVDB); everything else is local. Modules: `common.js` (api, toast, nav list), `library.js`, `editor.js`, `app.js` (shell, Activity, Settings). Hash routes: `#library` (home), `#title/<jf_id>[?review]`, `#activity`, `#run/<id>`, `#settings`. Static files are served `Cache-Control: no-cache`.
 
 ## Tests
 
@@ -47,6 +51,7 @@ Every fork change to an upstream file:
 - `.github/workflows/pr-base-guard.yml`: deleted (upstream's release-branch guard).
 - `dockerfile`: `GIT_COMMIT`/`BUILD_DATE` args → `STUDIO_*` env.
 - `main.py`: after `app.include_router(_admin.router)`: `import studio as _studio; _studio.install(app)`. In `lifespan`: `_studio.start()` before `yield`, `await _studio.stop()` right after.
+- `main.py` render hooks (all marked `fork hook`): `import studio.hooks as _studio_hooks` (next to `import art_overrides`); `RequestConfig` fork fields (art_*, tint/fade/logo colours) + their defaults in `_SIGNATURE_OMIT_AT_DEFAULT`; `_studio_hooks.apply_params` at the end of `build_request_config`; `skip_excluded` before `_use_backdrop` in `get_poster`; `poster_override` at the operator-art block; the logo override/exclude at the top of `_resolve_logo`; `tint_color` after the `_frost_tint` sample in `_build_poster`; `fade_color` at the top/bottom gradient branches; `recolor_logo` at the top of `_build_poster`.
 
 ## Upstream merge
 

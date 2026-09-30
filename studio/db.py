@@ -69,6 +69,40 @@ CREATE TABLE IF NOT EXISTS run_items (
     at      REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS run_items_run ON run_items(run_id);
+CREATE TABLE IF NOT EXISTS titles (
+    title_key       TEXT PRIMARY KEY,
+    name            TEXT NOT NULL DEFAULT '',
+    mode            TEXT NOT NULL DEFAULT 'auto',
+    pinned_look_id  INTEGER,
+    hands_off       INTEGER NOT NULL DEFAULT 0,
+    style           TEXT NOT NULL DEFAULT '{}',
+    deck            TEXT NOT NULL DEFAULT '[]',
+    deck_pos        INTEGER NOT NULL DEFAULT 0,
+    current_look_id INTEGER,
+    rotated_on      TEXT,
+    reviewed_at     REAL,
+    updated_at      REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS looks (
+    look_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    title_key   TEXT NOT NULL,
+    poster      TEXT NOT NULL DEFAULT '',
+    crop        TEXT NOT NULL DEFAULT '',
+    own_title   INTEGER NOT NULL DEFAULT 0,
+    logo        TEXT NOT NULL DEFAULT '',
+    colors      TEXT NOT NULL DEFAULT '{}',
+    style       TEXT NOT NULL DEFAULT '{}',
+    in_rotation INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS looks_title ON looks(title_key);
+CREATE TABLE IF NOT EXISTS never (
+    title_key TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    ref       TEXT NOT NULL,
+    added_at  REAL NOT NULL,
+    PRIMARY KEY (title_key, kind, ref)
+);
 """
 
 # Runs kept for the Activity page; older ones and their items are dropped.

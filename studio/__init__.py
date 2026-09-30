@@ -21,9 +21,21 @@ _task: asyncio.Task | None = None
 _lock_fh = None
 
 
+class _RevalidatedStatic(StaticFiles):
+    """Studio's page files, always revalidated (a cheap 304) so an update is
+    picked up at the next load instead of whenever the browser's cache decides."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 def install(app) -> None:
+    from .api_library import router as library_router
     app.include_router(router)
-    app.mount("/studio/static", StaticFiles(directory=WEB_DIR), name="studio-static")
+    app.include_router(library_router)
+    app.mount("/studio/static", _RevalidatedStatic(directory=WEB_DIR), name="studio-static")
 
 
 def _take_lock() -> bool:

@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl, urlencode
 
 import httpx
 
-from . import db, prefs
+from . import db, prefs, rules
 from .jellyfin import Client, Item, JellyfinError, Library, quality_tokens
 
 logger = logging.getLogger("studio")
@@ -53,6 +53,19 @@ _run_lock = asyncio.Lock()
 
 def jellyfin_client(**kw) -> Client:
     return Client(prefs.get("jellyfin_url"), prefs.get("jellyfin_api_key"), **kw)
+
+
+_shared: tuple[tuple[str, str], Client] | None = None
+
+
+def shared_client() -> Client:
+    """One long-lived client for the many small calls the UI makes (thumbnails),
+    replaced when the connection settings change.  Never closed by callers."""
+    global _shared
+    conf = (prefs.get("jellyfin_url"), prefs.get("jellyfin_api_key"))
+    if _shared is None or _shared[0] != conf:
+        _shared = (conf, Client(*conf))
+    return _shared[1]
 
 
 # ── Scan ────────────────────────────────────────────────────────────────────
@@ -131,8 +144,11 @@ def _style_uses_quality(style: str) -> bool:
         return True
 
 
-def poster_url(row: dict, style: str, *, resolution: int, with_quality: bool, access_key: str = "") -> str:
+def poster_url(row: dict, style: str, *, resolution: int, with_quality: bool, access_key: str = "",
+               extra: dict | None = None) -> str:
+    """*extra* is the title's own parameters (rules.resolve); they win over the style."""
     params = dict(parse_qsl(style, keep_blank_values=True))
+    params.update(extra or {})
     tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
     if tmdb_id:
         params["tmdb_id"] = tmdb_id
@@ -232,7 +248,8 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                                 return
                             progress.current = row["name"]
                             action = await _process(row, jf, http, style, resolution, with_quality,
-                                                    access_key, dry_run, force, run_id)
+                                                    access_key, dry_run, force, run_id,
+                                                    advance=trigger == "schedule")
                             counts[action] = counts.get(action, 0) + 1
                             progress.done += 1
                             progress.counts = dict(counts)
@@ -252,18 +269,23 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
         return run_id
 
 
-async def _process(row, jf, http, style, resolution, with_quality, access_key, dry_run, force, run_id) -> str:
+async def _process(row, jf, http, style, resolution, with_quality, access_key, dry_run, force, run_id,
+                   advance: bool = False) -> str:
     name, jf_id = row["name"], row["jf_id"]
     if row["status"] in (NEEDS_MATCH, LEFT_ALONE):
         db.log_run_item(run_id, jf_id, name, "skipped",
                         "No TMDB match" if row["status"] == NEEDS_MATCH else "Left alone (no match)")
         return "skipped"
     try:
+        res = rules.resolve(rules.title_key(row), advance=advance)
+        if res.skip:
+            db.log_run_item(run_id, jf_id, name, "skipped", res.reason)
+            return "skipped"
         if with_quality and row["jf_type"] == "Series" and not row.get("quality"):
             ep = await jf.representative_episode(jf_id)
             row["quality"] = ",".join(quality_tokens(ep)) if ep else ""
-        image, ctype = await render(http, poster_url(row, style, resolution=resolution,
-                                                     with_quality=with_quality, access_key=access_key))
+        image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
+                                                     access_key=access_key, extra=res.params))
         image_hash = hashlib.sha256(image).hexdigest()
         decision = decide(row, image_hash, force=force)
         if decision.action == "unchanged":

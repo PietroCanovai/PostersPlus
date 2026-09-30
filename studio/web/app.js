@@ -1,52 +1,12 @@
 import { html, render, useState, useEffect, useRef, useCallback } from './vendor/preact-htm.js';
+import { api, toast, Toast, n, ago, when, duration } from './common.js';
+import { Library } from './library.js';
+import { Editor } from './editor.js';
 
-// ── API ──────────────────────────────────────────────────────────────────────
-async function api(path, { method = 'GET', body } = {}) {
-  const opts = { method, headers: { 'X-Studio': '1' }, credentials: 'same-origin' };
-  if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
-  const resp = await fetch('/studio/api' + path, opts);
-  let data = null;
-  try { data = await resp.json(); } catch (_) { /* empty body */ }
-  if (resp.status === 401) { window.dispatchEvent(new Event('studio:logout')); }
-  if (!resp.ok) throw new Error((data && data.detail) || `HTTP ${resp.status}`);
-  return data;
-}
-
-// ── Small helpers ────────────────────────────────────────────────────────────
-let toastTimer;
-function toast(msg, bad = false) {
-  window.dispatchEvent(new CustomEvent('studio:toast', { detail: { msg, bad } }));
-}
-function Toast() {
-  const [t, setT] = useState(null);
-  useEffect(() => {
-    const on = e => { setT(e.detail); clearTimeout(toastTimer); toastTimer = setTimeout(() => setT(null), 3500); };
-    window.addEventListener('studio:toast', on);
-    return () => window.removeEventListener('studio:toast', on);
-  }, []);
-  return t ? html`<div class="toast ${t.bad ? 'bad' : ''}" role="status">${t.msg}</div>` : null;
-}
-const n = x => (x || 0).toLocaleString();
-function ago(ts) {
-  if (!ts) return 'never';
-  const s = Math.max(0, Date.now() / 1000 - ts);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
-function when(ts) {
-  return new Date(ts * 1000).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-function duration(a, b) {
-  if (!a || !b) return '';
-  const s = Math.round(b - a);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-}
 function useHash() {
-  const [h, setH] = useState(location.hash.slice(1) || 'activity');
+  const [h, setH] = useState(location.hash.slice(1) || 'library');
   useEffect(() => {
-    const on = () => setH(location.hash.slice(1) || 'activity');
+    const on = () => { setH(location.hash.slice(1) || 'library'); window.scrollTo(0, 0); };
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
@@ -151,8 +111,8 @@ function Problems() {
   if (!rows || !rows.length) return null;
   return html`<div class="card">
     <h2>Needs attention</h2>
-    <p class="sub">Titles Studio couldn't do. Matching titles by hand comes with the Library page.</p>
-    <div class="list">${rows.slice(0, 50).map(r => html`<div class="list-row">
+    <p class="sub">Titles Studio couldn't do. Open one to fix it.</p>
+    <div class="list">${rows.slice(0, 50).map(r => html`<div class="list-row click" onClick=${() => { location.hash = `title/${r.jf_id}`; }}>
       <div class="grow"><div class="name">${r.name}${r.year ? ` (${r.year})` : ''}</div>
         <div class="meta">${r.library_name}${r.last_error ? ` · ${r.last_error}` : ''}</div></div>
       <span class="chip ${STATUS_LABEL[r.status][1]}">${STATUS_LABEL[r.status][0]}</span>
@@ -381,13 +341,14 @@ function App() {
   if (!session.logged_in) return html`<${Login} enabled=${session.enabled} onIn=${checkSession} /><${Toast} />`;
 
   async function logout() { await api('/logout', { method: 'POST', body: {} }).catch(() => {}); setSession({ ...session, logged_in: false }); }
-  const [page, arg] = route.split('/');
+  const [path, query] = route.split('?');
+  const [page, arg] = path.split('/');
   const problems = status ? (status.items.error || 0) : 0;
-  const nav = (id, label, extra) => html`<a href="#${id}" class=${page === id || (id === 'activity' && page === 'run') ? 'active' : ''}>${label}${extra}</a>`;
+  const nav = (id, label, extra) => html`<a href="#${id}" class=${page === id || (id === 'activity' && page === 'run') || (id === 'library' && page === 'title') ? 'active' : ''}>${label}${extra}</a>`;
   return html`<div class="shell">
     <nav class="nav">
       <div class="brand">Posters+ <span>Studio</span></div>
-      <a class="soon" title="Coming in the next version">Library <span class="chip">soon</span></a>
+      ${nav('library', 'Library', status && status.items.needs_match ? html`<span class="chip warn">${status.items.needs_match}</span>` : '')}
       ${nav('activity', 'Activity', problems ? html`<span class="chip bad">${problems}</span>` : (status && status.progress.running ? html`<span class="chip info">running</span>` : ''))}
       ${nav('settings', 'Settings', '')}
       <div class="spacer"></div>
@@ -396,7 +357,10 @@ function App() {
     <main class="main">
       ${page === 'settings' ? html`<${Settings} onLogout=${logout} />`
         : page === 'run' ? html`<${RunDetail} id=${arg} />`
-        : html`<${Activity} status=${status} refresh=${refresh} />`}
+        : page === 'activity' ? html`<${Activity} status=${status} refresh=${refresh} />`
+        : page === 'title' ? html`<${Editor} id=${arg} review=${query === 'review'} key=${arg} />`
+        : status && !status.configured ? html`<${Activity} status=${status} refresh=${refresh} />`
+        : html`<${Library} />`}
     </main>
     <${Toast} />
   </div>`;
