@@ -158,22 +158,27 @@ def _upsert_season(s: dict, series: Item, lib: Library, policy: dict, now: float
     """A season row: the show's ids, its own Jellyfin id, image tag and number."""
     name = f"{series.name} — {s['name'] or ('Specials' if s['number'] == 0 else 'Season ' + str(s['number']))}"
     old = db.query_one("SELECT * FROM items WHERE jf_id = ?", (s["id"],))
+    show = db.query_one("SELECT manual_tmdb_id FROM items WHERE jf_id = ?", (series.id,)) or {}
     row = dict(old or {})
-    row.update({"jf_id": s["id"], "jf_type": "Season", "tmdb_id": series.tmdb_id, "imdb_id": None})
+    # A season follows its show's match, the one you set by hand included.
+    row.update({"jf_id": s["id"], "jf_type": "Season", "tmdb_id": series.tmdb_id, "imdb_id": None,
+                "manual_tmdb_id": show.get("manual_tmdb_id")})
     status = _item_status(row, policy)
+    if status == NEEDS_MATCH:
+        status = LEFT_ALONE   # the show is what needs matching, not each of its seasons
     if old is None:
         db.execute(
-            "INSERT INTO items (jf_id, library_id, library_name, jf_type, name, year, tmdb_id, tvdb_id, "
-            "jf_image_tag, status, parent_jf_id, season_number, added_at, seen_at) "
-            "VALUES (?, ?, ?, 'Season', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (s["id"], lib.id, lib.name, name, series.year, series.tmdb_id, series.tvdb_id, s["image_tag"], status,
-             series.id, s["number"], now, now))
+            "INSERT INTO items (jf_id, library_id, library_name, jf_type, name, year, tmdb_id, manual_tmdb_id, "
+            "tvdb_id, jf_image_tag, status, parent_jf_id, season_number, added_at, seen_at) "
+            "VALUES (?, ?, ?, 'Season', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (s["id"], lib.id, lib.name, name, series.year, series.tmdb_id, row["manual_tmdb_id"], series.tvdb_id,
+             s["image_tag"], status, series.id, s["number"], now, now))
     else:
         db.execute(
-            "UPDATE items SET library_id=?, library_name=?, name=?, year=?, tmdb_id=?, tvdb_id=?, jf_image_tag=?, "
-            "status=?, parent_jf_id=?, season_number=?, present=1, seen_at=? WHERE jf_id=?",
-            (lib.id, lib.name, name, series.year, series.tmdb_id, series.tvdb_id, s["image_tag"], status,
-             series.id, s["number"], now, s["id"]))
+            "UPDATE items SET library_id=?, library_name=?, name=?, year=?, tmdb_id=?, manual_tmdb_id=?, tvdb_id=?, "
+            "jf_image_tag=?, status=?, parent_jf_id=?, season_number=?, present=1, seen_at=? WHERE jf_id=?",
+            (lib.id, lib.name, name, series.year, series.tmdb_id, row["manual_tmdb_id"], series.tvdb_id,
+             s["image_tag"], status, series.id, s["number"], now, s["id"]))
 
 
 # ── Render ──────────────────────────────────────────────────────────────────

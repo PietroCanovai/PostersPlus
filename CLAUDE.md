@@ -62,6 +62,7 @@ Every fork change to an upstream file:
 - `.github/workflows/tests.yml`: runs on `studio`.
 - `.github/workflows/pr-base-guard.yml`: deleted (upstream's release-branch guard).
 - `dockerfile`: `GIT_COMMIT`/`BUILD_DATE` args → `STUDIO_*` env.
+- `tests/test_mdblist_backoff.py`: GC paused during the pacing timing test (a GC pause from extra test modules shrank a gap below tolerance).
 - `main.py`: after `app.include_router(_admin.router)`: `import studio as _studio; _studio.install(app)`. In `lifespan`: `_studio.start()` before `yield`, `await _studio.stop()` right after.
 - `main.py` render hooks (all marked `fork hook`): `import studio.hooks as _studio_hooks` (next to `import art_overrides`); `RequestConfig` fork fields (art_*, tint/fade/logo colours) + their defaults in `_SIGNATURE_OMIT_AT_DEFAULT`; `_studio_hooks.apply_params` at the end of `build_request_config`; `skip_excluded` before `_use_backdrop` in `get_poster`; `poster_override` at the operator-art block; the logo override/exclude at the top of `_resolve_logo`; `tint_color` after the `_frost_tint` sample in `_build_poster` (and `_frost_ref = "match"` so a chosen colour isn't pastelled); `notch_text_color` at the notch/sash calls (`force_text=`, a new `awards.draw_award_badge` kwarg that makes the frosted style honour `text_color`); `fade_color` at the top/bottom gradient branches; `recolor_logo` at the top of `_build_poster`.
 

@@ -327,6 +327,18 @@ class SeasonTests(EngineTests):
         params = asyncio.run(self.seasons.params_for(row, rules.resolve("tmdb:tv:70523:s1").params))
         self.assertEqual((params["art_poster"], params["art_original"]), ("/season1-en.jpg", "1"))
 
+    def test_unmatched_show_seasons_are_left_alone_until_the_show_is_matched(self):
+        prefs.set("seasons_enabled", True)
+        self.jf.find("s1")["ProviderIds"] = {}
+        self.run_sync()
+        st = {r["jf_id"]: r["status"] for r in db.query("SELECT jf_id, status FROM items")}
+        self.assertEqual(st["s1"], engine.NEEDS_MATCH)                        # the show is flagged
+        self.assertEqual((st["s1-0"], st["s1-1"]), (engine.LEFT_ALONE,) * 2)  # its seasons aren't
+        db.execute("UPDATE items SET manual_tmdb_id = '70523', status = 'new' WHERE jf_id = 's1'")
+        self.run_sync()
+        row = db.query_one("SELECT * FROM items WHERE jf_id = 's1-1'")
+        self.assertEqual((row["manual_tmdb_id"], row["status"]), ("70523", engine.NEW))   # managed now
+
     def test_season_inherits_show_style_but_can_override(self):
         from studio import rules
         rules.set_title_style("tmdb:tv:70523", {"tint_color": "112233", "bottom_gradient": "low"})
