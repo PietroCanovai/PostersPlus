@@ -322,6 +322,40 @@ async def upload_image(jf_id: str, request: Request, kind: str = "poster", name:
     return _json({"path": path, "upload": uploads.add(key, kind, path, name)})
 
 
+@router.get("/textlogo/fonts")
+async def textlogo_fonts():
+    from . import textlogo
+    return _json({"fonts": textlogo.available(), "default": textlogo.DEFAULT_FONT})
+
+
+@router.get("/title/{jf_id}/textlogo")
+async def textlogo_preview(jf_id: str, request: Request, text: str = ""):
+    """A text logo as it would be saved (not stored)."""
+    from . import textlogo
+    _item(jf_id)
+    try:
+        data = await asyncio.to_thread(textlogo.render, text, **textlogo.options(dict(request.query_params)))
+    except ValueError as exc:
+        _bad(exc)
+    return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.post("/title/{jf_id}/textlogo")
+async def textlogo_save(jf_id: str, request: Request):
+    """Render a text logo and add it to the title's own logos."""
+    from . import textlogo, uploads
+    row, body = _item(jf_id), await _body(request)
+    text = str(body.get("text") or "")
+    try:
+        data = await asyncio.to_thread(textlogo.render, text, **textlogo.options(body))
+    except ValueError as exc:
+        _bad(exc)
+    path = await _store(data, "logo")
+    key = rules.title_key(row)
+    rules.ensure_title(key, row["name"])
+    return _json({"path": path, "upload": uploads.add(key, "logo", path, f"Text: {' '.join(text.split())[:60]}")})
+
+
 @router.post("/title/{jf_id}/image-link")
 async def image_link(jf_id: str, request: Request):
     from . import uploads

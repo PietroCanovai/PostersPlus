@@ -117,6 +117,58 @@ function SizeLine({ c, path, framed }) {
   return bits.length ? html`<div class="ed-size">${bits.join(' · ')}</div>` : null;
 }
 
+// A logo made from text: previewed live, saved into the title's own logos.
+let fontList = null;
+function TextLogoDialog({ id, initial, onSaved, onClose }) {
+  const [o, setO] = useState({ text: initial, font: 'bebas', color: 'ffffff', upper: false, outline: false, shadow: true, spacing: 0 });
+  const [fontsList, setFonts] = useState(fontList);
+  const [src, setSrc] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!fontList) api('/textlogo/fonts').then(d => { fontList = d.fonts; setFonts(d.fonts); }).catch(() => {}); }, []);
+  useEffect(() => {
+    const h = setTimeout(() => {
+      const q = new URLSearchParams({ ...o, upper: o.upper, outline: o.outline, shadow: o.shadow });
+      setSrc(o.text.trim() ? `/studio/api/title/${id}/textlogo?${q}` : '');
+    }, 250);
+    return () => clearTimeout(h);
+  }, [o]);
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const set = (k, v) => setO(x => ({ ...x, [k]: v }));
+  async function save(use) {
+    setBusy(true);
+    try { const r = await api(`/title/${id}/textlogo`, { method: 'POST', body: o }); onClose(); await onSaved(r.path, use); }
+    catch (ex) { toast(ex.message, true); }
+    setBusy(false);
+  }
+  return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="dialog" role="dialog" aria-label="Text logo">
+      <h2 style="margin-bottom:12px">Text logo</h2>
+      <div class="tl-preview">${src ? html`<img src=${src} alt="" />` : html`<span class="hint-sm">Type the text</span>`}</div>
+      <div class="tl-form">
+        <input type="text" maxlength="80" value=${o.text} onInput=${e => set('text', e.target.value)} aria-label="Text" />
+        <div class="row">
+          <select value=${o.font} onChange=${e => set('font', e.target.value)} aria-label="Font">
+            ${(fontsList || [{ id: 'bebas', name: 'Bebas Neue' }]).map(f => html`<option value=${f.id}>${f.name}</option>`)}</select>
+          <input type="color" value=${'#' + o.color} onInput=${e => set('color', e.target.value.slice(1))} aria-label="Colour" />
+        </div>
+        <div class="row tl-toggles">
+          ${[['upper', 'Capitals'], ['outline', 'Outline'], ['shadow', 'Shadow']].map(([k, l]) => html`<label class="own-check">
+            <input type="checkbox" checked=${o[k]} onChange=${e => set(k, e.target.checked)} /> ${l}</label>`)}
+          <label class="own-check">Spacing <input type="range" min="0" max="0.4" step="0.02" value=${o.spacing} onInput=${e => set('spacing', +e.target.value)} /></label>
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button onClick=${onClose}>Cancel</button>
+        <button onClick=${() => save(false)} disabled=${busy || !o.text.trim()}>Add</button>
+        <button class="primary" onClick=${() => save(true)} disabled=${busy || !o.text.trim()}>Use</button>
+      </div>
+    </div></div>`;
+}
+
 function MatchPanel({ t, onDone }) {
   const [q, setQ] = useState(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''));
   const [res, setRes] = useState(null);
@@ -180,6 +232,7 @@ export function Editor({ id, review }) {
   const [pick, setPick] = useState(null);           // colour param being eyedropped
   const [link, setLink] = useState('');
   const [notch, setNotch] = useState(null);
+  const [textLogo, setTextLogo] = useState(null);   // (path) => apply it here
   const saveTimer = useRef(null);
 
   const load = useCallback(async () => {
@@ -455,11 +508,12 @@ export function Editor({ id, review }) {
   const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
   const uploadKind = art === 'backdrops' || art === 'frames' ? 'backdrop' : 'poster';
 
-  const uploadRow = (k, sites = []) => html`<div class="own-row dropzone" ...${drop(k)}>
+  const uploadRow = (k, sites = [], onTextLogo = null) => html`<div class="own-row dropzone" ...${drop(k)}>
       <label class="btn">Upload<input type="file" multiple accept=${k === 'logo' ? 'image/png,image/webp' : 'image/png,image/jpeg,image/webp'} hidden
         onChange=${e => { upload(e.target.files, k); e.target.value = ''; }} /></label>
       <input type="url" placeholder=${k === 'logo' ? 'Logo link' : 'Image link'} value=${link} onInput=${e => setLink(e.target.value)} />
       <button onClick=${() => addLink(k)} disabled=${!link || busy}>Add</button>
+      ${k === 'logo' && onTextLogo && html`<button onClick=${onTextLogo} disabled=${busy}>Text logo</button>`}
       ${sites.map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
         href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
     </div>`;
@@ -496,7 +550,7 @@ export function Editor({ id, review }) {
       <button class=${editLook && !editLook.logo ? 'on' : ''} onClick=${() => useLogo('')} disabled=${busy}>Automatic</button>
       <button class=${editLook && editLook.logo === 'text' ? 'on' : ''} onClick=${() => useLogo('text')} disabled=${busy}>Title as text</button>
     </div>
-    ${uploadRow('logo')}
+    ${uploadRow('logo', [], () => setTextLogo(() => p => useLogo(p)))}
     ${!cands ? html`<div class="empty">Loading…</div>` : html`<div class="cands logos">${logos.map(c => {
       const isNever = never.logo.has(c.path), used = editLook && editLook.logo === c.path;
       const b = [];
@@ -573,8 +627,9 @@ export function Editor({ id, review }) {
       ${ch.mode === 'auto' && (t.stage ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
       ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
-      ${part === 'art' ? html`${uploadRow(k === 'logo' ? 'logo' : 'backdrop', k === 'logo' ? [] : FRAME_SITES)}${artGrid}`
-        : part === 'logo' ? html`${uploadRow('logo')}${logoGrid}`
+      ${part === 'art' ? html`${uploadRow(k === 'logo' ? 'logo' : 'backdrop', k === 'logo' ? [] : FRAME_SITES,
+          () => setTextLogo(() => p => setArtChoice('logo', { mode: 'pinned', path: p })))}${artGrid}`
+        : part === 'logo' ? html`${uploadRow('logo', [], () => setTextLogo(() => p => setArtChoice('thumb', { logo: p })))}${logoGrid}`
         : lib && html`<${StyleControls} values=${titleValues} inherited=${libEff} from="library"
           onSet=${(key, v) => setStyleKey(key, v, 'title')} groups=${THUMB_GROUPS} />`}`;
   }
@@ -652,5 +707,7 @@ export function Editor({ id, review }) {
         ${slot !== 'poster' && otherPane(slot)}
       </section>
     </div>
-    ${crop && html`<${CropDialog} ...${crop} onClose=${() => setCrop(null)} />`}`;
+    ${crop && html`<${CropDialog} ...${crop} onClose=${() => setCrop(null)} />`}
+    ${textLogo && html`<${TextLogoDialog} id=${id} initial=${(t.parent_item ? t.parent_item.name : t.item.name).replace(/\s*\(\d{4}\)\s*$/, '')}
+      onClose=${() => setTextLogo(null)} onSaved=${async (p, use) => { await refresh(); if (use) await textLogo(p); else toast('Added to your logos'); }} />`}`;
 }
