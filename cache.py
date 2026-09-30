@@ -487,7 +487,44 @@ def init_db() -> None:
     # addon, which serves the snapshot as a Stremio catalog.
     _add_column_if_missing(conn, "trending_cache", "details_json", "TEXT")
 
+    _clear_mdblist_wrong_type_misses(conn)
+
     conn.commit()
+
+
+_WRONG_TYPE_MISSES_DONE = "cleanup:mdblist-wrong-type-misses:v1"
+
+
+def _clear_mdblist_wrong_type_misses(conn: sqlite3.Connection) -> None:
+    """Once: forget the "MDBList doesn't know it" rating rows for IMDb ids,
+    and the posters drawn from them.
+
+    Until ratings.fetch_rating asked again as the other type, an IMDb id
+    MDBList was asked about under the wrong type (a series resolved to a
+    duplicate TMDB movie: Game of Thrones, Fleabag) cached no ratings for a
+    fortnight, and every poster of the title showed none. Such a row has no
+    ratings and no release date (MDBList's own date is all that fills it);
+    the few genuinely unknown titles among them are just asked about again.
+    """
+    if conn.execute("SELECT 1 FROM app_state WHERE key = ?",
+                    (_WRONG_TYPE_MISSES_DONE,)).fetchone():
+        return
+    ids = [r[0] for r in conn.execute(
+        "SELECT imdb_id FROM rating_cache WHERE ratings_json = '{}' "
+        "AND release_date IS NULL AND imdb_id LIKE 'tt%'"
+    )]
+    for imdb_id in ids:
+        conn.execute("DELETE FROM rating_cache WHERE imdb_id = ?", (imdb_id,))
+        # A composite key starts "<imdb id>:"; a range keeps it on the index.
+        conn.execute(
+            "DELETE FROM final_poster_cache WHERE cache_key >= ? AND cache_key < ?",
+            (f"{imdb_id}:", f"{imdb_id};"),
+        )
+    conn.execute("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)",
+                 (_WRONG_TYPE_MISSES_DONE, str(len(ids))))
+    if ids:
+        logger.info(f"Cleared {len(ids)} empty MDBList rating rows (and their posters) "
+                    "to re-ask with the type fallback")
 
 
 # ---------------------------------------------------------------------------

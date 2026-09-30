@@ -105,6 +105,11 @@
   prefers TMDB's TV entry, and a TMDB id that TMDB has deleted is set
   aside: the title is found again by its IMDb id (straight away when the
   request sent one alongside, from the next request otherwise).
+- The same titles lost their ratings: MDBList, asked about them as movies,
+  had no record, and "no ratings" was kept for two weeks. An IMDb id MDBList
+  doesn't know under one type is now asked as the other, and on upgrade
+  the no-ratings rows this could have left behind are cleared once, with
+  their posters.
 - The configurator's Poster Resolution no longer resets to 500 when the
   page is refreshed.
 - Import URL no longer replaces API keys you already have: a URL's
