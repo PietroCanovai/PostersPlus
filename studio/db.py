@@ -144,6 +144,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 _ADDED_COLUMNS = (
     ("items", "parent_jf_id", "TEXT"),
     ("items", "season_number", "INTEGER"),
+    ("items", "productions", "TEXT"),   # theatre: the show's productions (Jellyfin seasons), "|"-joined
 )
 
 

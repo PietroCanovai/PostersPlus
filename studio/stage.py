@@ -191,16 +191,24 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
         if template == "playbill":
             from . import playbill
             art = Image.open(io.BytesIO(data))
-            out = playbill.compose(art, size=size, logo=logo,
-                                   venue=playbill.venue_from_name(row["name"]) if venue is None else venue,
+            if venue is None:
+                # The recording's name ("Show - Broadway, date - …"), else the show's
+                # first production in Jellyfin (its seasons: Broadway, West End…).
+                venue = playbill.venue_from_name(row["name"]) or (row.get("productions") or "").split("|")[0].upper()
+            out = playbill.compose(art, size=size, logo=logo, venue=venue,
                                    crop=(crop.x, crop.y, crop.zoom))
             return main._encode_poster(out)
         art = Image.open(io.BytesIO(data)).convert("RGB")
         art = art.crop(crop.box(art.width, art.height)).resize(size, Image.Resampling.LANCZOS)
         image = art.convert("RGBA")
+        # StageMedia's posters are the show's key art, title included: the
+        # name is only written on when you ask for it (Title as text), or on
+        # an upload of yours that has no title of its own.
+        wants_text = logo is None and not own_title and (
+            cfg.art_logo == "text" or (poster.startswith("custom:") and not cfg.art_logo))
         out = main.build_poster(
             image, "—", "Theatre", cfg, logo=logo,
-            fallback_title=None if (own_title or logo is not None) else show_name(row["name"]),
+            fallback_title=show_name(row["name"]) if wants_text else None,
         )
         return main._encode_poster(out)
 

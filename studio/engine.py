@@ -107,8 +107,15 @@ async def scan(client: Client) -> dict:
             seen.add(item.id)
             counts["items"] += 1
             _upsert(item, lib, policy, now)
-            # Theatre shows' "seasons" are productions (Broadway, West End): not season posters.
-            if item.type == "Series" and prefs.get("seasons_enabled") and not item.stage_show_id:
+            if item.type == "Series" and item.stage_show_id:
+                # Theatre shows' "seasons" are productions (Broadway, West End): kept
+                # for the Playbill venue, never turned into season posters.
+                try:
+                    names = list(dict.fromkeys(s["name"] for s in await client.seasons(item.id) if s["name"]))
+                    db.execute("UPDATE items SET productions = ? WHERE jf_id = ?", ("|".join(names), item.id))
+                except JellyfinError:
+                    pass
+            elif item.type == "Series" and prefs.get("seasons_enabled"):
                 try:
                     for s in await client.seasons(item.id):
                         seen.add(s["id"])

@@ -567,7 +567,7 @@ export function Editor({ id, review }) {
             ${t.stage && styleValue('studio_template') === 'playbill' && html`<div class="slider-row">
               <label for="venue">Venue</label>
               <input id="venue" type="text" maxlength="60" style="flex:1" value=${styleValue('playbill_venue') || ''}
-                placeholder="Taken from the recording's name" onInput=${e => setStyle('playbill_venue', e.target.value.trim() ? e.target.value : null)} />
+                placeholder="Automatic: the show's first production (Broadway, West End…)" onInput=${e => setStyle('playbill_venue', e.target.value.trim() ? e.target.value : null)} />
             </div>`}
             ${editLook && editLook.crop && html`<button onClick=${() => setCrop({ path: editLook.poster, initial: Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +editLook.crop.split(',')[i]])),
               then: v => call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { crop: v } }, 'Frame saved') })}>Adjust the frame</button>`}
