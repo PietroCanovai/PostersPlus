@@ -6,7 +6,9 @@ from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from typing import Any
 
+import fonts
 import pxscale
+from i18n import visual
 from pxscale import px, pxc, fixed
 
 _FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
@@ -27,10 +29,14 @@ except ImportError:
 # the same sash, ~3x the cost.
 try:
     import skia as _skia
-    _SKIA_TYPEFACE = _skia.Typeface.MakeFromFile(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"))
-    _HAS_SKIA = _SKIA_TYPEFACE is not None
+    _HAS_SKIA = _skia.Typeface.MakeFromFile(os.path.join(_FONTS_DIR, "Inter-Bold.ttf")) is not None
 except (ImportError, OSError):
     _HAS_SKIA = False
+
+
+@lru_cache(maxsize=4)
+def _skia_typeface(font_path: str):
+    return _skia.Typeface.MakeFromFile(font_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1521,10 +1527,15 @@ def dominant_frost_rgb(
 # is redone.  The label layers are RGBA at 3x, 0.3-0.7 MB each, hence the
 # small cap: enough for the award, status and trending labels a catalog
 # actually repeats.
-@lru_cache(maxsize=16)
 def _notch_font(size_ss: float):
+    """The current render's label font (fonts.label_path) at *size_ss*."""
+    return _notch_font_at(fonts.label_path(), size_ss)
+
+
+@lru_cache(maxsize=16)
+def _notch_font_at(font_path: str, size_ss: float):
     try:
-        return ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), size_ss)
+        return ImageFont.truetype(font_path, size_ss)
     except IOError:
         return ImageFont.load_default()
 
@@ -1550,33 +1561,44 @@ def _notch_shape_1x(w: int, h: int, radius: int, frost_opacity: float) -> tuple[
     return mask3.reduce(3), alpha3.reduce(3)
 
 
-@lru_cache(maxsize=64)
 def _notch_label_layer_1x(label: str, size_ss: int, ss: int, w: int, h: int,
                           ink: tuple[int, int, int, int]) -> Image.Image:
+    return _notch_label_layer_1x_in(fonts.label_path(), label, size_ss, ss, w, h, ink)
+
+
+@lru_cache(maxsize=64)
+def _notch_label_layer_1x_in(font_path: str, label: str, size_ss: int, ss: int, w: int, h: int,
+                             ink: tuple[int, int, int, int]) -> Image.Image:
     """The frosted notch's label at 1x, anti-aliased by FreeType itself.
 
     Positioned where the 3x layout puts it — the centre from _text_center at
     3x, divided down — and drawn from that baseline, rather than re-centred with
     1x metrics: those round to whole pixels (int(ascent * 0.22) above all) and
     sat the label a pixel high."""
-    font3 = _notch_font(size_ss)
+    font3 = _notch_font_at(font_path, size_ss)
     tx, ty = _text_center(ImageDraw.Draw(Image.new("L", (1, 1))), label, font3, w * ss / 2, h * ss / 2)
     baseline = (ty + font3.getmetrics()[0]) / ss
     layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     # True division: size_ss is a whole multiple of ss at 500 wide, but above it
     # (pxscale) it is fractional, and flooring would shrink the label again.
-    ImageDraw.Draw(layer).text((tx / ss, baseline), label, font=_notch_font(size_ss / ss),
+    ImageDraw.Draw(layer).text((tx / ss, baseline), label, font=_notch_font_at(font_path, size_ss / ss),
                                fill=ink, anchor="ls")
     return layer
 
 
-@lru_cache(maxsize=32)
 def _notch_heights(height: int, size_ratio_h: float, font_size_ratio: float,
                    notch_pad_ratio: float) -> tuple[int, int, int, int]:
     """(base_h, badge_h, min_badge_h, font_size_ss) for a notch on a poster
-    this tall.  Depends only on sizes, never on the label, so the side chip's
-    height (and the graphic badge row that lines up with it) is known without
-    drawing anything."""
+    this tall, in the current render's label font.  Depends only on sizes and
+    the font, never on the label, so the side chip's height (and the graphic
+    badge row that lines up with it) is known without drawing anything."""
+    return _notch_heights_in(fonts.label_path(), height, size_ratio_h, font_size_ratio,
+                             notch_pad_ratio)
+
+
+@lru_cache(maxsize=32)
+def _notch_heights_in(font_path: str, height: int, size_ratio_h: float, font_size_ratio: float,
+                      notch_pad_ratio: float) -> tuple[int, int, int, int]:
     SS = 3
     # base_h is the nominal height size_ratio_h asks for.  It drives the font
     # size and the horizontal padding; notch_pad_ratio then scales only the
@@ -1587,7 +1609,7 @@ def _notch_heights(height: int, size_ratio_h: float, font_size_ratio: float,
     # layout instead of rounding its own way.  Plain int() at 500.
     base_h = px(height * 0.075 * size_ratio_h)
     font_size_ss = px(base_h * font_size_ratio) * SS
-    font = _notch_font(font_size_ss)
+    font = _notch_font_at(font_path, font_size_ss)
     _tmp_d = ImageDraw.Draw(Image.new("L", (1, 1)))
 
     # Vertical padding.  Floored so an aggressive notch_pad_ratio crops the empty
@@ -1732,6 +1754,7 @@ def draw_award_badge(
     # the canonical English label so translated labels still get their marker.
     if star if star is not None else (sash_type == "win" and label in _STAR_WIN_AWARDS):
         label = f"★  {label}"
+    label = visual(label)
 
     # ── Dimensions ───────────────────────────────────────────────────────────
     # Heights come from _notch_heights (see there); the width depends on the label.
@@ -2265,7 +2288,7 @@ def _sash_skia(
     tx, ty = _text_center(ImageDraw.Draw(Image.new("L", (1, 1))), label, font_ss,
                           length * ss / 2, height * ss / 2)
     x, baseline = tx / ss, (ty + font_ss.getmetrics()[0]) / ss
-    font = _skia.Font(_SKIA_TYPEFACE, font_ss.size / ss)
+    font = _skia.Font(_skia_typeface(fonts.label_path()), font_ss.size / ss)
     font.setSubpixel(True)
     font.setEdging(_skia.Font.Edging.kAntiAlias)
     tp = _skia.Paint(AntiAlias=True)
@@ -2295,6 +2318,7 @@ def draw_award_sash(
 ) -> Image.Image:
     if star:
         label = f"★  {label}"
+    label = visual(label)
     width, height = image.size
     left = side == "left"
     k    = width / _BASE_WIDTH   # fixed pixel sizes below are set for a 500-wide canvas
@@ -2394,7 +2418,7 @@ def draw_award_sash(
 
     font: Any
     try:
-        font = ImageFont.truetype(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"), font_size)
+        font = fonts.label_font(font_size)
     except IOError:
         font = ImageFont.load_default()
 

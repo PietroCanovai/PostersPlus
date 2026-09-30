@@ -29,6 +29,9 @@
   "monthsShort": ["ינו׳", "פבר׳", "מרץ", "אפר׳", "מאי", "יוני", "יולי", "אוג׳", "ספט׳", "אוק׳", "נוב׳", "דצמ׳"],
   "sashLabels": {
     "trendingToday": "מקום #{rank} היום",
+    "Film": "סרט",
+    "Series": "סדרה",
+    "Anime": "אנימה",
     "releaseDay": "{month} {day} {window}",
     "releaseMonth": "{month} {year} {window}",
     "releaseDayStreaming": "בסטרימינג ב-{month} {day}",

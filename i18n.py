@@ -15,6 +15,8 @@ import os
 import re
 import unicodedata
 
+from bidi import get_display
+
 logger = logging.getLogger(__name__)
 
 _LANG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "languages")
@@ -171,3 +173,46 @@ def upper_label(text: str | None, lang: str | None) -> str:
         text = unicodedata.normalize(
             "NFC", unicodedata.normalize("NFD", text).replace("́", ""))
     return text
+
+
+def language_text(lang: str | None) -> str:
+    """Every character a language's labels can put on a poster, upper case
+    included (the landscape badge uppercases), for checking a font has them.
+    Empty for a language with no file: it draws the English labels."""
+    parts: list[str] = []
+    for code in _lang_candidates(lang):
+        data = _LANGS.get(code)
+        if data:
+            for key in ("genreLabels", "sashLabels"):
+                table = data.get(key)
+                if isinstance(table, dict):
+                    parts.extend(str(v) for v in table.values())
+            months = data.get("monthsShort")
+            if isinstance(months, list):
+                parts.extend(str(m) for m in months)
+    text = "".join(parts)
+    return text + upper_label(text, lang)
+
+
+# Right-to-left scripts: Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan,
+# Mandaic, and their presentation forms.
+_RTL_RE = re.compile("[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
+
+
+def visual(text: str | None) -> str:
+    """A line of text in the order it is drawn, left to right.
+
+    Pillow here has no bidi layout (no libraqm) and Skia's drawString has none
+    either: both draw characters in the order they're stored.  A line holding
+    right-to-left script is reordered with the Unicode bidi algorithm, as a
+    right-to-left paragraph — so "דרמה · 2024 ★ 87" reads genre first from the
+    right, with numbers and Latin names still left to right inside it.  Lines
+    with no right-to-left character come back unchanged.
+
+    Apply it to a whole line just before measuring and drawing, never before
+    joining or wrapping: reordering is per line.  Hebrew needs nothing more;
+    Arabic would also need its letters joined, which isn't done here.
+    """
+    if not text or not _RTL_RE.search(text):
+        return text or ""
+    return get_display(text, base_dir="R")

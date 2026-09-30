@@ -16,6 +16,9 @@ from functools import lru_cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import fonts
+from i18n import visual
+
 _FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf")
 
 STYLES = ("sash", "number", "ribbon")
@@ -274,15 +277,17 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     if label:
         # Capitals whose ink is _RIB_LABEL_CAP of the width, narrowed to fit
         # a long word ("PELÍCULA", "MFULULIZO") inside the ribbon's sides.
+        # In the label font, like every other label; the numeral stays Inter.
+        label = visual(label)
         cap_h = _RIB_LABEL_CAP * rib_w * S / widen ** 0.5
-        probe = _font(200)
+        probe = fonts.label_font(200)
         hb = probe.getbbox("H", anchor="ls")
-        lfont = _font(max(6, round(200 * cap_h / (hb[3] - hb[1]))))
+        lfont = fonts.label_font(max(6, round(200 * cap_h / (hb[3] - hb[1]))))
         track = lfont.size * 0.08
         fit = 0.80 * rib_w * S
         span = _spaced_width(label, lfont, track)
         if span > fit:
-            lfont = _font(max(6, round(lfont.size * fit / span)))
+            lfont = fonts.label_font(max(6, round(lfont.size * fit / span)))
             track = lfont.size * 0.08
             span = _spaced_width(label, lfont, track)
         band = _RIB_LABEL_BAND * rib_w * S

@@ -8,6 +8,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+import fonts
+from i18n import visual
 from pxscale import fixed, px, pxi, pxr
 
 try:
@@ -662,7 +664,7 @@ def draw_frosted_bar(
     for a list of rating_badges runs, spread evenly across the bar in place of
     center_text (one run is centred).
     """
-    import os, colorsys as _cs
+    import colorsys as _cs
 
     width, height = image.size
     # Laid out in 500-wide units (pxscale) and snapped to this canvas's pixels
@@ -672,11 +674,8 @@ def draw_frosted_bar(
 
     # ── Font ─────────────────────────────────────────────────────────────────
     font_size = max(fixed(10), px(bar_h * font_size_ratio))
-    font_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"
-    )
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = fonts.label_font(font_size)
     except IOError:
         font = ImageFont.load_default()
 
@@ -824,6 +823,7 @@ def draw_frosted_bar(
             rating_badges.draw_run(txt_layer, td, r, px(x), text_y, font, ink, _measure)
             x += w + gap
     elif center_text:
+        center_text = visual(center_text)
         cw = px(td.textlength(center_text, font=font))
         td.text((px((width - cw) / 2), text_y), center_text, font=font, fill=ink)
     if left_text:

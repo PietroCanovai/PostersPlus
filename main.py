@@ -857,6 +857,7 @@ async def _background_quality_fetch(
 # Local imports
 from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw_tier_bar, _score_points
 from landscape import build_landscape
+import fonts
 import pxscale
 from pxscale import px, pxi, pxr, pxri, fixed, fixedi
 from awards import dominant_frost_rgb, _frosted_tint
@@ -871,7 +872,7 @@ if not _awards_mod._HAS_SKIA:
     # usual cause is an image missing the libEGL/libGL stubs (see dockerfile).
     logger.warning("skia unavailable — diagonal sashes use the slower PIL fallback")
 from festivals import match_festival_keyword
-from i18n import load_languages, translate_genre, translate_sash, upper_label
+from i18n import load_languages, translate_genre, translate_sash, upper_label, visual
 from cache import (
     get_cached_tvdb_json,
     get_cached_trending_snapshot_entry,
@@ -1753,6 +1754,10 @@ class RequestConfig:
     # Secondary preferred language ("custom").  Only consulted when the logo
     # priority lists "custom"; blank elsewhere (and blank there just skips it).
     logo_language_secondary: str = ""
+    # Font the labels are drawn in: a fonts.LABEL_FONTS key.  A font that has
+    # no glyphs for logo_language's labels gives way to one that does (Hebrew
+    # is drawn in Rubik whatever is chosen).
+    label_font: str = fonts.DEFAULT_LABEL_FONT
     # Logo priority: the ordered sources a logo is looked for in, first match
     # wins — a preset name ("native_original", the default: native → original
     # → neutral → English → text) or a comma list of native, native_if_original,
@@ -2274,7 +2279,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_logo_pos": "left", "landscape_vignette_top": False,
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
                               "rating_badge_kinds": "", "rating_badge_max": 0,
-                              "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": ""}
+                              "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": "",
+                              "label_font": fonts.DEFAULT_LABEL_FONT}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2621,6 +2627,9 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.logo_language_secondary = _clean_language(
         params.get("logo_language_secondary"), cfg.logo_language_secondary
     )
+    _lf = (params.get("label_font") or "").strip().lower()
+    if _lf in fonts.LABEL_FONTS:
+        cfg.label_font = _lf
     _lp = parse_logo_priority(params.get("logo_priority"))
     if _lp:
         cfg.logo_priority = _lp
@@ -3702,12 +3711,14 @@ def _draw_combined_text_badge(
         draw.text((cx, y), fmt, font=font, fill=ink)
 
 
-def build_poster(image: Image.Image, *args, **kwargs) -> Image.Image:
+def build_poster(image: Image.Image, score: int | str, genre: str, cfg: "RequestConfig",
+                 *args, **kwargs) -> Image.Image:
     """Composite the overlays onto *image*.  Sizes are floored in 500-wide units
     and scaled to the canvas (pxscale), so a large poster is the 500 one
-    enlarged rather than one whose every element rounds a little differently."""
-    with pxscale.render_scale(image.width):
-        return _build_poster(image, *args, **kwargs)
+    enlarged rather than one whose every element rounds a little differently.
+    Labels are drawn in cfg's label font (fonts.label_font_scope)."""
+    with pxscale.render_scale(image.width), fonts.label_font_scope(cfg.label_font, cfg.logo_language):
+        return _build_poster(image, score, genre, cfg, *args, **kwargs)
 
 
 def _build_poster(
@@ -4171,7 +4182,9 @@ def _build_poster(
         max_h          = max(1, min(int(height * cfg.logo_max_h_ratio), LOGO_ABS_MAX_H * height // _cfg.POSTER_HEIGHT))
         MIN_FONT_SIZE  = 22
         MAX_LINES      = 2
-        FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
+        # A title the genre font has no glyphs for (a Hebrew one) takes the
+        # first label font that has them.
+        FONT_PATH      = fonts.font_for_text(os.path.join(_FONTS_DIR, _font_file), fallback_title)
 
         def _bbox(text: str, current_font):
             # Memoised for the title font; anything else (the load_default()
@@ -4203,9 +4216,10 @@ def _build_poster(
             return lines
 
         def _measure_block(lines_to_measure: list[str], current_font, line_gap: int) -> tuple[int, int, list[tuple[str, tuple[int, int, int, int]]]]:
+            # Wrapped in reading order, measured and drawn in visual order.
             line_boxes = [
                 (line, _bbox(line, current_font))
-                for line in lines_to_measure
+                for line in map(visual, lines_to_measure)
             ]
             if not line_boxes:
                 return 0, 0, []
@@ -4416,10 +4430,11 @@ def _build_poster(
                 label = _label_main + " · " + translate_sash(_sash_text_for_label, cfg.logo_language) if _label_main else translate_sash(_sash_text_for_label, cfg.logo_language)
             else:
                 label = _label_main
+            label = visual(label)
             rating_cy = height * cfg.accent_bar_y_offset
 
             try:
-                font_meta = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
+                font_meta = fonts.label_font(font_size)
             except IOError:
                 font_meta = ImageFont.load_default()
 
@@ -4477,9 +4492,10 @@ def _build_poster(
             else:
                 label = f"★ {_score_text}"
             rating_cy = height * cfg.numeric_score_y_offset
+            label = visual(label)
 
             try:
-                font_meta = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
+                font_meta = fonts.label_font(font_size)
             except IOError:
                 font_meta = ImageFont.load_default()
 
@@ -4489,11 +4505,11 @@ def _build_poster(
                 def _measure(text: str) -> float:
                     return draw.textlength(text, font=font_meta)
                 if genre_label and _rating_first:
-                    _tail = [("gap", font_size * 0.48), ("text", genre_label)]
+                    _tail = [("gap", font_size * 0.48), ("text", visual(genre_label))]
                     _run = _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
                                    rating_badges.run_width(_tail, _measure)) + _tail
                 else:
-                    _lead = [("text", genre_label), ("gap", font_size * 0.48)] if genre_label else []
+                    _lead = [("text", visual(genre_label)), ("gap", font_size * 0.48)] if genre_label else []
                     _run = _lead + _rb_run(font_size, cfg.score_out_of_10, _measure, width * 0.92,
                                            rating_badges.run_width(_lead, _measure))
                 _, ty = _text_center(draw, "0", font_meta, width / 2, rating_cy)  # type: ignore
@@ -4513,7 +4529,7 @@ def _build_poster(
             font_size = px(width * cfg.minimalist_mode_font_size_ratio)
 
             try:
-                font_meta = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size)
+                font_meta = fonts.label_font(font_size)
             except IOError:
                 font_meta = ImageFont.load_default()
             # The line is laid out with widths measured at the 500-wide font
@@ -4522,8 +4538,7 @@ def _build_poster(
             # segment a pixel or two.  The glyphs are still drawn at full size.
             _k = pxscale.scale()
             try:
-                _font_ref = font_meta if _k == 1.0 else ImageFont.truetype(
-                    os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), font_size / _k)
+                _font_ref = font_meta if _k == 1.0 else fonts.label_font(font_size / _k)
             except IOError:
                 _font_ref, _k = font_meta, 1.0
 
@@ -4581,7 +4596,7 @@ def _build_poster(
             _mode = cfg.minimalist_append_mode
             _segs: dict = {}
             if genre_label:
-                _segs["genre"] = genre_label
+                _segs["genre"] = visual(genre_label)
             if release_year and _mode in (0, 2, 3):
                 _segs["year"] = str(release_year)
             if _has_score and (_mode in (1, 2, 3) or (_mode == 0 and not release_year and cfg.hide_year)):
@@ -4788,10 +4803,10 @@ def _build_poster(
                     # the break, and a dot beside it looks like two separators.
                     # Rating first (meta_order): the badges lead instead.
                     if _bar_keys and _bar_keys[0] == "rating":
-                        tail = [("gap", font_size * 0.62), ("text", _lead_sep.join(_lead_parts))]
+                        tail = [("gap", font_size * 0.62), ("text", visual(_lead_sep.join(_lead_parts)))]
                         return [_rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
                                         rating_badges.run_width(tail, measure)) + tail]
-                    lead = [("text", _lead_sep.join(_lead_parts)), ("gap", font_size * 0.62)]
+                    lead = [("text", visual(_lead_sep.join(_lead_parts))), ("gap", font_size * 0.62)]
                     return [lead + _rb_run(font_size, cfg.bar_score_out_of_10, measure, budget,
                                            rating_badges.run_width(lead, measure))]
             image = draw_frosted_bar(
@@ -6965,6 +6980,13 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     _RenderRevision(
         rev=16,
         applies=lambda cfg: any("cinema" in g.slots for g in graphic_badges.cfg_groups(cfg)),
+        stale=lambda cfg, facts: True,
+    ),
+    # 17: Hebrew labels, drawn in Rubik and right to left.  Before the
+    #     language file, a Hebrew poster drew its labels in English.
+    _RenderRevision(
+        rev=17,
+        applies=lambda cfg: cfg.logo_language.split("-", 1)[0] == "he",
         stale=lambda cfg, facts: True,
     ),
 )

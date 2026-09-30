@@ -2520,6 +2520,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             </div><!-- /field-row -->
             <div class="field">
+              <label class="field-label" data-tip="The font the poster's text is drawn in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. A language the chosen font has no letters for is drawn in one that has them, so Hebrew always uses Rubik and Greek or Vietnamese always uses Inter.">Font</label>
+              <select id="cfg-label-font" onchange="build(); queuePreviewReload()">
+                <option value="inter" selected>Inter</option>
+                <option value="rubik">Rubik</option>
+              </select>
+            </div>
+            <div class="field">
               <label class="field-label" data-tip="Where a title's logo comes from, tried top to bottom — the first that has one wins. Native is your language; Original is the title's own language; Custom is a second language of your choice; English includes the Metahub logo library; Neutral is a logo TMDB has not tagged with any language, usually a symbol or an untagged wordmark. Text draws the title as text when nothing above has a logo; disable it to show no title at all. Drag to reorder, ✕ to disable.">Logo Priority</label>
               <input type="hidden" id="cfg-logo-priority" value="native_original" data-default="native_original">
               <div class="sash-list lp-list" id="logo-priority-list"></div>
@@ -6660,6 +6667,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   params.set('hide_unreleased_rating', c('tog-hide-unreleased-rating') ? 'true' : 'false');
   // Also one value for both shapes.
   if (vEl('cfg-meta-order')) params.set('meta_order', vEl('cfg-meta-order'));
+  // And the font.
+  if (vEl('cfg-label-font') !== 'inter') params.set('label_font', vEl('cfg-label-font'));
 
   // Landscape draws its one badge its own way: the mode only decides whether
   // it is drawn, the priority list what it says.  Everything else here is
@@ -8875,7 +8884,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'cfg-language', 'cfg-language-secondary', 'cfg-logo-priority',
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
-  'tog-hide-unreleased-rating', 'cfg-meta-order',
+  'tog-hide-unreleased-rating', 'cfg-meta-order', 'cfg-label-font',
   'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
@@ -9313,6 +9322,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     const _moOpt = [...document.getElementById('cfg-meta-order').options].some(o => o.value === _mo);
     _setEl('cfg-meta-order', _moOpt ? _mo : '');
   }
+  _setEl('cfg-label-font', ['rubik'].includes(p.get('label_font')) ? p.get('label_font') : 'inter');
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.

@@ -1,3 +1,4 @@
+import itertools
 import json
 import re
 import unittest
@@ -5,6 +6,7 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+import fonts
 from festivals import FESTIVAL_SASH_LABELS
 from i18n import load_languages, translate_sash, upper_label
 
@@ -98,19 +100,21 @@ class FullVocabularyTests(unittest.TestCase):
                                          f"{path.name} {key!r} changed its placeholders")
 
     def test_every_translation_renders_in_the_label_font(self):
-        # All poster text is drawn in Inter, which has Latin, Greek and
-        # Cyrillic but no CJK, Arabic, Hebrew, Indic or Thai glyphs — those
-        # would render as boxes.  Upper case is checked too: the landscape
-        # badge uppercases its label.
-        font = ImageFont.truetype(str(LANGUAGE_DIR.parent / "fonts" / "Inter-Bold.ttf"), 40)
-        notdef = bytes(font.getmask("\U0010FFFD"))
-        for path in LANGUAGE_DIR.glob("*.json"):
-            with self.subTest(language=path.stem):
+        # Poster text is drawn in the label font the language resolves to
+        # (Inter, or Rubik for Hebrew), whichever font the user chose; no
+        # label font has CJK, Arabic, Indic or Thai glyphs — those would
+        # render as boxes.  Upper case is checked too: the landscape badge
+        # uppercases its label.
+        for path, choice in itertools.product(LANGUAGE_DIR.glob("*.json"), fonts.LABEL_FONTS):
+            with self.subTest(language=path.stem, label_font=choice):
                 language = _load_language(path)
+                font = ImageFont.truetype(fonts.resolve_label_font(choice, language["code"]), 40)
+                notdef = bytes(font.getmask("\U0010FFFD"))
                 text = "".join([*language["genreLabels"].values(),
                                 *language["sashLabels"].values(),
                                 *language["monthsShort"]])
-                chars = set(text) | set(upper_label(text, language["code"]))
+                # Plus what the renderer puts between and before them.
+                chars = set(text) | set(upper_label(text, language["code"])) | set("★·•…")
                 missing = sorted(c for c in chars
                                  if ord(c) > 127 and bytes(font.getmask(c)) == notdef)
                 self.assertFalse(missing, f"{path.name} has no glyph for {missing}")

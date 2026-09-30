@@ -38,14 +38,13 @@ for tmdb internals — to keep this module free of a circular import.
 from __future__ import annotations
 
 import colorsys
-import os
 
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from i18n import translate_genre, translate_sash, upper_label
+import fonts
+from i18n import translate_genre, translate_sash, upper_label, visual
 
-_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 # --- Layout constants (fractions of the canvas) ------------------------------
 
@@ -177,10 +176,6 @@ _DROP_SUB        = 0.28
 # art's own lightness, so a dark poster keeps a dark panel; True is the frosted
 # notch's reference mode, which lifts Value and always lands light.
 _LANDSCAPE_FROST_MODE: bool | str = "match"
-
-
-def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(os.path.join(_FONTS_DIR, name), max(1, size))
 
 
 def _band_ramp(band_h: int) -> np.ndarray:
@@ -449,19 +444,20 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
     # not necessarily legible from a sofa.  Padding scales with the type so
     # the pill keeps its proportions rather than growing a thick rim.
     scale = max(0.1, float(getattr(cfg, "landscape_badge_scale", 1.0) or 1.0))
+    text = visual(text)
 
     if plain:
         # The stacked slot sits inside the band, so the glass would be a second
         # surface doing a job the vignette has already done.  Set at the info
         # strip's size and on its baseline, so the two read as one bottom row
         # rather than as a label that happens to be near some metadata.
-        _plain_font = _font("Inter-Bold.ttf", int(height * _INFO_FONT * scale))
+        _plain_font = fonts.label_font(max(1, int(height * _INFO_FONT * scale)))
         _px = _slot_x(width, draw.textlength(text, font=_plain_font), logo_align)
         draw.text((_px, int(height * _BASELINE) if logo_baseline is None else logo_baseline), text,
                   font=_plain_font, fill=(255, 255, 255, 242), anchor="ls")
         return
 
-    font = _font("Inter-Bold.ttf", int(height * _BADGE_FONT * scale))
+    font = fonts.label_font(max(1, int(height * _BADGE_FONT * scale)))
     tw = draw.textlength(text, font=font)
     th = int(height * _BADGE_FONT * scale)
     pad_x, pad_y = round(_BADGE_PAD_X * scale), round(_BADGE_PAD_Y * scale)
@@ -616,6 +612,9 @@ def _draw_title(image: Image.Image, title: str, align: str = "left",
 
     max_w = int(width * _LOGO_MAX_W)
     max_h = int(height * (_LOGO_MAX_H if top is None else _LOGO_MAX_H_TOP))
+    # The title is in the poster's language, which the label font may not
+    # have (a Hebrew title under Inter).
+    font_path = fonts.font_for_text(fonts.label_path(), title)
 
     # Largest size that fits, one line preferred over two at every size — a
     # single line beside a logo reads better than a wrapped one a size larger.
@@ -623,7 +622,7 @@ def _draw_title(image: Image.Image, title: str, align: str = "left",
     ratio = _TITLE_FONT_MAX
     while ratio >= _TITLE_FONT_MIN - 1e-9 and chosen is None:
         size = max(1, int(height * ratio))
-        font = _font("Inter-Bold.ttf", size)
+        font = fonts.truetype(font_path, size)
         line_h = round(size * _TITLE_LINE)
         for count in range(1, _TITLE_MAX_LINES + 1):
             if line_h * count > max_h:
@@ -637,7 +636,7 @@ def _draw_title(image: Image.Image, title: str, align: str = "left",
     if chosen is None:
         # Nothing fits whole: set at the smallest size and cut the last line.
         size = max(1, int(height * _TITLE_FONT_MIN))
-        font = _font("Inter-Bold.ttf", size)
+        font = fonts.truetype(font_path, size)
         line_h = round(size * _TITLE_LINE)
         count = max(1, min(_TITLE_MAX_LINES, int(max_h // line_h) or 1))
         lines = _wrap(draw, title, font, max_w, count) or []
@@ -670,6 +669,7 @@ def _draw_title(image: Image.Image, title: str, align: str = "left",
         chosen = (font, lines or [_ellipsize(draw, title, font, max_w)], line_h)
 
     font, lines, line_h = chosen
+    lines = [visual(line) for line in lines]   # wrapped in reading order, drawn in visual
     if top is not None:
         # Hung from the top: the first line's ascent starts at ``top``.
         baseline = top + font.getmetrics()[0] + line_h * (len(lines) - 1)
@@ -734,7 +734,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     """
     width, height = image.size
     scale = max(0.1, float(scale or 1.0))
-    font = _font("Inter-Bold.ttf", max(1, int(height * _INFO_FONT * scale)))
+    font = fonts.label_font(max(1, int(height * _INFO_FONT * scale)))
     draw = ImageDraw.Draw(image)
 
     # No rating is not a rating of nothing: a title MDBList has no score for
@@ -781,7 +781,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                 out.append(("★ " if i == 0 else star_sep, _MUTED))
             elif i:
                 out.append((sep, _SEPARATOR))
-            out.append((text, fill))
+            out.append((visual(text), fill))
         return out
 
     def total(items) -> float:
@@ -913,7 +913,14 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
             offset += step
 
 
-def build_landscape(
+def build_landscape(image: Image.Image, score: int | str, genre: str, cfg, *args, **kwargs) -> Image.Image:
+    """Render the landscape poster, its labels in cfg's label font
+    (fonts.label_font_scope).  See _build_landscape."""
+    with fonts.label_font_scope(cfg.label_font, cfg.logo_language):
+        return _build_landscape(image, score, genre, cfg, *args, **kwargs)
+
+
+def _build_landscape(
     image: Image.Image,
     score: int | str,
     genre: str,

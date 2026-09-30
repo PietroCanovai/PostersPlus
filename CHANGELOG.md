@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Hebrew, and a font choice
+
+- Poster text can be in **Hebrew** (thanks @haveAnIssue), drawn right to
+  left: each line is reordered with the Unicode bidi algorithm, so numbers,
+  the ★ and Latin names still read left to right inside it.
+- **Font** (Presentation) picks the font poster text is drawn in: Inter, as
+  before, or Rubik. A language the chosen font has no letters for is drawn
+  in one that has them, so Hebrew is always Rubik. A text title standing in
+  for a missing logo switches font the same way when its genre font can't
+  draw it.
+
 ### Edge notch, label order, release-date badge
 
 - The notch can hang off the **Left Edge** or **Right Edge** of the poster,

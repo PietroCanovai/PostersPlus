@@ -114,10 +114,10 @@ class NotchCacheTests(unittest.TestCase):
         # (or a stale shape) would show as a difference.
         for style in ("frosted", "black", "silver"):
             with self.subTest(style=style):
-                awards._notch_font.cache_clear()
+                awards._notch_font_at.cache_clear()
                 awards._notch_shape.cache_clear()
                 awards._notch_shape_1x.cache_clear()
-                awards._notch_label_layer_1x.cache_clear()
+                awards._notch_label_layer_1x_in.cache_clear()
                 first = self._badge(notch_style=style)
                 again = self._badge(notch_style=style)
                 np.testing.assert_array_equal(first, again)
