@@ -39,6 +39,9 @@
 
     --serif: 'Cormorant Garamond', Georgia, serif;
     --mono:  'Inter', system-ui, sans-serif;
+    /* Tracking on the --mono text, which was set for DM Mono's wide cells;
+       1 restores those spacings. */
+    --track: 0.5;
 
     /* Corner rounding: panels use --radius, controls --radius-sm. */
     --radius:    10px;
@@ -124,7 +127,7 @@
     font-size: 9px;
     font-weight: 300;
     color: var(--silver-dim);
-    letter-spacing: 0.3em;
+    letter-spacing: calc(0.3em * var(--track));
     text-transform: uppercase;
   }
 
@@ -137,7 +140,7 @@
     gap: 7px;
     font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.12em;
+    letter-spacing: calc(0.12em * var(--track));
     color: var(--text-muted);
     text-decoration: none;
     text-transform: uppercase;
@@ -234,7 +237,7 @@
   .whatsnew-section-title {
     font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.18em;
+    letter-spacing: calc(0.18em * var(--track));
     text-transform: uppercase;
     color: var(--gold);
   }
@@ -245,7 +248,7 @@
     gap: 24px;
     font-size: 10px;
     color: var(--text-muted);
-    letter-spacing: 0.1em;
+    letter-spacing: calc(0.1em * var(--track));
   }
 
   .status-pill {
@@ -267,7 +270,7 @@
 
   @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
-  #clock { color: var(--silver-dim); font-size: 10px; letter-spacing: 0.12em; }
+  #clock { color: var(--silver-dim); font-size: 10px; letter-spacing: calc(0.12em * var(--track)); }
 
   /* ── LAYOUT ── */
   .main-layout {
@@ -340,7 +343,7 @@
   .panel-index {
     font-size: 8.5px;
     color: var(--silver);
-    letter-spacing: 0.18em;
+    letter-spacing: calc(0.18em * var(--track));
     text-transform: uppercase;
   }
 
@@ -413,7 +416,7 @@
     border-radius: 4px;
     font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.08em;
+    letter-spacing: calc(0.08em * var(--track));
     color: var(--silver);
     text-decoration: none;
     white-space: nowrap;
@@ -439,7 +442,7 @@
     font: inherit;
     font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.08em;
+    letter-spacing: calc(0.08em * var(--track));
   }
 
   /* Marks the client a plain left-click copies for. */
@@ -521,7 +524,7 @@
     font-family: var(--mono);
     font-size: 9px;
     font-weight: 500;
-    letter-spacing: 0.15em;
+    letter-spacing: calc(0.15em * var(--track));
     text-transform: uppercase;
     white-space: nowrap;
   }
@@ -585,7 +588,7 @@
     font-size: 8.5px;
     line-height: 14px;
     color: var(--silver-bright);
-    letter-spacing: 0.22em;
+    letter-spacing: calc(0.22em * var(--track));
     margin-bottom: var(--gap-label);
     text-transform: uppercase;
   }
@@ -694,7 +697,7 @@
     font-family: var(--mono);
     font-size: 10px;
     line-height: 1.65;
-    letter-spacing: 0.02em;
+    letter-spacing: calc(0.02em * var(--track));
     box-shadow: 0 10px 30px rgba(0,0,0,0.55);
     pointer-events: none;
     opacity: 0;
@@ -753,7 +756,7 @@
     width: 100%;
     padding-right: 38px;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: calc(0.05em * var(--track));
   }
   /* Keep the typed hex uppercase, but show the "Default" hint in normal case. */
   .color-field input[type="text"]::placeholder { text-transform: none; letter-spacing: normal; }
@@ -826,7 +829,7 @@
     font-family: var(--mono);
     font-size: 8.5px;
     font-weight: 500;
-    letter-spacing: 0.2em;
+    letter-spacing: calc(0.2em * var(--track));
     cursor: pointer;
     border: 1px solid var(--gold-dim);
     border-radius: var(--radius-sm);
@@ -862,7 +865,7 @@
     text-align: center;
     font-family: var(--mono);
     font-size: 10.5px;
-    letter-spacing: 0.03em;
+    letter-spacing: calc(0.03em * var(--track));
     color: var(--silver);
     background: var(--black2);
     border: 1px solid var(--border);
@@ -878,14 +881,14 @@
   .gb-group-row { display: grid; grid-template-columns: 1fr 68px; gap: 6px; }
   .gb-xy { margin-top: 12px; display: grid; gap: 8px; }
   .gb-align-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
-  .gb-align-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  .gb-align-label { font-family: var(--mono); font-size: 10px; letter-spacing: calc(0.06em * var(--track)); text-transform: uppercase;
                     color: var(--silver-dim); }
   .gb-align-row .gb-seg { width: 186px; }
   .gb-xy .gb-axis { font-family: var(--mono); font-size: 10px; color: var(--silver-dim); flex: none; width: 12px; }
   /* "Badges" on the left, a caption over the group pickers on the right. */
   .gb-list-label { display: flex; justify-content: space-between; align-items: baseline; }
   .gb-list-label .gb-col { width: 150px; margin-right: 12px; text-align: center;
-                           font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em;
+                           font-family: var(--mono); font-size: 9.5px; letter-spacing: calc(0.08em * var(--track));
                            text-transform: uppercase; color: var(--silver-dim); }
   .sash-item.gb-item { cursor: default; gap: 10px; padding-top: 7px; padding-bottom: 7px; }
   .gb-item .sash-label { flex: 1; }
@@ -1008,7 +1011,7 @@
     font-family: var(--mono);
     font-size: 7px;
     font-weight: 500;
-    letter-spacing: 0.18em;
+    letter-spacing: calc(0.18em * var(--track));
     padding: 1px 5px;
     border: 1px solid;
     flex-shrink: 0;
@@ -1023,7 +1026,7 @@
     font-size: 11px;
     color: var(--text-muted);
     text-align: center;
-    letter-spacing: 0.08em;
+    letter-spacing: calc(0.08em * var(--track));
   }
 
   /* selected item card */
@@ -1073,7 +1076,7 @@
     font-size: 9px;
     color: var(--text-muted);
     margin-top: 3px;
-    letter-spacing: 0.06em;
+    letter-spacing: calc(0.06em * var(--track));
   }
 
   .selected-card-ids span { color: var(--gold-dim); }
@@ -1097,7 +1100,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    letter-spacing: 0.08em;
+    letter-spacing: calc(0.08em * var(--track));
   }
 
   .selected-resolving .search-spinner {
@@ -1136,7 +1139,7 @@
     padding-top: var(--gap-group);
   }
 
-  .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: 0.03em; }
+  .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: calc(0.03em * var(--track)); }
   .toggle-sub { font-size: 9px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
 
   /* No margin-left — .toggle-row's gap owns the space beside the label. */
@@ -1269,7 +1272,7 @@
   .weight-name {
     font-size: 9px;
     color: var(--silver-dim);
-    letter-spacing: 0.12em;
+    letter-spacing: calc(0.12em * var(--track));
     text-transform: uppercase;
   }
 
@@ -1285,7 +1288,7 @@
     border-top: 1px solid var(--border);
     font-size: 9px;
     color: var(--silver-dim);
-    letter-spacing: 0.12em;
+    letter-spacing: calc(0.12em * var(--track));
     text-transform: uppercase;
   }
 
@@ -1363,7 +1366,7 @@
     color: var(--text-primary);
     flex: 1;
     min-width: 0;
-    letter-spacing: 0.02em;
+    letter-spacing: calc(0.02em * var(--track));
   }
 
   /* currentColor is set inline per slot. */
@@ -1404,7 +1407,7 @@
   .rb-kind {
     font-family: var(--mono);
     font-size: 8.5px;
-    letter-spacing: 0.04em;
+    letter-spacing: calc(0.04em * var(--track));
     padding: 2px 5px;
     border-radius: 4px;
     border: 1px solid var(--black5);
@@ -1421,7 +1424,7 @@
   .sash-disabled-header {
     font-size: 8.5px;
     color: var(--silver-dim);
-    letter-spacing: 0.22em;
+    letter-spacing: calc(0.22em * var(--track));
     text-transform: uppercase;
     margin-bottom: 8px;
   }
@@ -1498,7 +1501,7 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 10px;
-    letter-spacing: 0.1em;
+    letter-spacing: calc(0.1em * var(--track));
     line-height: 2;
   }
 
@@ -1533,14 +1536,14 @@
 
   .preview-placeholder-title {
     font-size: 9.5px;
-    letter-spacing: 0.28em;
+    letter-spacing: calc(0.28em * var(--track));
     text-transform: uppercase;
     color: var(--silver-dim);
   }
 
   .preview-placeholder-dim {
     font-size: 10px;
-    letter-spacing: 0.12em;
+    letter-spacing: calc(0.12em * var(--track));
     color: var(--text-muted);
   }
 
@@ -1565,7 +1568,7 @@
     padding: 0 18px 14px;
     font-size: 10px;
     line-height: 1.6;
-    letter-spacing: 0.02em;
+    letter-spacing: calc(0.02em * var(--track));
     color: #c0443a;
   }
   .preview-error[hidden] { display: none; }
@@ -1585,7 +1588,7 @@
     padding: 11px 6px;
     border-radius: var(--radius-sm);
     font-size: 8.5px;
-    letter-spacing: 0.18em;
+    letter-spacing: calc(0.18em * var(--track));
   }
 
   /* Copy is the primary action, so it carries a fill rather than an outline. */
@@ -1637,7 +1640,7 @@
     font-family: var(--mono);
     font-size: 8px;
     font-weight: 500;
-    letter-spacing: 0.22em;
+    letter-spacing: calc(0.22em * var(--track));
     text-transform: uppercase;
     cursor: pointer;
     border: 1px solid;
@@ -1705,7 +1708,7 @@
     width: 100%; box-sizing: border-box;
     font-size: 9.5px;
     font-family: var(--mono);
-    letter-spacing: 0.02em;
+    letter-spacing: calc(0.02em * var(--track));
     color: var(--silver-dim);
     background: var(--black2);
     border: 1px solid var(--border);
@@ -1814,7 +1817,7 @@
   .preset-group-title {
     font-size: 8.5px;
     color: var(--silver-dim);
-    letter-spacing: 0.22em;
+    letter-spacing: calc(0.22em * var(--track));
     text-transform: uppercase;
     margin: 6px 0 -2px;
   }
@@ -1838,7 +1841,7 @@
     color: var(--text-muted);
     font-family: var(--mono);
     font-size: 9px;
-    letter-spacing: 0.15em;
+    letter-spacing: calc(0.15em * var(--track));
   }
   .preset-card-body {
     padding: 16px 18px;
@@ -1864,7 +1867,7 @@
     font-size: 10px;
     color: var(--silver-dim);
     line-height: 1.65;
-    letter-spacing: 0.01em;
+    letter-spacing: calc(0.01em * var(--track));
     flex: 1;
     overflow: hidden;
   }
@@ -1896,7 +1899,7 @@
     color: var(--silver-dim);
     font-family: var(--mono);
     font-size: 8px;
-    letter-spacing: 0.18em;
+    letter-spacing: calc(0.18em * var(--track));
     text-transform: uppercase;
     padding: 5px 9px;
     cursor: pointer;
@@ -2112,7 +2115,7 @@
     /* The collapsed preview is already poster-shaped, so the placeholder just
        needs its typography scaled down to fit. */
     .preview-placeholder { padding: 0; border-radius: 8px; gap: 6px; }
-    .preview-placeholder-title { font-size: 7px; letter-spacing: 0.16em; }
+    .preview-placeholder-title { font-size: 7px; letter-spacing: calc(0.16em * var(--track)); }
     .preview-placeholder-dim { font-size: 8px; }
     .preview-panel.expanded {
       width: 100vw;
@@ -2153,7 +2156,7 @@
       gap: 8px;
       padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
     }
-    .preview-panel.expanded .preview-actions .btn { padding: 8px 4px; white-space: normal; text-align: center; letter-spacing: 0.08em; }
+    .preview-panel.expanded .preview-actions .btn { padding: 8px 4px; white-space: normal; text-align: center; letter-spacing: calc(0.08em * var(--track)); }
     .preview-panel.expanded .preview-controls {
       flex: none;
       overflow-y: auto;
@@ -2167,13 +2170,13 @@
     }
     .preview-panel.expanded .btn {
       font-size: 11px;
-      letter-spacing: 0.14em;
+      letter-spacing: calc(0.14em * var(--track));
     }
     /* Import modal — top-biased so keyboard doesn't obscure it */
     .import-modal { align-items: flex-start; padding: 14vh 24px 24px; }
     /* Import modal buttons go full-width on mobile */
     .import-modal-btns { flex-direction: column-reverse; }
-    .import-modal-btns .btn { flex: 1 1 100%; min-height: 44px; justify-content: center; font-size: 11px; letter-spacing: 0.14em; }
+    .import-modal-btns .btn { flex: 1 1 100%; min-height: 44px; justify-content: center; font-size: 11px; letter-spacing: calc(0.14em * var(--track)); }
     .import-input { font-size: 16px; min-height: 44px; }
     .search-results { max-height: 240px; }
     .logo { font-size: 22px; }
