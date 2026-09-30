@@ -408,6 +408,159 @@ async def fetch_tvdb_artworks(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Metadata spine (titles neither TMDB nor Cinemeta know)
+# ---------------------------------------------------------------------------
+
+# Bumped whenever the normaliser changes, so rows built by the old logic are
+# re-fetched rather than served.
+_METADATA_VERSION = "v1"
+
+# TVDB genre slugs that aren't a plain IMDb/TMDB genre name; the rest go
+# through Cinemeta's name map.
+_GENRE_SLUGS = {
+    "science-fiction": "sci-fi",
+    "children":        "kids",
+    "talk-show":       "talk-show",
+    "game-show":       "game-show",
+    "suspense":        "thriller",
+    "martial-arts":    "action",
+    "mini-series":     "drama",
+    "anime":           "animation",
+}
+
+_STATUS = {
+    "continuing": "Returning Series",
+    "ended":      "Ended",
+    "upcoming":   "Planned",
+}
+
+
+def _pick_name(record: dict, language: str | None) -> str | None:
+    """The title in the requested language, else English, else TVDB's own
+    ``name`` (which is in the original language)."""
+    names = {
+        t.get("language"): t.get("name")
+        for t in ((record.get("translations") or {}).get("nameTranslations") or [])
+        if isinstance(t, dict) and t.get("name")
+    }
+    for lang in (_to_tvdb_lang(language), "eng"):
+        if lang and names.get(lang):
+            return names[lang]
+    return record.get("name") or None
+
+
+async def _fetch_record(client: httpx.AsyncClient, tvdb_id: int, want: str) -> dict | None:
+    """The slim extended record, cached; None when TVDB has no such id."""
+    cache_key = f"meta:{_METADATA_VERSION}:{want}:{tvdb_id}"
+    cached = get_cached_tvdb_json(cache_key)
+    if cached is not None:
+        return None if cached.get("__miss__") else cached
+    endpoint = "series" if want == "series" else "movies"
+    async with _get_semaphore():
+        data = await _authed_get(
+            client, f"/{endpoint}/{tvdb_id}/extended",
+            params={"short": "true", "meta": "translations"},
+        )
+    if not isinstance(data, dict) or not data.get("id"):
+        # _authed_get folds errors into None, so only a short negative window.
+        set_cached_tvdb_json(cache_key, {"__miss__": True}, TVDB_NEG_CACHE_DURATION * 86400)
+        return None
+    slim = {
+        k: data.get(k)
+        for k in ("id", "name", "image", "year", "firstAired", "first_release",
+                  "originalLanguage", "genres", "remoteIds", "status",
+                  "averageRuntime", "runtime", "translations")
+        if data.get(k) is not None
+    }
+    set_cached_tvdb_json(cache_key, slim, TVDB_ARTWORK_CACHE_DURATION * 86400)
+    return slim
+
+
+async def fetch_tvdb_metadata(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    tvdb_id_hint: int | str | None = None,
+    imdb_id: str | None = None,
+    language: str | None = None,
+) -> tuple | None:
+    """A TVDB record shaped like ``tmdb.fetch_poster_metadata``'s 8-tuple, the
+    way ``cinemeta.normalise`` shapes Cinemeta's — the last metadata spine, for
+    titles only TVDB lists (small documentaries, parodies, web series).
+
+    The record's own poster is the one-sheet, title and all, so it goes in as
+    a text-bearing poster; the best neutral background is the backdrop, which
+    main.py's backdrop-to-portrait rule crops and puts our logo (or drawn
+    title) on.  None when TVDB is off or has no such title.
+    """
+    if not tvdb_enabled():
+        return None
+    want = _record_type(media_type)
+    try:
+        tvdb_id = await resolve_tvdb_id(
+            client, media_type=media_type, tvdb_id_hint=tvdb_id_hint, imdb_id=imdb_id,
+        )
+        if not tvdb_id:
+            return None
+        record = await _fetch_record(client, tvdb_id, want)
+        if record is None:
+            return None
+        artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
+    except Exception as exc:
+        logger.warning(f"TVDB metadata fetch failed for {tvdb_id_hint or imdb_id}: {exc}")
+        return None
+
+    from cinemeta import _blank_tmdb_data, _map_genres
+
+    title = _pick_name(record, language) or "Unknown Title"
+
+    if want == "series":
+        date = str(record.get("firstAired") or "")
+    else:
+        date = str((record.get("first_release") or {}).get("date") or "")
+    release_date = date[:10] if len(date) >= 10 and date[4] == "-" else None
+    year_src = str(record.get("year") or date)
+    release_year = year_src[:4] if year_src[:4].isdigit() else None
+
+    genre_names = []
+    for g in record.get("genres") or []:
+        if isinstance(g, dict):
+            slug = (g.get("slug") or "").lower()
+            genre_names.append(_GENRE_SLUGS.get(slug) or g.get("name") or slug)
+
+    poster = record.get("image") or None
+    if poster and not poster.startswith("http"):
+        poster = f"{_ARTWORK_BASE}/{poster.lstrip('/')}"
+    background = _select_by_language(artworks.get("backgrounds") or [], ["null"])
+
+    tmdb_data = _blank_tmdb_data()
+    tmdb_data["tvdb_id"]              = tvdb_id
+    tmdb_data["cinemeta_source"]      = "tvdb"
+    tmdb_data["original_title"]       = record.get("name")
+    tmdb_data["tmdb_release_date"]    = release_date
+    tmdb_data["original_poster_path"] = poster
+    tmdb_data["runtime"] = record.get("averageRuntime") or record.get("runtime") or None
+    lang3 = record.get("originalLanguage")
+    if lang3:
+        tmdb_data["original_language"] = _LANG_3_TO_2.get(lang3, lang3)
+    status = ((record.get("status") or {}).get("name") or "").strip()
+    if status:
+        tmdb_data["tmdb_status"] = _STATUS.get(status.lower(), status)
+    for remote in record.get("remoteIds") or []:
+        if not isinstance(remote, dict):
+            continue
+        source, rid = (remote.get("sourceName") or "").lower(), str(remote.get("id") or "")
+        if source == "imdb" and rid.startswith("tt"):
+            tmdb_data["imdb_id"] = rid
+        elif "themoviedb" in source and rid.isdigit():
+            tmdb_data["cinemeta_tmdb_id"] = rid
+
+    logger.info(f"TVDB metadata for tvdb_id={tvdb_id}: {title!r} ({release_year})")
+    return (_map_genres(genre_names), False, [], release_year, title, poster,
+            background["url"] if background else None, tmdb_data)
+
+
 def _select_by_language(
     items: list[dict],
     languages: list[str] | None,

@@ -880,6 +880,51 @@ def _store_art(cache_key: str, image: Image.Image) -> None:
     set_cached_tmdb_poster(cache_key, buf.getvalue())
 
 
+class BlankArtError(Exception):
+    """The image CDN answered 200 with a flat single-colour image."""
+
+
+def _is_blank_art(content: bytes) -> bool:
+    """True for an image with no detail at all — a flat colour field.
+
+    TMDB's CDN now and then serves an all-black JPEG of the right size for a
+    rendition (seen for w780 posters: 5-7 KB, every pixel 0), while the other
+    sizes of the same image are fine.  Cached, the black one became the
+    title's art at that canvas size for the whole cache window.
+    Real posters are never this flat; a draft decode keeps the check cheap.
+    """
+    try:
+        image = Image.open(io.BytesIO(content))
+        image.draft("L", (64, 64))
+        image = image.convert("L")
+        image.thumbnail((64, 64))
+        low, high = image.getextrema()
+        return high - low < 4
+    except Exception:
+        return False   # an undecodable body fails later, in the caller
+
+
+async def _get_art(client: httpx.AsyncClient, url: str, **kwargs) -> bytes:
+    """Download image bytes, rejecting a blank body (see _is_blank_art).
+
+    A TMDB url whose rendition comes back blank is asked for again at another
+    size: the blank one tends to stick to a single rendition for a while, and
+    every caller resizes to its canvas anyway.  All of them blank raises
+    BlankArtError, so nothing blank is ever cached."""
+    urls = [url]
+    m = re.match(r"(https://image\.tmdb\.org/t/p/)([a-z0-9]+)(/.+)\Z", url)
+    if m:
+        urls += [f"{m.group(1)}{size}{m.group(3)}"
+                 for size in ("original", "w780", "w500") if size != m.group(2)][:2]
+    for candidate in urls:
+        resp = await client.get(candidate, **kwargs)
+        resp.raise_for_status()
+        if not _is_blank_art(resp.content):
+            return resp.content
+        logger.warning(f"Blank image from {candidate}")
+    raise BlankArtError(url)
+
+
 async def fetch_poster_image(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -923,14 +968,13 @@ async def fetch_poster_image(
         return await asyncio.to_thread(_decode_and_store, content)
     if _is_absolute:
         logger.info(f"External API Call: Requested poster art for {tmdb_id}")
-        img_resp = await client.get(poster_path, follow_redirects=True)
+        content = await _get_art(client, poster_path, follow_redirects=True)
     else:
         logger.info(f"External API Call: Requested poster from TMDB for {tmdb_id}")
         _tmdb_size = POSTER_WIDTHS.get(poster_canvas()[0], "w500")
-        img_resp = await client.get(f"https://image.tmdb.org/t/p/{_tmdb_size}{poster_path}")
-    img_resp.raise_for_status()
+        content = await _get_art(client, f"https://image.tmdb.org/t/p/{_tmdb_size}{poster_path}")
 
-    return await asyncio.to_thread(_decode_and_store, img_resp.content)
+    return await asyncio.to_thread(_decode_and_store, content)
 
 
 # Bumped whenever the backdrop crop logic changes, so cached crops from the old
@@ -1146,13 +1190,13 @@ async def fetch_backdrop_image(
     _large = size[1] > 720
     if is_absolute_art(backdrop_path):
         logger.info(f"External API Call: Requested backdrop art for {tmdb_id}")
-        img_resp = await client.get(backdrop_path, follow_redirects=True)
+        content = await _get_art(client, backdrop_path, follow_redirects=True)
     else:
         logger.info(f"External API Call: Requested backdrop from TMDB for {tmdb_id}")
-        img_resp = await client.get(
-            f"https://image.tmdb.org/t/p/{'original' if _large else 'w1280'}{backdrop_path}"
+        content = await _get_art(
+            client,
+            f"https://image.tmdb.org/t/p/{'original' if _large else 'w1280'}{backdrop_path}",
         )
-    img_resp.raise_for_status()
 
     # The decode, the downscale of an original, the crop (CPU-heavy face/text
     # inference) and the encode all run in the thread pool; inline they would
@@ -1166,7 +1210,7 @@ async def fetch_backdrop_image(
         _store_art(cache_key, image)
         return image
 
-    return await asyncio.to_thread(_decode_crop_store, img_resp.content)
+    return await asyncio.to_thread(_decode_crop_store, content)
 
 
 async def fetch_cropped_art(
@@ -1200,9 +1244,7 @@ async def fetch_cropped_art(
             # tall) is plenty for a full-height crop at the default canvas.
             url = f"https://image.tmdb.org/t/p/{'original' if (crop.zoom > 1 or size[1] > 720) else 'w1280'}{path}"
         logger.info(f"External API Call: Requested art to crop for {tmdb_id}")
-        resp = await client.get(url, follow_redirects=True)
-        resp.raise_for_status()
-        content = resp.content
+        content = await _get_art(client, url, follow_redirects=True)
 
     def _decode_crop_store(data: bytes) -> Image.Image:
         source = Image.open(io.BytesIO(data)).convert("RGBA")
@@ -1266,13 +1308,12 @@ async def fetch_landscape_image(
         return await asyncio.to_thread(_decode_and_store, content)
     if is_absolute_art(backdrop_path):
         logger.info(f"External API Call: Requested landscape backdrop art for {tmdb_id}")
-        img_resp = await client.get(backdrop_path, follow_redirects=True)
+        content = await _get_art(client, backdrop_path, follow_redirects=True)
     else:
         logger.info(f"External API Call: Requested landscape backdrop from TMDB for {tmdb_id}")
-        img_resp = await client.get(f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
-    img_resp.raise_for_status()
+        content = await _get_art(client, f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
 
-    return await asyncio.to_thread(_decode_and_store, img_resp.content)
+    return await asyncio.to_thread(_decode_and_store, content)
 
 
 def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
@@ -2359,9 +2400,11 @@ async def tmdb_find_by_imdb(
     imdb_id: str,
     tmdb_key: str,
     media_type_hint: str | None = None,
+    external_source: str = "imdb_id",
 ) -> dict | None:
     """
     Resolve an IMDB id (``tt...``) to a TMDB id via TMDB's /find endpoint.
+    ``external_source="tvdb_id"`` looks up a TVDB id the same way.
 
     Returns ``{"tmdb_id": str, "media_type": "movie"|"tv"}``, preferring a
     result matching *media_type_hint* when both movie and tv results are
@@ -2372,7 +2415,7 @@ async def tmdb_find_by_imdb(
     try:
         resp = await client.get(
             f"https://api.themoviedb.org/3/find/{imdb_id}",
-            params={"api_key": tmdb_key, "external_source": "imdb_id"},
+            params={"api_key": tmdb_key, "external_source": external_source},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -2620,6 +2663,30 @@ async def _resolve_imdb_to_tmdb_uncached(
     set_cached_tvdb_json(key, result, _IDMAP_TTL_SECONDS)
     return result
 
+
+async def resolve_tvdb_to_tmdb(
+    client: httpx.AsyncClient,
+    tvdb_id: int,
+    media_type: str,
+    tmdb_key: str,
+) -> dict | None:
+    """The TMDB identity of a TVDB id, cached like the IMDb map: a request
+    that carries only ``tvdb:<id>`` renders from TMDB whenever TMDB links
+    the title.  None when it doesn't; raises ``IdResolveError`` on a failed
+    lookup, which is never cached."""
+    key = f"idmap:{_IDMAP_VERSION}:tvdb:{tvdb_id}"
+    cached = get_cached_tvdb_json(key)
+    if cached is not None:
+        return None if cached.get("__miss__") else cached
+    kind = "tv" if media_type in ("tv", "series") else "movie"
+    result = await tmdb_find_by_imdb(client, str(tvdb_id), tmdb_key, kind,
+                                     external_source="tvdb_id")
+    if result is None:
+        set_cached_tvdb_json(key, _IDMAP_MISS, _IDMAP_MISS_TTL_SECONDS)
+        return None
+    logger.info(f"Resolved tvdb:{tvdb_id} -> TMDB {result['media_type']}/{result['tmdb_id']} via /find")
+    set_cached_tvdb_json(key, result, _IDMAP_TTL_SECONDS)
+    return result
 
 
 def _normalize_manifest_url(url: str) -> str:
