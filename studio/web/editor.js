@@ -340,7 +340,7 @@ export function Editor({ id, review }) {
       <div class="row"><button onClick=${() => go('library')}>Stop</button><button class="primary" onClick=${markReviewed}>Looks good ✓</button></div></div>`}
     <div class="page-head">
       <div>
-        <a href="#library">← Library</a>
+        <a href="#library">← Library</a>${t.parent ? html` · <a href=${`#title/${t.parent}`}>← the show</a>` : ''}
         <h1 style="margin-top:8px">${t.item.name}${t.item.year ? html` <span class="dim-text">(${t.item.year})</span>` : ''}</h1>
         <p>${t.item.library_name}${t.siblings.length > 1 ? ` · ${t.siblings.length} copies in Jellyfin share these rules` : ''}${t.item.pushed_at ? ` · sent to Jellyfin ${ago(t.item.pushed_at)}` : ''}
           ${chips.length ? html` ${chips.map(([l, c]) => html`<span class="chip ${c}" style="margin-left:4px">${l}</span>`)}` : ''}</p>
@@ -380,6 +380,13 @@ export function Editor({ id, review }) {
         <div class="mode-pick">${MODES.map(([m, label, help]) => html`<button class=${mode === m ? 'on' : ''} onClick=${() => mode !== m && setMode(m)} disabled=${busy || !matched}>
           <span class="t">${label}</span><span class="d">${help}</span></button>`)}</div>
 
+        ${t.seasons.length > 0 && html`<div class="card rot">
+          <h3>Seasons (${t.seasons.length})</h3>
+          <div class="rot-strip">${t.seasons.map(s => html`<button class="rot-item" onClick=${() => go(`title/${s.jf_id}`)} title=${s.name}>
+            <img src=${`/studio/api/thumb/${s.jf_id}?h=240&tag=${encodeURIComponent(s.jf_image_tag || '')}`} alt="" />
+            <span class="chip">${s.number === 0 ? 'Specials' : `S${s.number}`}</span></button>`)}</div>
+          <p class="hint-sm">Seasons use this show's colours and layout unless you change them in the season.</p>
+        </div>`}
         ${mode === 'rotation' && html`<div class="card rot">
           <h3>In the rotation (${rotation.length})</h3>
           ${rotation.length ? html`<div class="rot-strip">${rotation.map(l => html`<button class="rot-item ${editLook && editLook.look_id === l.look_id ? 'on' : ''}" onClick=${() => { setSel(l.look_id); setLocalStyle(null); }}>
@@ -477,6 +484,12 @@ export function Editor({ id, review }) {
             <label class="switch">
               <input type="checkbox" checked=${styleValue('show_award_sash') !== 'false'} onChange=${e => setStyle('show_award_sash', e.target.checked ? null : 'false')} />
               <span><span class="t">Show the notch</span><span class="d" style="display:block">The label at the top (awards, new season, …).</span></span></label>
+            <div class="slider-row">
+              <label for="nl">Notch text</label>
+              <input id="nl" type="text" maxlength="40" style="flex:1" value=${styleValue('notch_label') || ''}
+                placeholder=${t.item.jf_type === 'Season' ? 'Season number (automatic)' : 'Automatic (awards, new season, …)'}
+                onInput=${e => setStyle('notch_label', e.target.value.trim() ? e.target.value : null)} />
+            </div>
             ${editLook && editLook.crop && html`<button onClick=${() => setCrop({ path: editLook.poster, initial: Object.fromEntries(['x', 'y', 'zoom'].map((k, i) => [k, +editLook.crop.split(',')[i]])),
               then: v => call(`/looks/${editLook.look_id}`, { method: 'PUT', body: { crop: v } }, 'Frame saved') })}>Adjust the frame</button>`}
           </div>`}

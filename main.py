@@ -1949,6 +1949,7 @@ class RequestConfig:
     logo_color:        tuple[int, int, int] | None = None   # recolour the logo
     logo_color_mode:   str   = "solid"                      # "solid" | "tint"
     notch_text_color:  tuple[int, int, int] | None = None   # notch label, honoured by every style
+    notch_label:       str   = ""     # replaces the automatic notch/sash label
 
 
 # Settings the landscape renderer shares with portrait but wants set
@@ -2304,7 +2305,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "art_poster": "", "art_crop": "", "art_original": False, "art_logo": "",
                               "art_exclude": (), "art_logo_exclude": (), "tint_color": None,
                               "fade_color": None, "logo_color": None, "logo_color_mode": "solid",
-                              "notch_text_color": None}
+                              "notch_text_color": None, "notch_label": ""}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -3849,6 +3850,8 @@ def _build_poster(
         if discovery_meta is not None
         else None
     )
+    if cfg.notch_label:  # fork hook (Studio): the title's own notch text ("Season 2", …)
+        sash_result = (cfg.notch_label, "info")
     # Resolved here rather than at the draw site because the top vignette needs it
     # too — see the top gradient below.
     _sash_shown = cfg.sash_mode != "hidden" and sash_result is not None

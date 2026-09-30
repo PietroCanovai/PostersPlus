@@ -206,6 +206,7 @@ def _settings_payload() -> dict:
         "uploads_enabled": bool(prefs.get("uploads_enabled")),
         "schedule_enabled": bool(prefs.get("schedule_enabled")),
         "schedule_time": prefs.get("schedule_time"),
+        "seasons_enabled": bool(prefs.get("seasons_enabled")),
         "stagemedia_key_set": bool(prefs.get("stagemedia_key")),
         "stagemedia_key_hint": _secret_hint(prefs.get("stagemedia_key") or ""),
         "resolution": int(prefs.get("resolution") or 1000),
@@ -234,6 +235,8 @@ async def put_settings(request: Request):
         prefs.set("stagemedia_key", str(body["stagemedia_key"] or "").strip())
     if "uploads_enabled" in body:
         prefs.set("uploads_enabled", bool(body["uploads_enabled"]))
+    if "seasons_enabled" in body:
+        prefs.set("seasons_enabled", bool(body["seasons_enabled"]))
     if "schedule_time" in body:
         if not prefs.valid_time(str(body["schedule_time"])):
             raise HTTPException(status_code=400, detail="Time must be HH:MM, e.g. 04:00")

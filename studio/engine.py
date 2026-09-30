@@ -105,6 +105,14 @@ async def scan(client: Client) -> dict:
             seen.add(item.id)
             counts["items"] += 1
             _upsert(item, lib, policy, now)
+            if item.type == "Series" and prefs.get("seasons_enabled"):
+                try:
+                    for s in await client.seasons(item.id):
+                        seen.add(s["id"])
+                        counts["items"] += 1
+                        _upsert_season(s, item, lib, policy, now)
+                except JellyfinError as exc:
+                    logger.warning(f"Studio: seasons of {item.name!r} not read: {exc}")
     # Items that left Jellyfin (or whose library was switched off) stay in the
     # table, marked absent, so their history survives a library re-scan.
     present = db.query("SELECT jf_id FROM items WHERE present = 1")
@@ -143,6 +151,28 @@ def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
         )
 
 
+def _upsert_season(s: dict, series: Item, lib: Library, policy: dict, now: float) -> None:
+    """A season row: the show's ids, its own Jellyfin id, image tag and number."""
+    name = f"{series.name} — {s['name'] or ('Specials' if s['number'] == 0 else 'Season ' + str(s['number']))}"
+    old = db.query_one("SELECT * FROM items WHERE jf_id = ?", (s["id"],))
+    row = dict(old or {})
+    row.update({"jf_id": s["id"], "jf_type": "Season", "tmdb_id": series.tmdb_id, "imdb_id": None})
+    status = _item_status(row, policy)
+    if old is None:
+        db.execute(
+            "INSERT INTO items (jf_id, library_id, library_name, jf_type, name, year, tmdb_id, tvdb_id, "
+            "jf_image_tag, status, parent_jf_id, season_number, added_at, seen_at) "
+            "VALUES (?, ?, ?, 'Season', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (s["id"], lib.id, lib.name, name, series.year, series.tmdb_id, series.tvdb_id, s["image_tag"], status,
+             series.id, s["number"], now, now))
+    else:
+        db.execute(
+            "UPDATE items SET library_id=?, library_name=?, name=?, year=?, tmdb_id=?, tvdb_id=?, jf_image_tag=?, "
+            "status=?, parent_jf_id=?, season_number=?, present=1, seen_at=? WHERE jf_id=?",
+            (lib.id, lib.name, name, series.year, series.tmdb_id, series.tvdb_id, s["image_tag"], status,
+             series.id, s["number"], now, s["id"]))
+
+
 # ── Render ──────────────────────────────────────────────────────────────────
 
 def _style_uses_quality(style: str) -> bool:
@@ -164,7 +194,7 @@ def poster_url(row: dict, style: str, *, resolution: int, with_quality: bool, ac
         params["tmdb_id"] = tmdb_id
     if row.get("imdb_id"):
         params["imdb_id"] = row["imdb_id"]
-    params["type"] = "tv" if row.get("jf_type") == "Series" else "movie"
+    params["type"] = "tv" if row.get("jf_type") in ("Series", "Season") else "movie"
     params["primary_client"] = "jellyfin"
     if resolution != 500:
         params["resolution"] = str(resolution)
@@ -294,12 +324,16 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
         if with_quality and row["jf_type"] == "Series" and not row.get("quality"):
             ep = await jf.representative_episode(jf_id)
             row["quality"] = ",".join(quality_tokens(ep)) if ep else ""
+        params = res.params
+        if row["jf_type"] == "Season":
+            from . import seasons
+            params = await seasons.params_for(row, params)
         if is_stage(row):
             from . import stage
-            image, ctype = await stage.render(row, style, res.params, resolution)
+            image, ctype = await stage.render(row, style, params, resolution)
         else:
             image, ctype = await render(http, poster_url(row, style, resolution=resolution, with_quality=with_quality,
-                                                         access_key=access_key, extra=res.params))
+                                                         access_key=access_key, extra=params))
         image_hash = hashlib.sha256(image).hexdigest()
         decision = decide(row, image_hash, force=force)
         if decision.action == "unchanged":

@@ -126,8 +126,23 @@ def connect(path: str | None = None) -> sqlite3.Connection:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_SCHEMA)
+            _migrate(conn)
             _conn = conn
         return _conn
+
+
+# Columns added after the first release: (table, column, declaration).
+_ADDED_COLUMNS = (
+    ("items", "parent_jf_id", "TEXT"),
+    ("items", "season_number", "INTEGER"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def execute(sql: str, args: tuple | list = ()) -> sqlite3.Cursor:

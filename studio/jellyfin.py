@@ -119,6 +119,17 @@ class Client:
         return [item_from_json(d) async for d in self._paged(
             "/Items", ParentId=library.id, Recursive="true", IncludeItemTypes=types, Fields=ITEM_FIELDS)]
 
+    async def seasons(self, series_id: str) -> list[dict]:
+        """A show's seasons: [{id, number, name, image_tag}], specials as number 0."""
+        data = await self._get(f"/Shows/{series_id}/Seasons", Fields="ProviderIds")
+        out = []
+        for d in data.get("Items") or []:
+            if d.get("Type") != "Season" or d.get("IndexNumber") is None:
+                continue
+            out.append({"id": str(d["Id"]), "number": int(d["IndexNumber"]), "name": d.get("Name") or "",
+                        "image_tag": (d.get("ImageTags") or {}).get("Primary")})
+        return out
+
     async def item(self, item_id: str) -> Item:
         data = await self._get("/Items", Ids=item_id, Fields=ITEM_FIELDS)
         rows = data.get("Items") or []

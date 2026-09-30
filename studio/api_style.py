@@ -69,6 +69,7 @@ def _payload() -> dict:
     return {
         "defaults": _defaults(),
         "applied": applied, "draft": d, "has_draft": d is not None,
+        "can_undo": bool(db.get_setting("style_previous")),
         "params": dict(parse_qsl(current, keep_blank_values=True)),
         "applied_params": dict(parse_qsl(applied, keep_blank_values=True)),
         "sash": _sash_info(current),

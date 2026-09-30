@@ -64,6 +64,11 @@ class FakeJellyfin:
             rows = [r for r in self.items.get(q.get("ParentId"), []) if r["Type"] in wanted]
             start = int(q.get("StartIndex", 0))
             return httpx.Response(200, json={"Items": rows[start:], "TotalRecordCount": len(rows)})
+        if path.startswith("/Shows/") and path.endswith("/Seasons"):
+            return httpx.Response(200, json={"Items": [
+                {"Id": "s1-0", "Type": "Season", "IndexNumber": 0, "Name": "Specials", "ImageTags": {}},
+                {"Id": "s1-1", "Type": "Season", "IndexNumber": 1, "Name": "Season 1", "ImageTags": {"Primary": "x"}},
+            ]})
         if path.endswith("/Images/Primary") and request.method == "POST":
             id_ = path.split("/")[2]
             self.uploads.append((id_, base64.b64decode(request.content), request.headers["content-type"]))
@@ -245,6 +250,58 @@ class TheatreTests(EngineTests.__bases__[0]):
         self.assertEqual(self.stage.show_name("Evita"), "Evita")
         self.assertTrue(self.stage.valid_poster("https://stagemedia.me/p/1.jpg"))
         self.assertFalse(self.stage.valid_poster("http://10.0.0.1/x.jpg"))
+
+
+class SeasonTests(EngineTests):
+    def setUp(self):
+        super().setUp()
+        from studio import seasons
+        self.seasons = seasons
+        self._orig = seasons.season_posters
+
+        async def fake_posters(tmdb_id, number):
+            if number == 1:
+                return [{"path": "/season1.jpg", "language": None}, {"path": "/season1-en.jpg", "language": "en"}]
+            return []
+        seasons.season_posters = fake_posters
+
+    def tearDown(self):
+        self.seasons.season_posters = self._orig
+        super().tearDown()
+
+    def test_seasons_off_by_default(self):
+        self.run_sync()
+        self.assertFalse(db.query("SELECT 1 FROM items WHERE jf_type = 'Season'"))
+
+    def test_season_posters(self):
+        prefs.set("seasons_enabled", True)
+        self.run_sync()
+        seasons_rows = db.query("SELECT * FROM items WHERE jf_type = 'Season' ORDER BY season_number")
+        self.assertEqual([(r["season_number"], r["parent_jf_id"], r["tmdb_id"]) for r in seasons_rows],
+                         [(0, "s1", "70523"), (1, "s1", "70523")])
+        from studio import rules
+        self.assertEqual(rules.title_key(seasons_rows[1]), "tmdb:tv:70523:s1")
+        season_reqs = [q for q in self.pp.requests if q.get("notch_label")]
+        by_label = {q["notch_label"]: q for q in season_reqs}
+        self.assertEqual(set(by_label), {"Specials", "Season 1"})
+        self.assertEqual(by_label["Season 1"]["type"], "tv")
+        self.assertEqual(by_label["Season 1"]["art_poster"], "/season1.jpg")       # textless first
+        self.assertNotIn("art_poster", by_label["Specials"])                         # no season art: the show's
+        # Never on the textless one moves to the titled one, served as it is.
+        rules.set_never("tmdb:tv:70523:s1", "poster", "/season1.jpg", True)
+        row = dict(seasons_rows[1])
+        params = asyncio.run(self.seasons.params_for(row, rules.resolve("tmdb:tv:70523:s1").params))
+        self.assertEqual((params["art_poster"], params["art_original"]), ("/season1-en.jpg", "1"))
+
+    def test_season_inherits_show_style_but_can_override(self):
+        from studio import rules
+        rules.set_title_style("tmdb:tv:70523", {"tint_color": "112233", "bottom_gradient": "low"})
+        rules.set_title_style("tmdb:tv:70523:s1", {"bottom_gradient": "off", "notch_label": "Book One"})
+        row = {"jf_id": "s1-1", "jf_type": "Season", "tmdb_id": "70523", "season_number": 1}
+        params = asyncio.run(self.seasons.params_for(row, rules.resolve("tmdb:tv:70523:s1").params))
+        self.assertEqual(params["tint_color"], "112233")      # from the show
+        self.assertEqual(params["bottom_gradient"], "off")    # the season's own
+        self.assertEqual(params["notch_label"], "Book One")
 
 
 class SmallPieces(unittest.TestCase):

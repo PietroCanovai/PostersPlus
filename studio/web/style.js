@@ -128,7 +128,7 @@ export function Style({ refreshStatus }) {
       <div class="row">
         ${s.has_draft ? html`<button onClick=${() => act('/style/discard', {}, 'Changes discarded')} disabled=${busy}>Discard changes</button>
           <button class="primary" onClick=${apply} disabled=${busy}>Apply to library</button>`
-          : html`<button onClick=${() => act('/style/undo', {}, 'The previous style is loaded as a draft: apply it to go back')} disabled=${busy}>Undo last apply</button>`}
+          : s.can_undo ? html`<button onClick=${() => act('/style/undo', {}, 'The previous style is loaded as a draft: apply it to go back')} disabled=${busy}>Undo last apply</button>` : ''}
       </div>
     </div>
     ${s.has_draft

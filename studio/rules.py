@@ -39,6 +39,8 @@ _NOT_STYLE = {"tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_i
 
 def title_key(row: dict) -> str:
     tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
+    if tmdb_id and row.get("jf_type") == "Season":
+        return f"tmdb:tv:{tmdb_id}:s{int(row.get('season_number') or 0)}"
     if tmdb_id:
         return f"tmdb:{'tv' if row.get('jf_type') == 'Series' else 'movie'}:{tmdb_id}"
     if row.get("stage_show_id") and not row.get("imdb_id"):

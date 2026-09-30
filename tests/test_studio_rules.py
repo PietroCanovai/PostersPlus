@@ -186,8 +186,11 @@ class HookTests(unittest.TestCase):
 
     def test_render_config_accepts_studio_params(self):
         import main
-        cfg = main.build_request_config({"art_poster": "/abc.jpg", "art_crop": "0.5,0.5,2", "fade_color": "102030"})
+        cfg = main.build_request_config({"art_poster": "/abc.jpg", "art_crop": "0.5,0.5,2", "fade_color": "102030",
+                                         "notch_label": "Season  2", "notch_text_color": "ffffff"})
         self.assertEqual((cfg.art_poster, cfg.art_crop, cfg.fade_color), ("/abc.jpg", "0.5000,0.5000,2.000", (16, 32, 48)))
+        self.assertEqual((cfg.notch_label, cfg.notch_text_color), ("Season 2", (255, 255, 255)))
+        self.assertEqual(main.build_request_config({"notch_label": "x" * 41}).notch_label, "")
         # Defaults leave the composite cache signature exactly as before.
         self.assertNotIn("art_poster", main._render_config_signature(main.build_request_config({})))
 

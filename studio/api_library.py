@@ -75,8 +75,8 @@ async def library():
     summaries = rules.summaries()
     out = []
     for r in db.query("SELECT jf_id, library_name, jf_type, name, year, tmdb_id, manual_tmdb_id, imdb_id, "
-                      "status, last_error, jf_image_tag, pushed_at, added_at FROM items WHERE present = 1 "
-                      "ORDER BY name COLLATE NOCASE"):
+                      "stage_show_id, status, last_error, jf_image_tag, pushed_at, added_at FROM items "
+                      "WHERE present = 1 AND jf_type != 'Season' ORDER BY name COLLATE NOCASE"):
         key = rules.title_key(r)
         s = summaries.get(key) or {}
         out.append({**r, "title_key": key, "mode": s.get("mode", "auto"), "hands_off": s.get("hands_off", False),
@@ -88,7 +88,7 @@ async def library():
 # ── One title ───────────────────────────────────────────────────────────────
 
 def _media_type(row: dict) -> str:
-    return "tv" if row["jf_type"] == "Series" else "movie"
+    return "tv" if row["jf_type"] in ("Series", "Season") else "movie"
 
 
 def _title_payload(row: dict) -> dict:
@@ -104,6 +104,11 @@ def _title_payload(row: dict) -> dict:
         "uploads": candidates.uploads(key),
         "siblings": [{"jf_id": s["jf_id"], "library_name": s["library_name"], "name": s["name"]}
                      for s in _siblings(key)],
+        "seasons": [{"jf_id": s["jf_id"], "number": s["season_number"], "name": s["name"], "status": s["status"],
+                     "jf_image_tag": s["jf_image_tag"]}
+                    for s in db.query("SELECT * FROM items WHERE parent_jf_id = ? AND present = 1 "
+                                      "ORDER BY season_number", (row["jf_id"],))],
+        "parent": row.get("parent_jf_id"),
     }
 
 
@@ -132,7 +137,14 @@ async def title_candidates(jf_id: str, force: bool = False):
         return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
                       "error": "No TMDB match yet: link one to see artwork."})
     try:
-        return _json(await candidates.for_title(_media_type(row), tmdb_id, force=force))
+        result = await candidates.for_title(_media_type(row), tmdb_id, force=force)
+        if row["jf_type"] == "Season":
+            from . import seasons
+            own = await seasons.season_posters(tmdb_id, int(row.get("season_number") or 0))
+            result = {**result, "season": True,
+                      "candidates": {**result["candidates"], "posters": own + result["candidates"]["posters"]},
+                      "auto": {**result["auto"], "poster": {"path": own[0]["path"], "kind": "poster"} if own else result["auto"]["poster"]}}
+        return _json(result)
     except Exception as exc:
         logger.warning(f"Studio candidates for {jf_id}: {exc}")
         return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
@@ -310,6 +322,9 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
     if res.skip:   # hands off: still show what Studio would make
         res = rules.resolve(key, look_override={}, title_style=draft_style)
     params = res.params
+    if row["jf_type"] == "Season":
+        from . import seasons
+        params = await seasons.params_for(row, params)
     draft = db.get_setting("style_draft") if style == "draft" else None
     style = draft or prefs.get("style_applied")
     import config as _cfg

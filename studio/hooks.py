@@ -65,6 +65,9 @@ def apply_params(cfg, params: dict, parse_hex) -> None:
     cfg.fade_color = parse_hex(params.get("fade_color"))
     cfg.logo_color = parse_hex(params.get("logo_color"))
     cfg.notch_text_color = parse_hex(params.get("notch_text_color"))
+    label = " ".join((params.get("notch_label") or "").split())
+    if label and len(label) <= 40 and label.isprintable():
+        cfg.notch_label = label
     if cfg.logo_color is not None and (params.get("logo_color_mode") or "").strip().lower() == "tint":
         cfg.logo_color_mode = "tint"
 

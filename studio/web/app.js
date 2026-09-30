@@ -256,6 +256,10 @@ function SyncSettings({ s, reload }) {
         onChange=${e => put({ schedule_enabled: e.target.checked }, e.target.checked ? `Nightly run on, at ${s.schedule_time}` : 'Nightly run off')} />
       <span><span class="t">Run every night</span>
         <span class="d" style="display:block">If the server was off at that time, the run happens as soon as it's back.</span></span></label>
+    <label class="switch"><input type="checkbox" checked=${s.seasons_enabled}
+        onChange=${e => put({ seasons_enabled: e.target.checked }, e.target.checked ? 'Season posters on: run a preview from Activity to see them' : 'Season posters off')} />
+      <span><span class="t">Season posters</span>
+        <span class="d" style="display:block">Each season gets its own poster: TMDB's season art (or the show's) with "Season 2" in the notch. Try a preview run first; seasons are edited from their show's page.</span></span></label>
     <div class="row" style="margin:14px 0 4px">
       <div class="field" style="margin:0"><label for="sched">Time (${s.timezone})</label>
         <input id="sched" type="time" value=${s.schedule_time} style="width:140px"

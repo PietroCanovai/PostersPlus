@@ -42,6 +42,7 @@ def get(key: str):
         "jellyfin_api_key": "",
         "stagemedia_key": "",
         "uploads_enabled": False,
+        "seasons_enabled": False,
         "schedule_enabled": False,
         "schedule_time": "04:00",
         "resolution": 1000,
