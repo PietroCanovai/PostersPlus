@@ -6129,7 +6129,9 @@ async def lifespan(app: FastAPI):
     background_task = asyncio.create_task(_run_background_jobs())
     imdb_dataset_task = asyncio.create_task(imdb_dataset_refresh_loop(_HTTP_CLIENT))
     anime_ids_task = asyncio.create_task(anime_ids.anime_id_map_refresh_loop(_HTTP_CLIENT))
+    _studio.start()  # fork hook: Studio's scheduler
     yield
+    await _studio.stop()  # fork hook
     background_task.cancel()
     imdb_dataset_task.cancel()
     anime_ids_task.cancel()
@@ -6359,6 +6361,9 @@ def _normalise_fallback_canvas(image: Image.Image,
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 app.include_router(_admin.router)
+# Fork hook: PostersPlus Studio (studio/), the Jellyfin library manager.
+import studio as _studio  # noqa: E402
+_studio.install(app)
 
 
 class _ClientIpMiddleware:
