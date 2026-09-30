@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Logs in the dashboard
+
+- A **Logs** view in the admin dashboard: the server log with filters for
+  level, time, module, app or HTTP lines and text (exclusions, phrases,
+  regex), a *Problems only* switch, a live tail and a download.
+- Every line knows the request that logged it, so one matching line can
+  bring the rest of its request with it, or open that request on its own.
+- **Find a title** by name (or IMDb / TVDB id) to see its ids and only the
+  lines about it: no more looking ids up on TMDB or IMDb to grep for them.
+- `LOG_VIEWER_MAX_MB` (default 20) caps the disk it uses; 0 turns it off.
+
 ### Hebrew, and a font choice
 
 - Poster text can be in **Hebrew** (thanks @haveAnIssue), drawn right to

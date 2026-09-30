@@ -912,6 +912,8 @@ import watchlist
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
 import config as _cfg
+import log_store
+log_store.install(_cfg.LOG_DIR, _cfg.LOG_VIEWER_MAX_MB, _TruncateUrlFilter._redact)
 import discovery
 from discovery import (
     ALL_PRIORITY_SLOTS,
@@ -6385,6 +6387,7 @@ class _ClientIpMiddleware:
 
 
 app.add_middleware(_ClientIpMiddleware)
+app.add_middleware(log_store.RequestIdMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -7358,6 +7361,57 @@ async def admin_art_search(request: Request, q: str = "",
             "overridden": art_overrides.for_title(r["media_type"], str(r["id"])) is not None,
         })
     return _admin._json({"results": results})
+
+
+@app.get("/admin/api/logs/title")
+async def admin_logs_title(request: Request, media_type: str = "", tmdb_id: str = "",
+                           imdb_id: str = "", tvdb_id: str = "",
+                           x_admin_key: str = Header(default="")):
+    """Every id a title goes by, for the Logs view's title filter: picked from
+    the search (TMDB id) or clicked in a log line (IMDb or TVDB id)."""
+    await _admin._authorise(request, x_admin_key)
+    client, key = _art_client_and_key()
+    ids = {"imdb_id": imdb_id.strip() or None, "tvdb_id": tvdb_id.strip() or None}
+    if not tmdb_id and (ids["imdb_id"] or ids["tvdb_id"]):
+        if ids["imdb_id"]:
+            _check_imdb_id(ids["imdb_id"])
+            ext, source = ids["imdb_id"], "imdb_id"
+        else:
+            if not ids["tvdb_id"].isdigit() or len(ids["tvdb_id"]) > 10:
+                raise HTTPException(status_code=400, detail="Invalid tvdb_id")
+            ext, source = ids["tvdb_id"], "tvdb_id"
+        resp = await _proxy_tmdb_get(f"https://api.themoviedb.org/3/find/{ext}",
+                                     {"api_key": key, "external_source": source})
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"TMDB lookup of {ext} returned {resp.status_code}")
+        found = resp.json()
+        for kind, field in (("movie", "movie_results"), ("tv", "tv_results")):
+            if found.get(field):
+                media_type, tmdb_id = kind, str(found[field][0]["id"])
+                break
+        else:
+            # TMDB doesn't know it; the id alone still filters.
+            return _admin._json({**ids, "tmdb_id": None, "media_type": media_type or None,
+                                 "title": None, "year": None, "thumb": None})
+    media_type = _art_media_type(media_type)
+    _check_tmdb_id(tmdb_id)
+    resp = await _proxy_tmdb_get(f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}",
+                                 {"api_key": key, "append_to_response": "external_ids"})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404 if resp.status_code == 404 else 502,
+                            detail=f"TMDB returned {resp.status_code} for {media_type}/{tmdb_id}")
+    d = resp.json()
+    ext = d.get("external_ids") or {}
+    date = d.get("release_date") or d.get("first_air_date") or ""
+    return _admin._json({
+        "media_type": media_type,
+        "tmdb_id": str(d.get("id") or tmdb_id),
+        "imdb_id": ext.get("imdb_id") or d.get("imdb_id") or ids["imdb_id"],
+        "tvdb_id": str(ext["tvdb_id"]) if ext.get("tvdb_id") else ids["tvdb_id"],
+        "title": d.get("title") or d.get("name") or "",
+        "year": date[:4],
+        "thumb": f"{_TMDB_IMG}/w92{d['poster_path']}" if d.get("poster_path") else None,
+    })
 
 
 @app.get("/admin/api/art/title")

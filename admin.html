@@ -698,6 +698,76 @@
   .pr-sample { display: grid; grid-template-columns: 100px 1fr; gap: 6px; }
   .pr-file { position: relative; overflow: hidden; text-align: center; cursor: pointer; }
   .pr-file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  /* Logs */
+  .lg-head h2 { font-family: var(--serif); font-weight: 400; font-size: 42px; line-height: 1.05; color: var(--cream); }
+  .lg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px; }
+  .lg-bar .grow { flex: 1 1 340px; min-width: 0; }
+  .lg-selects { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+  .lg-toggles { gap: 10px 22px; }
+  .lg-bar input[type="text"] { font-family: inherit; font-size: 13px; padding: 9px 13px; }
+  .lg-bar select { width: auto; font-family: inherit; font-size: 13px; padding: 9px 34px 9px 13px; }
+  .lg-pop { position: fixed; top: 0; left: 0; width: 320px; max-width: calc(100vw - 16px); font-family: 'DM Sans', system-ui, sans-serif; }
+  .lg-find { position: relative; flex: 1 1 340px; min-width: 0; }
+  .lg-find input { width: 100%; }
+  .lg-find .art-hresults { width: 100%; max-width: 420px; }
+  .lg-seg button .c { font-family: var(--mono); font-size: 11px; margin-left: 6px; }
+  .lg-seg button .c.warn { color: var(--warn); }
+  .lg-seg button .c.err { color: var(--danger); }
+  .lg-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .lg-chip { display: inline-flex; align-items: center; gap: 10px; padding: 6px 8px 6px 10px; border: 1px solid var(--gold-dim); background: var(--gold-faint); border-radius: var(--radius-sm); font-size: 13px; color: var(--cream); max-width: 100%; }
+  .lg-chip img { width: 26px; height: 39px; object-fit: cover; border-radius: 3px; background: var(--black4); }
+  .lg-chip .sub { font-size: 12px; color: var(--text-secondary); }
+  .lg-chip .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+  .lg-chip code, .lg-id { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--black2); color: var(--silver-bright); cursor: pointer; }
+  .lg-chip code:hover { border-color: var(--gold-dim); }
+  .lg-chip a { font-size: 12px; }
+  .lg-x { border: 0; background: transparent; color: var(--text-secondary); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+  .lg-x:hover { color: var(--cream); }
+  .lg-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin: 4px 0 8px; }
+  .lg-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .lg-hint code { font-family: var(--mono); font-size: 11px; }
+  .lg-list { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black1); overflow: hidden; }
+  .lg-day { padding: 5px 12px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--silver-dim); background: var(--black2); border-top: 1px solid var(--border); }
+  .lg-day:first-child { border-top: 0; }
+  .lg-row { display: grid; grid-template-columns: 92px 58px 128px minmax(0, 1fr); gap: 10px; padding: 3px 12px; border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent); cursor: pointer; }
+  .lg-row:hover { background: var(--black2); }
+  .lg-row.ctx { opacity: .62; }
+  .lg-row.ctx:hover { opacity: 1; }
+  .lg-row.WARNING { background: color-mix(in srgb, var(--warn) 7%, transparent); }
+  .lg-row.ERROR, .lg-row.CRITICAL { background: color-mix(in srgb, var(--danger) 9%, transparent); }
+  .lg-row.fresh { animation: lg-fresh 1.6s ease-out; }
+  @keyframes lg-fresh { from { background: var(--gold-glow); } }
+  .lg-t { color: var(--text-secondary); white-space: nowrap; }
+  .lg-lv { font-size: 10px; letter-spacing: .08em; color: var(--silver-dim); }
+  .lg-lv.WARNING { color: var(--warn); }
+  .lg-lv.ERROR, .lg-lv.CRITICAL { color: var(--danger); }
+  .lg-mod { color: var(--silver-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-m { color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  .lg-m mark { background: var(--gold-glow); color: var(--gold-bright); border-radius: 2px; }
+  .lg-m .lg-link { color: var(--gold); border-bottom: 1px dotted var(--gold-dim); cursor: pointer; }
+  .lg-m .lg-link:hover { color: var(--gold-bright); }
+  .lg-st { display: inline-block; min-width: 30px; margin-right: 8px; padding: 0 4px; border-radius: 3px; text-align: center; font-size: 10.5px; border: 1px solid var(--border); color: var(--ok); }
+  .lg-st.s3 { color: var(--silver); }
+  .lg-st.s4 { color: var(--warn); border-color: var(--warn); }
+  .lg-st.s5 { color: var(--danger); border-color: var(--danger); }
+  .lg-rid { margin-left: 8px; font-size: 10px; color: var(--text-muted); }
+  .lg-detail { grid-column: 1 / -1; margin: 6px 0 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--black); cursor: default; }
+  .lg-detail dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 3px 12px; font-size: 11px; }
+  .lg-detail dt { color: var(--text-secondary); }
+  .lg-detail dd { overflow-wrap: anywhere; }
+  .lg-detail pre { margin-top: 8px; max-height: 360px; overflow: auto; font-family: var(--mono); font-size: 11px; color: var(--danger); white-space: pre; }
+  .lg-detail .rp-actions { margin-bottom: 0; }
+  .lg-x-inline { margin-top: 3px; font-size: 10.5px; color: var(--danger); }
+  .lg-empty { padding: 28px 16px; text-align: center; color: var(--text-secondary); font-family: 'DM Sans', system-ui, sans-serif; font-size: 13px; }
+  .lg-more { display: flex; justify-content: center; padding: 14px 0 0; }
+  @media (max-width: 860px) {
+    .lg-head h2 { font-size: 32px; }
+    .lg-row { grid-template-columns: auto auto minmax(0, 1fr); gap: 2px 10px; padding: 6px 12px; }
+    .lg-m { grid-column: 1 / -1; }
+    .lg-bar input[type="text"] { font-size: 16px; }
+    .lg-bar select { flex: 1; }
+    .lg-selects { margin-left: 0; width: 100%; justify-content: stretch; }
+  }
   /* Reports */
   .rp-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
   .rp-limits { font-size: 13px; color: var(--text-secondary); }
@@ -897,7 +967,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'sash-lists' || hash === 'presets' || hash === 'fonts' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'logs' || hash === 'sash-lists' || hash === 'presets' || hash === 'fonts' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -925,6 +995,7 @@ function renderNav() {
   html += `<a href="#overview" data-view="overview" class="${activeView === 'overview' ? 'active' : ''}"><span>Overview</span>${pending.size ? '<span class="dot" title="Restart required"></span>' : ''}</a>`;
   html += `<a href="#artwork" data-view="artwork" class="${activeView === 'artwork' ? 'active' : ''}"><span>Artwork</span></a>`;
   html += `<a href="#reports" data-view="reports" class="${activeView === 'reports' ? 'active' : ''}"><span>Reports</span>${status && status.reports_open ? `<span class="chip pending">${status.reports_open}</span>` : ''}</a>`;
+  html += `<a href="#logs" data-view="logs" class="${activeView === 'logs' ? 'active' : ''}"><span>Logs</span></a>`;
   html += `<a href="#presets" data-view="presets" class="${activeView === 'presets' ? 'active' : ''}"><span>Presets</span>${pr.data ? `<span class="count">${pr.data.presets.length}</span>` : ''}</a>`;
   html += `<a href="#fonts" data-view="fonts" class="${activeView === 'fonts' ? 'active' : ''}"><span>Fonts</span>${ft.data && ft.data.fonts.length ? `<span class="count">${ft.data.fonts.length}</span>` : ''}</a>`;
   html += `<a href="#sash-lists" data-view="sash-lists" class="${activeView === 'sash-lists' ? 'active' : ''}"><span>Sash lists</span>${slDirtySections().length ? `<span class="chip dirty">${slDirtySections().length}</span>` : ''}</a>`;
@@ -940,6 +1011,7 @@ function renderNav() {
 }
 function setView(view) {
   if (view !== 'artwork') art.title = null;
+  if (view !== 'logs') lgStopLive();
   activeView = view;
   history.replaceState(null, '', '#' + view);
   renderNav();
@@ -1257,11 +1329,423 @@ function renderView() {
   document.querySelector('.shell').classList.toggle('wide', activeView === 'artwork' && !!art.title);
   if (activeView === 'artwork') { main.innerHTML = renderArtwork(); if (!art.list) loadArtList(); return; }
   if (activeView === 'reports') { main.innerHTML = renderReports(); loadReports(); return; }
+  if (activeView === 'logs') { main.innerHTML = renderLogs(); lgRenderModules(); if (lg.live && !lg.timer) lgSetLive(true); if (!lg.loaded) lgLoad(); else lgRenderList(); return; }
   if (activeView === 'presets') { main.innerHTML = renderPresets(); if (!pr.data) loadPresets(); return; }
   if (activeView === 'fonts') { main.innerHTML = renderFonts(); if (!ft.data) loadFonts(); return; }
   if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
   main.innerHTML = g ? renderGroup(g) : '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Logs.  The server keeps a structured copy of its log (log_store.py) and
+// filters it; this view is the filter bar, the list and a live tail.  Every
+// line carries the id of the HTTP request that logged it, so "Whole requests"
+// turns one matching line into everything that happened serving it.  The
+// title finder turns a name into the ids a title is logged under.
+const LG_PREFS = 'postersplus_admin_logs';
+const LG_SINCE = [[900, 'Last 15 min'], [3600, 'Last hour'], [21600, 'Last 6 h'], [86400, 'Last 24 h'], [604800, 'Last 7 days'], [0, 'Everything kept']];
+const lg = {
+  f: { q: '', levels: [], problems: false, kind: 'all', module: '', since: 86400, noise: false, expand: true },
+  entries: [], older: null, tail: null, counts: null, loggers: [], loaded: false, loading: false,
+  enabled: true, reason: '', size: 0, max: 0, error: '',
+  title: null, tq: '', tresults: null, rid: null, open: new Set(), fresh: new Set(),
+  live: false, timer: null, seq: 0,
+};
+try { Object.assign(lg.f, JSON.parse(localStorage.getItem(LG_PREFS) || '{}'), { q: '', module: '' }); } catch (_) {}
+function lgSavePrefs() {
+  const { levels, problems, kind, since, noise, expand } = lg.f;
+  try { localStorage.setItem(LG_PREFS, JSON.stringify({ levels, problems, kind, since, noise, expand })); } catch (_) {}
+}
+
+function lgIds() {
+  const t = lg.title;
+  if (!t) return [];
+  // "movie:550" rather than "550": TMDB numbers movies and series separately,
+  // and the server leaves out lines about the other kind with the same id.
+  const tmdb = t.tmdb_id && (t.media_type ? `${t.media_type}:${t.tmdb_id}` : t.tmdb_id);
+  return [tmdb, t.imdb_id, t.tvdb_id ? 'tvdb:' + t.tvdb_id : null].filter(Boolean);
+}
+function lgParams(extra) {
+  const f = lg.f, p = new URLSearchParams();
+  if (f.q.trim()) p.set('q', f.q.trim());
+  if (f.levels.length) p.set('levels', f.levels.join(','));
+  if (f.problems) p.set('problems', 'true');
+  if (f.kind !== 'all') p.set('kind', f.kind);
+  if (f.module) p.set('module', f.module);
+  if (f.since) p.set('since', f.since);
+  if (f.noise) p.set('noise', 'true');
+  if (f.expand) p.set('expand', 'true');
+  const ids = lgIds();
+  if (ids.length) p.set('ids', ids.join(','));
+  if (lg.rid) p.set('rid', lg.rid);
+  for (const [k, v] of Object.entries(extra || {})) p.set(k, v);
+  return p.toString();
+}
+
+async function lgLoad(more) {
+  const seq = ++lg.seq;
+  lg.loading = true;
+  if (!more) lgRenderList();
+  const r = await api('/admin/api/logs?' + lgParams(more && lg.older ? { before: lg.older, limit: 300 } : { limit: 300 }));
+  if (seq !== lg.seq) return;          // a newer filter change is on its way
+  lg.loading = false; lg.loaded = true;
+  if (!r.ok) { lg.error = (r.body && r.body.detail) || `Loading logs failed (HTTP ${r.status})`; lgRenderList(); return; }
+  lg.error = '';
+  const b = r.body;
+  lg.enabled = b.enabled; lg.reason = b.reason || '';
+  if (!b.enabled) { lg.entries = []; if (activeView === 'logs') renderView(); return; }
+  lg.size = b.size; lg.max = b.max_bytes;
+  if (more) {
+    const seen = new Set(lg.entries.map(e => e.id));
+    lg.entries = lg.entries.concat(b.entries.filter(e => !seen.has(e.id)));
+  } else {
+    lg.entries = b.entries; lg.open = new Set();
+    lg.tail = b.tail; lg.counts = b.counts; lg.loggers = b.loggers;
+  }
+  lg.older = b.older;
+  lgRenderList();
+  lgRenderModules();
+}
+
+async function lgPoll() {
+  if (activeView !== 'logs' || !lg.live || !lg.tail || lg.loading || document.hidden) return;
+  const seq = lg.seq;
+  const r = await api('/admin/api/logs?' + lgParams({ after: lg.tail }));
+  if (seq !== lg.seq || !r.ok || !r.body.enabled) return;
+  lg.tail = r.body.tail;
+  // With Whole requests on, a new match brings its request's earlier lines,
+  // some of which may already be listed, and older than the newest line.
+  const have = new Set(lg.entries.map(e => e.id));
+  const add = r.body.entries.filter(e => !have.has(e.id)).reverse();
+  if (!add.length) return;
+  for (const e of add) {
+    lg.fresh.add(e.id);
+    if (!e.ctx && lg.counts && (e.lv === 'WARNING' || e.lv === 'ERROR' || e.lv === 'CRITICAL')) lg.counts[e.lv === 'WARNING' ? 'WARNING' : 'ERROR']++;
+  }
+  // Keep what the reader is looking at still while lines arrive above it.
+  const list = document.getElementById('lg-list');
+  const before = list ? list.getBoundingClientRect().height : 0;
+  const reading = list && window.scrollY > list.offsetTop;
+  lg.entries = add.concat(lg.entries);
+  if (add.some(e => e.ctx)) lg.entries.sort((a, b) => b.t - a.t);
+  lg.entries = lg.entries.slice(0, 5000);
+  lgRenderList();
+  if (reading) window.scrollBy(0, document.getElementById('lg-list').getBoundingClientRect().height - before);
+  setTimeout(() => { for (const e of add) lg.fresh.delete(e.id); }, 1700);
+}
+function lgSetLive(on) {
+  lg.live = on;
+  clearInterval(lg.timer);
+  if (on) lg.timer = setInterval(lgPoll, 2000);
+}
+function lgStopLive() { clearInterval(lg.timer); lg.timer = null; }
+
+function lgSet(key, value) {
+  lg.f[key] = value;
+  lgSavePrefs();
+  renderView();
+  lgLoad();
+}
+function lgToggleLevel(lv) {
+  const s = new Set(lg.f.levels);
+  if (s.has(lv)) s.delete(lv); else s.add(lv);
+  lgSet('levels', ['INFO', 'WARNING', 'ERROR'].filter(l => s.has(l)));
+}
+let lgTypeTimer = null;
+function lgQueryInput(v) {
+  clearTimeout(lgTypeTimer);
+  lg.f.q = v;
+  lgTypeTimer = setTimeout(() => lgLoad(), 400);
+}
+function lgSetRid(rid) {
+  lg.rid = rid;
+  renderView(); lgLoad();
+  window.scrollTo({ top: 0 });
+}
+
+// ── Title finder: the Artwork search, plus pasted IMDb / TVDB ids.
+function lgFindInput() {
+  clearTimeout(lgTypeTimer);
+  const el = document.getElementById('lg-tq');
+  lg.tq = el.value;
+  if (!el.value.trim()) { if (lg.tresults) { lg.tresults = null; renderView(); artRefocus('lg-tq'); } return; }
+  lgTypeTimer = setTimeout(lgFind, 450);
+}
+async function lgFind() {
+  clearTimeout(lgTypeTimer);
+  const q = (document.getElementById('lg-tq') || {}).value?.trim() || '';
+  if (!q) return;
+  const imdb = q.match(/^(?:.*\/title\/)?(tt\d{5,10})\b/i), tvdb = q.match(/^tvdb[:\s]*(\d{1,10})$/i), tmdb = q.match(/^(?:tmdb[:\s]*)(\d{1,10})$/i);
+  if (imdb) return lgPickTitle({ imdb_id: imdb[1].toLowerCase() });
+  if (tvdb) return lgPickTitle({ tvdb_id: tvdb[1] });
+  if (tmdb) { lg.tq = q; lg.tresults = [{ tmdb_id: tmdb[1], media_type: 'movie', title: `TMDB ${tmdb[1]} as a movie`, year: '' }, { tmdb_id: tmdb[1], media_type: 'tv', title: `TMDB ${tmdb[1]} as a series`, year: '' }]; renderView(); artRefocus('lg-tq'); return; }
+  const r = await api('/admin/api/art/search?q=' + encodeURIComponent(q));
+  const now = document.getElementById('lg-tq');
+  if (!now || now.value.trim() !== q) return;
+  lg.tresults = r.ok ? r.body.results : [];
+  if (!r.ok) toast((r.body && r.body.detail) || 'Search failed');
+  renderView();
+  artRefocus('lg-tq');
+}
+async function lgPickTitle(ref) {
+  const p = new URLSearchParams(ref);
+  const r = await api('/admin/api/logs/title?' + p);
+  if (!r.ok) { toast((r.body && r.body.detail) || 'Could not look that title up'); return; }
+  lg.title = r.body; lg.tresults = null; lg.tq = '';
+  renderView(); lgLoad();
+}
+function lgClearTitle() { lg.title = null; renderView(); lgLoad(); }
+document.addEventListener('click', e => {
+  if (lg.tresults && !e.target.closest('.lg-find')) { lg.tresults = null; if (activeView === 'logs') renderView(); }
+});
+async function lgCopy(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied ' + text); } catch (_) { toast(text); }
+}
+
+function renderLogs() {
+  if (!lg.enabled) {
+    return `<div class="art-view"><div class="art-head lg-head"><h2>Logs</h2></div>
+      <div class="notice warn"><div class="notice-body"><p><strong>The Logs view is off.</strong> ${esc(lg.reason)}.</p><p>It reads a copy of the log kept in the cache volume; set <code>LOG_VIEWER_MAX_MB</code> (Caching) above 0 and restart. <code>docker logs</code> still has everything.</p></div></div></div>`;
+  }
+  const f = lg.f, t = lg.title;
+  const lvBtn = (lv, label, cls) => `<button type="button" class="${f.levels.includes(lv) ? 'on' : ''}" onclick="lgToggleLevel('${lv}')">${label}${cls ? `<span class="c ${cls}" id="lg-c-${lv}"></span>` : ''}</button>`;
+  let html = `<div class="art-view">
+    <div class="art-head lg-head">
+      <h2>Logs</h2>
+      <span class="art-meta" id="lg-size"></span>
+      <span class="art-head-right"><span class="art-head-row">
+        <button type="button" class="art-btn" onclick="lgLoad()">Refresh</button>
+        <button type="button" class="art-btn" onclick="lgDownload()">Download</button>
+      </span></span>
+    </div>
+    <div class="lg-bar">
+      <span class="lg-find art-hsearch">
+        <input type="text" id="lg-tq" placeholder="Find a title — name, IMDb id or tvdb:id" value="${esc(lg.tq)}" autocomplete="off" oninput="lgFindInput()" onkeydown="if(event.key==='Enter')lgFind();if(event.key==='Escape'){lg.tresults=null;renderView()}">
+        ${lg.tresults ? `<span class="art-hresults">${lg.tresults.length ? lg.tresults.slice(0, 8).map(r => `<button type="button" onclick="lgPickTitle({media_type:'${r.media_type}',tmdb_id:'${esc(r.tmdb_id)}'})">${r.thumb ? `<img src="${esc(r.thumb)}" alt="">` : '<span class="ph"></span>'}<span><span class="n">${esc(r.title)}</span><span class="m">${r.media_type === 'tv' ? 'Series' : 'Movie'}${r.year ? ' · ' + esc(r.year) : ''} · tmdb:${esc(r.tmdb_id)}</span></span></button>`).join('') : '<span class="none">Nothing found</span>'}</span>` : ''}
+      </span>
+      <input type="text" class="grow" id="lg-q" placeholder='Filter text — words, -exclude, "a phrase" or /regex/' value="${esc(f.q)}" autocomplete="off" oninput="lgQueryInput(this.value)" onkeydown="if(event.key==='Enter'){clearTimeout(lgTypeTimer);lgLoad()}">
+    </div>
+    <div class="lg-bar">
+      <span class="art-seg lg-seg">${lvBtn('INFO', 'Info')}${lvBtn('WARNING', 'Warning', 'warn')}${lvBtn('ERROR', 'Error', 'err')}</span>
+      <span class="lg-selects">
+        <select onchange="lgSet('since', +this.value)">${LG_SINCE.map(([v, n]) => `<option value="${v}" ${v === f.since ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <select onchange="lgSet('kind', this.value)"><option value="all" ${f.kind === 'all' ? 'selected' : ''}>App + HTTP</option><option value="app" ${f.kind === 'app' ? 'selected' : ''}>App only</option><option value="access" ${f.kind === 'access' ? 'selected' : ''}>HTTP requests only</option></select>
+        <select id="lg-module" onchange="lgSet('module', this.value)"></select>
+      </span>
+    </div>
+    <div class="lg-bar lg-toggles">
+      <label class="art-toggle" title="Warnings, errors and HTTP responses of 400 or more"><input type="checkbox" ${f.problems ? 'checked' : ''} onchange="lgSet('problems', this.checked)"><span class="art-switch"></span>Problems only</label>
+      <label class="art-toggle" title="A matching line brings every other line logged while serving the same request (dimmed)"><input type="checkbox" ${f.expand ? 'checked' : ''} onchange="lgSet('expand', this.checked)"><span class="art-switch"></span>Whole requests</label>
+      <label class="art-toggle" title="Requests for /health, /static, the favicon and this dashboard's own API"><input type="checkbox" ${f.noise ? 'checked' : ''} onchange="lgSet('noise', this.checked)"><span class="art-switch"></span>Health &amp; dashboard</label>
+      <label class="art-toggle" title="Fetch new lines every 2 seconds"><input type="checkbox" ${lg.live ? 'checked' : ''} onchange="lgSetLive(this.checked)"><span class="art-switch"></span>Live</label>
+    </div>`;
+  if (t || lg.rid) {
+    html += `<div class="lg-chips">`;
+    if (t) {
+      const ids = [t.tmdb_id && ['tmdb:' + t.tmdb_id, t.tmdb_id], t.imdb_id && [t.imdb_id, t.imdb_id], t.tvdb_id && ['tvdb:' + t.tvdb_id, t.tvdb_id]].filter(Boolean);
+      html += `<span class="lg-chip">${t.thumb ? `<img src="${esc(t.thumb)}" alt="">` : ''}<span>
+        <span>${esc(t.title || 'Unknown to TMDB')}</span> <span class="sub">${t.media_type === 'tv' ? 'Series' : t.media_type === 'movie' ? 'Movie' : ''}${t.year ? ' · ' + esc(t.year) : ''}</span>
+        <span class="ids">${ids.map(([label, v]) => `<code title="Copy ${esc(v)}" onclick="lgCopy(${jsArg(v)})">${esc(label)}</code>`).join('')}${t.tmdb_id ? `<a href="#artwork/${t.media_type}/${esc(t.tmdb_id)}">Artwork ↗</a>` : ''}</span>
+      </span><button type="button" class="lg-x" title="Clear" onclick="lgClearTitle()">×</button></span>`;
+    }
+    if (lg.rid) html += `<span class="lg-chip"><span>Request <code>${esc(lg.rid)}</code> <span class="sub">every line it logged</span></span><button type="button" class="lg-x" title="Clear" onclick="lgSetRid(null)">×</button></span>`;
+    html += `</div>`;
+  }
+  html += `<div class="lg-meta"><span id="lg-status"></span><span>Click a line for details · ids in lines are clickable</span></div>
+    <div id="lg-list" class="lg-list"></div><div class="lg-more" id="lg-more"></div></div>`;
+  return html;
+}
+
+function lgRenderModules() {
+  const sel = document.getElementById('lg-module');
+  if (!sel) return;
+  const mods = new Set(lg.loggers);
+  if (lg.f.module) mods.add(lg.f.module);
+  sel.innerHTML = `<option value="">All modules</option>` + [...mods].sort().map(m => `<option value="${esc(m)}" ${m === lg.f.module ? 'selected' : ''}>${esc(m)}</option>`).join('');
+}
+
+// Ids in a message become filter links; filter words are highlighted.  A
+// TMDB id is a bare number, linked only where the code logs one as an id
+// (the same places the server's title filter matches it).
+const LG_TMDB_BEFORE = String.raw`(?<=tmdb(?:_id)?[=:/]|\bfor |\b(?:movie|tv|series)[_/: ]|tt\d+:|\bposter )`;
+function lgMsgHtml(text, e) {
+  const words = [];
+  const q = lg.f.q.trim();
+  if (q && !(q.length > 2 && q.startsWith('/') && q.endsWith('/'))) {
+    for (const m of q.matchAll(/(-?)"([^"]*)"|(\S+)/g)) {
+      if (m[1] || (m[3] && m[3].startsWith('-'))) continue;
+      const w = m[2] ?? m[3];
+      if (w) words.push(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    }
+  }
+  const idRe = String.raw`(?<imdb>(?<![A-Za-z0-9])tt\d{5,10}(?!\d))|(?<tvdb>tvdb(?:_id)?[=:]\s*\d{1,10})|${LG_TMDB_BEFORE}(?<tmdb>\d{1,10})(?![\d.])`;
+  const re = new RegExp(words.length ? `${idRe}|(?<word>${words.join('|')})` : idRe, 'gi');
+  let out = '', last = 0;
+  for (const m of text.matchAll(re)) {
+    out += esc(text.slice(last, m.index));
+    const g = m.groups;
+    if (g.imdb || g.tvdb) {
+      const tv = g.tvdb && g.tvdb.match(/(\d+)$/);
+      const ref = tv ? `{tvdb_id:'${tv[1]}'}` : `{imdb_id:'${g.imdb.toLowerCase()}'}`;
+      out += `<span class="lg-link" title="Show this title's lines" onclick="event.stopPropagation();lgPickTitle(${ref})">${esc(m[0])}</span>`;
+    } else if (g.tmdb) {
+      const type = lgTypeIn(text, g.tmdb) || '';
+      out += `<span class="lg-link" title="Show this title's lines" onclick="lgTmdbClick(event, '${esc(e ? e.id : '')}', '${g.tmdb}', '${type}')">${esc(m[0])}</span>`;
+    } else {
+      out += `<mark>${esc(m[0])}</mark>`;
+    }
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+// Whether a line says which kind of title TMDB id *id* is: a cache key
+// (movie_550_…, tmdb:1399:1399:tv:…), a tv/1399 path, or a poster URL's type=.
+// log_store.tmdb_kind_in reads lines the same way; keep the two in step.
+function lgTypeIn(text, id) {
+  const kind = k => (k.toLowerCase() === 'movie' ? 'movie' : 'tv');
+  let m = text.match(new RegExp(String.raw`\b(movie|tv|series)[_/: ]${id}(?![\d.])`, 'i'))
+       || text.match(new RegExp(String.raw`[:/]${id}(?::\d+)*:(movie|tv|series)\b`, 'i'));
+  if (m) return kind(m[1]);
+  if (new RegExp(String.raw`(?:tmdb_id=|tmdb:)${id}(?!\d)`, 'i').test(text)) {
+    m = text.match(/[?&](?:type|media_type)=(movie|tv|series)\b/i);
+    if (m) return kind(m[1]);
+  }
+  return null;
+}
+function lgTypeInRequest(lines, id) {
+  for (const x of lines) {
+    const t = lgTypeIn(x.m || '', id);
+    if (t) return t;
+  }
+  return null;
+}
+// A TMDB id's kind from its own line, else from the other lines of its
+// request (loaded, or fetched), else the reader picks from both candidates.
+async function lgTmdbClick(ev, entryId, id, type) {
+  ev.stopPropagation();
+  const at = { x: ev.clientX, y: ev.clientY };
+  if (!type) {
+    const e = lg.entries.find(x => x.id === entryId);
+    if (e && e.rid) {
+      type = lgTypeInRequest(lg.entries.filter(x => x.rid === e.rid), id);
+      if (!type) {
+        const r = await api(`/admin/api/logs?rid=${encodeURIComponent(e.rid)}&noise=true&limit=200`);
+        if (r.ok && r.body.entries) type = lgTypeInRequest(r.body.entries, id);
+      }
+    }
+  }
+  if (type) return lgPickTitle({ media_type: type, tmdb_id: id });
+  lgChooser(at, id);
+}
+async function lgChooser(at, id) {
+  lgChooserClose();
+  const pop = document.createElement('div');
+  pop.className = 'art-hresults lg-pop';
+  pop.innerHTML = `<span class="none">Looking up tmdb:${esc(id)}…</span>`;
+  document.body.appendChild(pop);
+  const place = () => {
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(at.x, window.innerWidth - w - 8)) + 'px';
+    pop.style.top = (at.y + 12 + h > window.innerHeight ? Math.max(8, at.y - h - 8) : at.y + 12) + 'px';
+  };
+  place();
+  const [mv, tv] = await Promise.all(['movie', 'tv'].map(t => api(`/admin/api/logs/title?media_type=${t}&tmdb_id=${id}`)));
+  if (!pop.isConnected) return;
+  const opts = [['movie', mv], ['tv', tv]].filter(([, r]) => r.ok);
+  pop.innerHTML = `<span class="none">tmdb:${esc(id)} doesn't say movie or series. Which one?</span>` + (opts.length ? opts.map(([t, r]) => {
+    const b = r.body;
+    return `<button type="button" onclick="lgChooserClose();lgPickTitle({media_type:'${t}',tmdb_id:'${esc(id)}'})">${b.thumb ? `<img src="${esc(b.thumb)}" alt="">` : '<span class="ph"></span>'}<span><span class="n">${esc(b.title)}</span><span class="m">${t === 'tv' ? 'Series' : 'Movie'}${b.year ? ' · ' + esc(b.year) : ''}</span></span></button>`;
+  }).join('') : `<span class="none">TMDB has neither a movie nor a series with this id.</span>`);
+  place();
+}
+function lgChooserClose() { document.querySelectorAll('.lg-pop').forEach(p => p.remove()); }
+document.addEventListener('click', e => { if (!e.target.closest('.lg-pop')) lgChooserClose(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') lgChooserClose(); });
+window.addEventListener('scroll', lgChooserClose, { passive: true });
+
+function lgTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+function lgRowHtml(e) {
+  const access = e.lg === 'uvicorn.access';
+  const mod = access ? 'http' : e.lg.replace(/^uvicorn\.error$/, 'uvicorn');
+  let msg = access && e.st != null ? `<span class="lg-st s${String(e.st)[0]}">${esc(e.st)}</span>${lgMsgHtml(e.m || '', e)}` : lgMsgHtml(e.m || '', e);
+  if (e.x && !lg.open.has(e.id)) msg += `<div class="lg-x-inline">▸ traceback · ${esc((e.x.trim().split('\n').pop() || '').slice(0, 160))}</div>`;
+  let html = `<div class="lg-row ${esc(e.lv)} ${e.ctx ? 'ctx' : ''} ${lg.fresh.has(e.id) ? 'fresh' : ''}" onclick="lgToggleRow('${esc(e.id)}', event)">
+    <span class="lg-t" title="${esc(new Date(e.t * 1000).toLocaleString())}">${lgTime(e.t)}</span>
+    <span class="lg-lv ${esc(e.lv)}">${esc(e.lv === 'WARNING' ? 'WARN' : e.lv)}</span>
+    <span class="lg-mod" title="${esc(e.lg)}">${esc(mod)}</span>
+    <span class="lg-m">${msg}</span>`;
+  if (lg.open.has(e.id)) {
+    html += `<div class="lg-detail" onclick="event.stopPropagation()"><dl>
+      <dt>Time</dt><dd>${esc(new Date(e.t * 1000).toLocaleString())} (${esc(new Date(e.t * 1000).toISOString())})</dd>
+      <dt>Logger</dt><dd>${esc(e.lg)}</dd>
+      <dt>Worker</dt><dd>pid ${esc(e.p)}</dd>
+      ${e.ip ? `<dt>Client</dt><dd>${esc(e.ip)}</dd>` : ''}
+      <dt>Request</dt><dd>${e.rid ? `<code>${esc(e.rid)}</code>` : 'none — logged by a background task'}</dd>
+    </dl>${e.x ? `<pre>${esc(e.x)}</pre>` : ''}
+    <div class="rp-actions">
+      ${e.rid && lg.rid !== e.rid ? `<button type="button" class="art-btn primary" onclick="lgSetRid('${esc(e.rid)}')">Show this request</button>` : ''}
+      <button type="button" class="art-btn" onclick="lgCopy(lgLineText(lg.entries.find(x => x.id === '${esc(e.id)}')))">Copy line</button>
+    </div></div>`;
+  }
+  return html + `</div>`;
+}
+function lgToggleRow(id, ev) {
+  if (ev && window.getSelection && String(window.getSelection()).length) return;   // selecting text, not clicking
+  if (lg.open.has(id)) lg.open.delete(id); else lg.open.add(id);
+  lgRenderList();
+}
+
+function lgRenderList() {
+  const list = document.getElementById('lg-list');
+  if (!list) return;
+  const counts = lg.counts || {};
+  for (const lv of ['WARNING', 'ERROR']) {
+    const el = document.getElementById('lg-c-' + lv);
+    if (el) el.textContent = counts[lv] ? counts[lv] : '';
+  }
+  const size = document.getElementById('lg-size');
+  if (size && lg.max) size.textContent = `${fmtBytes(lg.size)} of ${fmtBytes(lg.max)} kept`;
+  const st = document.getElementById('lg-status');
+  if (st) {
+    const shown = lg.entries.length, ctx = lg.entries.filter(e => e.ctx).length;
+    st.textContent = lg.loading ? 'Loading…' : lg.error ? lg.error
+      : `${shown.toLocaleString()} line${shown === 1 ? '' : 's'}${ctx ? ` (${ctx} from the same requests)` : ''}${lg.older ? ', more below' : ''}`;
+  }
+  if (lg.loading && !lg.entries.length) { list.innerHTML = `<div class="lg-empty">Loading…</div>`; return; }
+  if (!lg.entries.length) {
+    list.innerHTML = `<div class="lg-empty">${lg.error ? esc(lg.error) : 'No lines match.'}${lg.f.since && !lg.error ? ' Try a longer time range.' : ''}</div>`;
+  } else {
+    let html = '', day = '';
+    for (const e of lg.entries) {
+      const d = new Date(e.t * 1000).toDateString();
+      if (d !== day) { day = d; html += `<div class="lg-day">${esc(new Date(e.t * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))}</div>`; }
+      html += lgRowHtml(e);
+    }
+    list.innerHTML = html;
+  }
+  const more = document.getElementById('lg-more');
+  if (more) more.innerHTML = lg.older ? `<button type="button" class="art-btn" onclick="lgLoad(true)" ${lg.loading ? 'disabled' : ''}>Load older</button>` : '';
+}
+
+function lgLineText(e) {
+  const d = new Date(e.t * 1000), pad = n => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const msg = e.lg === 'uvicorn.access' ? `${e.ip || ''} "${e.m}" ${e.st}` : e.m;
+  return `${ts} [${e.lv}] ${e.lg}${e.rid ? ' #' + e.rid : ''}: ${msg}${e.x ? '\n' + e.x.trimEnd() : ''}`;
+}
+function lgDownload() {
+  if (!lg.entries.length) { toast('Nothing to download'); return; }
+  const text = lg.entries.slice().reverse().map(lgLineText).join('\n') + '\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = `postersplus-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
