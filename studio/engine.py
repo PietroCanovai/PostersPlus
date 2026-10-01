@@ -471,7 +471,10 @@ async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
                 db.log_run_item(run_id, jf_id, name, "would_upload", f"{label}: {reason}")
                 actions.append("would_upload")
                 continue
-            await jf.upload_image(jf_id, label, data, ctype, index=0 if kind == "backdrop" else None)
+            if kind == "backdrop":
+                await jf.replace_backdrop(jf_id, data, ctype, st.get("pushed_tag"))
+            else:
+                await jf.upload_image(jf_id, label, data, ctype)
             fresh = await jf.item(jf_id)
             artwork.record_pushed(jf_id, kind, image_hash, fresh.tag(kind))
             act = "reverted" if reverted else "uploaded"

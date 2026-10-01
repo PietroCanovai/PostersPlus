@@ -203,18 +203,43 @@ class EngineArtTests(unittest.TestCase):
 
     def test_backdrop_and_logo_when_on(self):
         artwork.set_library_rules({"backdrop": {"enabled": True}, "logo": {"enabled": True}})
+        m1 = self.jf.find("m1")
+        m1["BackdropImageTags"] = ["jellyfins-own", "jellyfins-second"]
         self.sync()
         paths = sorted(p for _, p, _ in self.jf.art_uploads)
-        self.assertEqual(paths, ["/Items/m1/Images/Backdrop/0", "/Items/m1/Images/Logo"])   # backdrop replaces #0
+        self.assertEqual(paths, ["/Items/m1/Images/Backdrop", "/Items/m1/Images/Logo"])
+        # Jellyfin adds a backdrop at the end: ours is moved to the front, Jellyfin's stay after it.
+        ours = m1["BackdropImageTags"][0]
+        self.assertTrue(ours.startswith("ours-"))
+        self.assertEqual(sorted(m1["BackdropImageTags"][1:]), ["jellyfins-own", "jellyfins-second"])
         # Nothing changed: nothing sent again.
         self.sync()
         self.assertEqual(len(self.jf.art_uploads), 2)
+        # A new backdrop takes the place of the one we sent: no copies pile up.
+        self.bytes["backdrop"] = b"bd-2-longer"
+        self.sync()
+        self.assertEqual(len(m1["BackdropImageTags"]), 3)
+        self.assertNotIn(ours, m1["BackdropImageTags"])
+        self.assertTrue(m1["BackdropImageTags"][0].startswith("ours-"))
         # A changed logo is sent; a backdrop Jellyfin replaced is put back.
         self.bytes["logo"] = b"logo-2"
-        self.jf.find("m1")["BackdropImageTags"] = ["someone-else"]
+        m1["BackdropImageTags"] = ["someone-else"]
         counts = self.sync()
-        self.assertEqual(len(self.jf.art_uploads), 4)
+        self.assertEqual(len(self.jf.art_uploads), 5)
         self.assertEqual(counts.get("reverted"), 1)
+        self.assertEqual(len(m1["BackdropImageTags"]), 2)
+        self.assertTrue(m1["BackdropImageTags"][0].startswith("ours-"))
+
+    def test_copies_left_by_earlier_pushes_are_removed(self):
+        """Before the fix every push added a copy after Jellyfin's backdrop."""
+        artwork.set_library_rules({"backdrop": {"enabled": True}})
+        m1 = self.jf.find("m1")
+        m1["BackdropImageTags"] = ["jellyfins-own", "copy-1", "copy-2"]
+        self.jf.backdrop_sizes.update({"copy-1": len(b"bd-1"), "copy-2": len(b"bd-1")})
+        self.sync()
+        self.assertEqual(len(m1["BackdropImageTags"]), 2)
+        self.assertTrue(m1["BackdropImageTags"][0].startswith("ours-"))
+        self.assertEqual(m1["BackdropImageTags"][1], "jellyfins-own")
 
     def test_keep_is_respected(self):
         artwork.set_library_rules({"logo": {"enabled": True}})

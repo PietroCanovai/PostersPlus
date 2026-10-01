@@ -183,6 +183,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # Backdrops sent before 2026-10-02 were added after Jellyfin's own instead of
+    # becoming the main one (Client.replace_backdrop): forget them once, so the
+    # next run sends each again, properly.
+    if not conn.execute("SELECT 1 FROM settings WHERE key = 'backdrops_resent_v1'").fetchone():
+        conn.execute("UPDATE item_images SET pushed_hash = NULL, pushed_tag = NULL WHERE kind = 'backdrop'")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('backdrops_resent_v1', 'true')")
 
 
 def execute(sql: str, args: tuple | list = ()) -> sqlite3.Cursor:

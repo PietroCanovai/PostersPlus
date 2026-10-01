@@ -34,6 +34,7 @@ class FakeJellyfin:
         }
         self.uploads: list[tuple[str, bytes, str]] = []
         self.art_uploads: list[tuple[str, str, bytes]] = []
+        self.backdrop_sizes: dict[str, int] = {}
         self._tag = 0
 
     def _item(self, id_, type_, name, tmdb=None, imdb=None):
@@ -70,6 +71,20 @@ class FakeJellyfin:
                 {"Id": "s1-0", "Type": "Season", "IndexNumber": 0, "Name": "Specials", "ImageTags": {}},
                 {"Id": "s1-1", "Type": "Season", "IndexNumber": 1, "Name": "Season 1", "ImageTags": {"Primary": "x"}},
             ]})
+        if path.endswith("/Images") and request.method == "GET":
+            it = self.find(path.split("/")[2])
+            return httpx.Response(200, json=[
+                {"ImageType": "Backdrop", "ImageIndex": i, "Size": self.backdrop_sizes.get(t, 999)}
+                for i, t in enumerate(it.get("BackdropImageTags") or [])])
+        if "/Images/Backdrop/" in path and request.method == "DELETE":
+            parts = path.split("/")
+            self.find(parts[2])["BackdropImageTags"].pop(int(parts[5]))
+            return httpx.Response(204)
+        if path.endswith("/Index") and request.method == "POST":
+            parts = path.split("/")          # /Items/<id>/Images/Backdrop/<index>/Index?newIndex=
+            tags, a, b = self.find(parts[2])["BackdropImageTags"], int(parts[5]), int(q["newIndex"])
+            tags[a], tags[b] = tags[b], tags[a]
+            return httpx.Response(204)
         if "/Images/" in path and request.method == "POST":
             parts = path.split("/")          # /Items/<id>/Images/<Type>[/<index>]
             id_, kind = parts[2], parts[4]
@@ -79,9 +94,12 @@ class FakeJellyfin:
                 self.uploads.append((id_, base64.b64decode(request.content), request.headers["content-type"]))
                 it["ImageTags"]["Primary"] = f"ours-{self._tag}"
             else:
-                self.art_uploads.append((id_, path, base64.b64decode(request.content)))
+                data = base64.b64decode(request.content)
+                self.art_uploads.append((id_, path, data))
                 if kind == "Backdrop":
-                    it["BackdropImageTags"] = [f"ours-{self._tag}"]
+                    # Like Jellyfin: a backdrop is added at the end, whatever index was asked for.
+                    it.setdefault("BackdropImageTags", []).append(f"ours-{self._tag}")
+                    self.backdrop_sizes[f"ours-{self._tag}"] = len(data)
                 else:
                     it["ImageTags"][kind] = f"ours-{self._tag}"
             return httpx.Response(204)
