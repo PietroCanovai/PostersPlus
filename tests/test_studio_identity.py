@@ -170,6 +170,62 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(asyncio.run(encora.recording("5", transport=t))["show_id"], "42")
         self.assertEqual(seen, [("/api/shows/search", "Bearer enc"), ("/api/recording/5", "Bearer enc")])
 
+    def test_images_come_from_every_provider_the_ids_reach(self):
+        """A film only IMDb knows: no TMDB id, yet TVDB, Fanart and IMDb all offer art."""
+        import sys
+        import types
+        from studio import artwork, candidates
+        asked = {}
+
+        async def resolve_tvdb_id(client, *, media_type, tvdb_id_hint=None, imdb_id=None, tmdb_id=None):
+            asked["tvdb"] = (tvdb_id_hint, imdb_id, tmdb_id)
+            return 555
+
+        async def fetch_tvdb_artworks(client, tvdb_id, media_type):
+            return {"posters": [{"url": "https://artworks.thetvdb.com/p.jpg", "language": "eng", "score": 1}],
+                    "logos": [], "backgrounds": [{"url": "https://artworks.thetvdb.com/b.jpg", "language": None}]}
+
+        async def fanart_candidates(client, *, media_type, tmdb_id, imdb_id=None):
+            asked["fanart"] = tmdb_id
+            return {"posters": [{"path": "https://assets.fanart.tv/fanart/x.jpg", "language": None}],
+                    "logos": [], "backdrops": []}
+
+        async def probe_art(client, imdb_id):
+            return True, True
+
+        async def head_ok(client, url):
+            return True
+        fakes = {
+            "main": types.SimpleNamespace(_HTTP_CLIENT=object()),
+            "config": types.SimpleNamespace(SERVER_TMDB_KEY="", FANART_API_KEY="f"),
+            "tvdb": types.SimpleNamespace(tvdb_enabled=lambda: True, resolve_tvdb_id=resolve_tvdb_id,
+                                          fetch_tvdb_artworks=fetch_tvdb_artworks, _LANG_3_TO_2={"eng": "en"}),
+            "fanart": types.SimpleNamespace(artwork_candidates=fanart_candidates),
+            "cinemeta": types.SimpleNamespace(
+                METAHUB_BASE="https://images.metahub.space", probe_art=probe_art, _head_ok=head_ok,
+                poster_url=lambda i, size="medium": f"https://images.metahub.space/poster/{size}/{i}/img",
+                background_url=lambda i, size="large": f"https://images.metahub.space/background/{size}/{i}/img"),
+        }
+        saved = {k: sys.modules.get(k) for k in fakes}
+        sys.modules.update(fakes)
+        try:
+            out = asyncio.run(candidates.for_title("movie", None, imdb_id="tt7654321", force=True))["candidates"]
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+        self.assertEqual(asked, {"tvdb": (None, "tt7654321", None), "fanart": "tt7654321"})
+        self.assertEqual([c["provider"] for c in out["posters"]], ["fanart", "tvdb", "imdb"])   # textless first
+        self.assertEqual({c["provider"] for c in out["backdrops"]}, {"tvdb", "imdb"})
+        self.assertEqual([c["provider"] for c in out["logos"]], ["imdb"])
+        # IMDb's images aren't a host the renderer fetches: they pass validation and are used through a copy.
+        imdb_poster = next(c["path"] for c in out["posters"] if c["provider"] == "imdb")
+        self.assertTrue(artwork.is_remote(imdb_poster) and artwork.is_remote(out["logos"][0]["path"]))
+        self.assertFalse(artwork.is_remote("https://images.metahub.space/poster/large/tt1/img?x=1"))
+        self.assertFalse(artwork.is_remote("https://evil.example/poster/large/tt1/img"))
+
     def test_parse_id(self):
         self.assertEqual(identity.parse_id("tvdb", "81189"), "81189")
         self.assertEqual(identity.parse_id("tmdb", " 949 "), "949")

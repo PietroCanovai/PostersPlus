@@ -70,12 +70,21 @@ def is_frame(path) -> bool:
     return isinstance(path, str) and bool(FRAME_RE.match(path))
 
 
+# IMDb's art on Cinemeta's Metahub CDN: offered by studio.candidates, but not a
+# host the renderer downloads from, so it is used through a copy like a frame.
+REMOTE_RE = re.compile(r"^https://images\.metahub\.space/(poster|background|logo)/(small|medium|large)/tt\d{1,10}/img$")
+
+
+def is_remote(path) -> bool:
+    return isinstance(path, str) and bool(REMOTE_RE.match(path))
+
+
 async def realize_path(path: str, crop: str = "", aspect: float = 16 / 9) -> str:
-    """A path the renderer can read: frames (and, framed with *crop*, any
-    image) become a hidden custom: copy, made the first time it's used and
-    kept out of the title's own images."""
+    """A path the renderer can read: frames and IMDb's images (and, framed
+    with *crop*, any image) become a hidden custom: copy, made the first time
+    it's used and kept out of the title's own images."""
     from . import stage
-    if not (is_frame(path) or crop or stage.is_stage_host(path)):
+    if not (is_frame(path) or is_remote(path) or crop or stage.is_stage_host(path)):
         return path
     import art_overrides
     src = f"{path}#{crop}#{aspect:.4f}" if crop else path
@@ -85,16 +94,20 @@ async def realize_path(path: str, crop: str = "", aspect: float = 16 / 9) -> str
     data = await fetch(path)
     if crop:
         data, _ = _frame(data, crop, aspect)
-    custom = await asyncio.to_thread(art_overrides.store_custom_image, data, kind="landscape")
+    remote = REMOTE_RE.match(path) if not crop else None
+    kind = {"poster": "poster", "logo": "logo"}.get(remote.group(1), "landscape") if remote else "landscape"
+    custom = await asyncio.to_thread(art_overrides.store_custom_image, data, kind=kind)
     db.execute("INSERT OR REPLACE INTO frame_cache (src, custom, added_at) VALUES (?, ?, ?)", (src, custom, time.time()))
     return custom
 
 
 async def realize(params: dict) -> dict:
-    """Render parameters with any frame swapped for its renderable copy."""
-    if is_frame(params.get("art_poster")):
-        return {**params, "art_poster": await realize_path(params["art_poster"])}
-    return params
+    """Render parameters with any frame or IMDb image swapped for its renderable copy."""
+    out = params
+    for k in ("art_poster", "art_logo"):
+        if is_frame(params.get(k)) or is_remote(params.get(k)):
+            out = {**out, k: await realize_path(params[k])}
+    return out
 
 
 # ── Per-title choices ───────────────────────────────────────────────────────
@@ -288,7 +301,7 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
                 and "landscape_hide_rating" not in extra):
             extra["landscape_hide_rating"] = "true"
         url = engine.poster_url(row, style_str, resolution=500, with_quality=False,
-                                access_key=_cfg.ACCESS_KEY or "", extra=extra)
+                                access_key=_cfg.ACCESS_KEY or "", extra=await realize(extra))
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
             return await engine.render(http, url)
     cands = await (cands_loader or _load_cands)(media, tmdb_id)

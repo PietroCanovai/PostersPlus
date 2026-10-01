@@ -62,6 +62,8 @@ Under a title's name is what Studio knows it by (e.g. *TMDB 949 · IMDb tt011327
 - **StageMedia**: search shows by name, give a show id (Encora's and StageMedia's are the same number), or give an Encora recording's id and Studio finds its show. Without an Encora API key (Settings) the search only lists shows already in your library.
 - **None**: no database knows it (a home video, a recording). Studio makes the poster from an image you pin: an upload, a link or a frame, with your style and the title as text or a logo of yours.
 
+The images offered come from every database the title's ids reach, not only TMDB: **TMDB** (by TMDB id), **TVDB** (by its own id, or found by IMDb/TMDB id), **Fanart** (films by TMDB or IMDb id, shows by TVDB id) and **IMDb** (its poster, background and logo, by IMDb id, no key needed); theatre titles get **StageMedia**'s. The *source* menu in the Art tab filters them. TVDB and Fanart need their keys in PostersPlus's admin dashboard.
+
 You don't have to identify a title to push a poster: pin an image of yours on an unidentified title and **Push now** (and the nightly run) sends it. Images and choices made before a title was identified come along when you identify it. Seasons follow their show.
 
 ## Poster style

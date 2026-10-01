@@ -50,7 +50,7 @@ def _validate_path(path: str) -> None:
     import art_overrides
 
     from . import artwork
-    if artwork.is_frame(path):
+    if artwork.is_frame(path) or artwork.is_remote(path):
         return
     art_overrides.provider_of(path)
 
@@ -174,12 +174,12 @@ async def title_candidates(jf_id: str, force: bool = False):
             found = await (identity.find_tmdb("imdb", imdb_id, _media_type(row)) if imdb_id
                            else identity.find_tmdb("tvdb", tvdb_id, _media_type(row)))
             tmdb_id = found["tmdb_id"] if found else None
-        if not tmdb_id:
-            return _json({**empty, "note": "No artwork to choose from for this title (it is drawn from its "
-                                           f"{'IMDb' if imdb_id else 'TVDB'} id alone): the automatic poster "
-                                           "still works, and you can add your own images."})
-        result = await candidates.for_title(_media_type(row), tmdb_id, force=force)
-        if row["jf_type"] == "Season":
+        # Every provider is asked by whichever id the title has, TMDB or not.
+        result = await candidates.for_title(_media_type(row), tmdb_id, imdb_id=imdb_id, tvdb_id=tvdb_id, force=force)
+        if not any(result["candidates"].values()):
+            result = {**result, "note": "None of TMDB, TVDB, Fanart or IMDb has artwork for this title: "
+                                        "add your own images."}
+        if row["jf_type"] == "Season" and tmdb_id:
             from . import seasons
             own = await seasons.season_posters(tmdb_id, int(row.get("season_number") or 0))
             result = {**result, "season": True,

@@ -4,7 +4,7 @@ import { chipsFor } from './library.js';
 import { sashName } from './notch.js';
 import { StyleControls, GROUPS, THUMB_GROUPS } from './controls.js';
 
-const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', custom: 'Yours', stagemedia: 'StageMedia', frame: 'Frame' };
+const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', imdb: 'IMDb', custom: 'Yours', stagemedia: 'StageMedia', frame: 'Frame' };
 // Curated sites without an API: opened in a new tab, their images added by link.
 const POSTER_SITES = [['ThePosterDB', 'https://theposterdb.com/search?term=']];
 const FRAME_SITES = [['FilmGrab', 'https://film-grab.com/?s='], ['Screencaps', 'https://movie-screencaps.com/?s=']];
@@ -604,7 +604,7 @@ export function Editor({ id, review }) {
     <div class="toolbar">
       <${Seg} small value=${art} onChange=${setArt} options=${artTabs} />
       ${['textless', 'titled', 'backdrops'].includes(art) && html`<select value=${source} onChange=${e => setSource(e.target.value)} aria-label="Source">
-        <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option></select>`}
+        <option value="all">All sources</option><option value="tmdb">TMDB</option><option value="fanart">Fanart</option><option value="tvdb">TVDB</option><option value="imdb">IMDb</option></select>`}
     </div>
     ${uploadRow(uploadKind, art === 'frames' ? FRAME_SITES : POSTER_SITES)}
     ${(art === 'frames' ? frames === null : !cands) ? html`<div class="empty">Loading…</div>`
