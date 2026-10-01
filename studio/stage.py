@@ -57,6 +57,25 @@ def show_name(item_name: str) -> str:
     return re.split(r"\s+-\s+", item_name or "", maxsplit=1)[0].strip() or item_name
 
 
+def title_text(row: dict) -> str:
+    """The name written on the poster: the show's for theatre, else the item's."""
+    from . import identity
+    return show_name(row["name"]) if identity.stage_id(row) else row["name"]
+
+
+async def _first_poster(row: dict, what: str) -> str:
+    """StageMedia's first image for the title's show; NoArt when there is none,
+    or when the title isn't a StageMedia show at all (drawn from your images)."""
+    from . import identity
+    show_id = identity.stage_id(row)
+    if not show_id:
+        raise NoArt("No image yet: pin one of your own in the editor")
+    found = await posters(show_id)
+    if not found:
+        raise NoArt(f"StageMedia has no {what} for this show yet; upload one in the editor")
+    return found[0]
+
+
 def is_stage_host(url: str) -> bool:
     host = (urlsplit(url).hostname or "").lower()
     return host == "stagemedia.me" or host.endswith(".stagemedia.me")
@@ -208,10 +227,7 @@ async def render_thumb(row: dict, style: str, params: dict, *, art: str = "", cr
     merged["shape"] = "landscape"
     source = art or poster_art
     if not source:
-        found = await posters(row["stage_show_id"])
-        if not found:
-            raise NoArt("StageMedia has no art for this show yet; upload one in the editor")
-        source = found[0]
+        source = await _first_poster(row, "art")
     data = await (artwork.fetch(source) if artwork.is_frame(source) else image_bytes(source))
     if art and crop:
         data, _ = artwork._frame(data, crop, 16 / 9)
@@ -230,7 +246,7 @@ async def render_thumb(row: dict, style: str, params: dict, *, art: str = "", cr
     def _compose() -> bytes:
         canvas = _stage_canvas(Image.open(io.BytesIO(data)), size, framed=bool(art and crop)).convert("RGBA")
         out = landscape.build_landscape(canvas, "—", "Theatre", cfg, logo=logo_img,
-                                        fallback_title=show_name(row["name"]) if wants_text else None)
+                                        fallback_title=title_text(row) if wants_text else None)
         return main._encode_poster(out)
 
     async with main._get_render_semaphore():
@@ -253,11 +269,10 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
     crop_token = merged.pop("art_crop", "")
     own_title = merged.pop("art_original", "") in ("1", "true")
     if not poster:
-        found = await posters(row["stage_show_id"])
-        if not found:
-            raise NoArt("StageMedia has no poster for this show yet; upload one in the editor")
-        poster = found[0]
+        poster = await _first_poster(row, "poster")
     data = await image_bytes(poster)
+    from . import artwork
+    is_frame = artwork.is_frame(poster)
     cfg = main.build_request_config(merged)
     width = resolution if resolution in (500, 780, 1000, 1500, 2000) else 1000
     size = (width, width * 3 // 2)
@@ -289,12 +304,12 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
         image = art.convert("RGBA")
         # StageMedia's posters are the show's key art, title included: the
         # name is only written on when you ask for it (Title as text), or on
-        # an upload of yours that has no title of its own.
+        # an image of yours that has no title of its own.
         wants_text = logo is None and not own_title and (
-            cfg.art_logo == "text" or (poster.startswith("custom:") and not cfg.art_logo))
+            cfg.art_logo == "text" or ((poster.startswith("custom:") or is_frame) and not cfg.art_logo))
         out = main.build_poster(
             image, "—", "Theatre", cfg, logo=logo,
-            fallback_title=show_name(row["name"]) if wants_text else None,
+            fallback_title=title_text(row) if wants_text else None,
         )
         return main._encode_poster(out)
 

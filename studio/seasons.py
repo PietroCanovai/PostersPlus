@@ -49,13 +49,15 @@ async def season_posters(tmdb_id: str, number: int) -> list[dict]:
 
 async def params_for(row: dict, own: dict) -> dict:
     """Render parameters for a season: the show's style < season defaults < the season's own rules."""
-    show_key = f"tmdb:tv:{row.get('manual_tmdb_id') or row.get('tmdb_id')}"
+    from . import identity
+    tmdb_id = identity.tmdb_id(row)
+    show_key = f"tmdb:tv:{tmdb_id}"
     params = dict(rules.get_title(show_key)["style"])
     number = int(row.get("season_number") or 0)
     params["notch_label"] = label(number)
     if "art_poster" not in own:
         banned = set((own.get("art_exclude") or "").split(","))
-        best = next((p for p in await season_posters(row.get("manual_tmdb_id") or row["tmdb_id"], number)
+        best = next((p for p in await season_posters(tmdb_id, number)
                      if p["path"] not in banned), None)
         if best is not None:
             params["art_poster"] = best["path"]

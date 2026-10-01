@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl, urlencode
 
 import httpx
 
-from . import db, prefs, rules
+from . import db, identity, prefs, rules
 from .jellyfin import Client, Item, JellyfinError, Library, quality_tokens
 
 logger = logging.getLogger("studio")
@@ -74,15 +74,21 @@ def is_stage(row: dict) -> bool:
     """A theatre title Studio draws from StageMedia: it has the Encora plugin's
     StageMediaShowId.  That wins over a TMDB id Jellyfin guessed (a show named
     like a film gets the film's id); only a match you set yourself beats it."""
-    from . import stage
-    return bool(row.get("stage_show_id")) and not row.get("manual_tmdb_id") and stage.enabled()
+    return identity.kind(row) == identity.STAGE
+
+
+def in_process(row: dict) -> bool:
+    """Drawn by Studio itself (studio.stage) rather than through /poster:
+    theatre, and titles no database knows, made from an image of yours."""
+    return identity.kind(row) != identity.POSTER
 
 
 def _item_status(row: dict, policy: dict) -> str:
-    if is_stage(row):
-        matched = True
-    else:
-        matched = bool(row.get("tmdb_id") or row.get("manual_tmdb_id") or row.get("imdb_id"))
+    # Identified, or deliberately not ("my own images"), or already given an image to use.
+    matched = (identity.kind(row) != identity.OWN or identity.source(row) == "none"
+               or rules.has_own_art(rules.title_key(row)))
+    if row.get("jf_type") == "Season":
+        matched = bool(identity.tmdb_id(row))   # season art comes from TMDB
     if not matched:
         return LEFT_ALONE if policy["unmatched"] == "leave" else NEEDS_MATCH
     if row.get("status") in (NEEDS_MATCH, LEFT_ALONE):
@@ -168,27 +174,28 @@ def _upsert_season(s: dict, series: Item, lib: Library, policy: dict, now: float
     """A season row: the show's ids, its own Jellyfin id, image tag and number."""
     name = f"{series.name} — {s['name'] or ('Specials' if s['number'] == 0 else 'Season ' + str(s['number']))}"
     old = db.query_one("SELECT * FROM items WHERE jf_id = ?", (s["id"],))
-    show = db.query_one("SELECT manual_tmdb_id FROM items WHERE jf_id = ?", (series.id,)) or {}
+    show = db.query_one("SELECT match_source, manual_tmdb_id FROM items WHERE jf_id = ?", (series.id,)) or {}
     row = dict(old or {})
-    # A season follows its show's match, the one you set by hand included.
+    # A season follows its show's identity, the one you set by hand included.
     row.update({"jf_id": s["id"], "jf_type": "Season", "tmdb_id": series.tmdb_id, "imdb_id": None,
-                "manual_tmdb_id": show.get("manual_tmdb_id")})
+                "match_source": show.get("match_source") or "", "manual_tmdb_id": show.get("manual_tmdb_id")})
     status = _item_status(row, policy)
     if status == NEEDS_MATCH:
         status = LEFT_ALONE   # the show is what needs matching, not each of its seasons
     if old is None:
         db.execute(
-            "INSERT INTO items (jf_id, library_id, library_name, jf_type, name, year, tmdb_id, manual_tmdb_id, "
-            "tvdb_id, jf_image_tag, status, parent_jf_id, season_number, added_at, seen_at) "
-            "VALUES (?, ?, ?, 'Season', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (s["id"], lib.id, lib.name, name, series.year, series.tmdb_id, row["manual_tmdb_id"], series.tvdb_id,
-             s["image_tag"], status, series.id, s["number"], now, now))
+            "INSERT INTO items (jf_id, library_id, library_name, jf_type, name, year, tmdb_id, match_source, "
+            "manual_tmdb_id, tvdb_id, jf_image_tag, status, parent_jf_id, season_number, added_at, seen_at) "
+            "VALUES (?, ?, ?, 'Season', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (s["id"], lib.id, lib.name, name, series.year, series.tmdb_id, row["match_source"], row["manual_tmdb_id"],
+             series.tvdb_id, s["image_tag"], status, series.id, s["number"], now, now))
     else:
         db.execute(
-            "UPDATE items SET library_id=?, library_name=?, name=?, year=?, tmdb_id=?, manual_tmdb_id=?, tvdb_id=?, "
-            "jf_image_tag=?, status=?, parent_jf_id=?, season_number=?, present=1, seen_at=? WHERE jf_id=?",
-            (lib.id, lib.name, name, series.year, series.tmdb_id, row["manual_tmdb_id"], series.tvdb_id,
-             s["image_tag"], status, series.id, s["number"], now, s["id"]))
+            "UPDATE items SET library_id=?, library_name=?, name=?, year=?, tmdb_id=?, match_source=?, "
+            "manual_tmdb_id=?, tvdb_id=?, jf_image_tag=?, status=?, parent_jf_id=?, season_number=?, present=1, "
+            "seen_at=? WHERE jf_id=?",
+            (lib.id, lib.name, name, series.year, series.tmdb_id, row["match_source"], row["manual_tmdb_id"],
+             series.tvdb_id, s["image_tag"], status, series.id, s["number"], now, s["id"]))
 
 
 # ── Render ──────────────────────────────────────────────────────────────────
@@ -211,11 +218,7 @@ def poster_url(row: dict, style: str, *, resolution: int, with_quality: bool, ac
         # Thumb (landscape) settings live in the same styles; a poster ignores
         # them, and leaving them out keeps its render cache key unchanged.
         params = {k: v for k, v in params.items() if not k.startswith("landscape_")}
-    tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
-    if tmdb_id:
-        params["tmdb_id"] = tmdb_id
-    if row.get("imdb_id"):
-        params["imdb_id"] = row["imdb_id"]
+    params.update(identity.render_ids(row))
     params["type"] = "tv" if row.get("jf_type") in ("Series", "Season") else "movie"
     params["primary_client"] = "jellyfin"
     if resolution != 500:
@@ -359,14 +362,17 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
 async def _process(row, jf, http, style, resolution, with_quality, access_key, dry_run, force, run_id,
                    advance: bool = False) -> str:
     name, jf_id = row["name"], row["jf_id"]
-    if row["status"] in (NEEDS_MATCH, LEFT_ALONE):
-        db.log_run_item(run_id, jf_id, name, "skipped",
-                        "No TMDB match" if row["status"] == NEEDS_MATCH else "Left alone (no match)")
-        return "skipped"
     try:
         res = rules.resolve(rules.title_key(row), advance=advance)
         if res.skip:
             db.log_run_item(run_id, jf_id, name, "skipped", res.reason)
+            return "skipped"
+        own = identity.kind(row) == identity.OWN
+        if own and (row["jf_type"] == "Season" or not res.params.get("art_poster")):
+            # Nothing to look it up by and no image of yours: Jellyfin's poster stays.
+            db.log_run_item(run_id, jf_id, name, "skipped",
+                            "Left alone (not identified)" if row["status"] == LEFT_ALONE or row["jf_type"] == "Season"
+                            else "Not identified, and no image of yours pinned: do either on its page")
             return "skipped"
         if with_quality and row["jf_type"] == "Series" and not row.get("quality"):
             ep = await jf.representative_episode(jf_id)
@@ -375,7 +381,7 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
         if row["jf_type"] == "Season":
             from . import seasons
             params = await seasons.params_for(row, params)
-        if is_stage(row):
+        if in_process(row):
             from . import stage
             try:
                 image, ctype = await stage.render(row, style, params, resolution)

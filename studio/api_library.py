@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from . import auth, candidates, db, engine, prefs, rules
+from . import auth, candidates, db, engine, identity, prefs, rules
 
 logger = logging.getLogger("studio")
 router = APIRouter(prefix="/studio/api", dependencies=[Depends(auth.require)])
@@ -79,8 +80,9 @@ def _bad(exc: Exception):
 async def library():
     summaries = rules.summaries()
     out = []
-    for r in db.query("SELECT jf_id, library_name, jf_type, name, year, tmdb_id, manual_tmdb_id, imdb_id, "
-                      "stage_show_id, status, last_error, jf_image_tag, pushed_at, added_at FROM items "
+    for r in db.query("SELECT jf_id, library_name, jf_type, name, year, tmdb_id, manual_tmdb_id, imdb_id, tvdb_id, "
+                      "stage_show_id, match_source, manual_imdb_id, manual_tvdb_id, manual_stage_id, "
+                      "status, last_error, jf_image_tag, pushed_at, added_at FROM items "
                       "WHERE present = 1 AND jf_type != 'Season' ORDER BY name COLLATE NOCASE"):
         key = rules.title_key(r)
         s = summaries.get(key) or {}
@@ -115,7 +117,9 @@ def _title_payload(row: dict) -> dict:
     res = rules.resolve(key)
     return {
         "item": row, "title_key": key, "media_type": _media_type(row), "stage": engine.is_stage(row),
-        "tmdb_id": row.get("manual_tmdb_id") or row.get("tmdb_id"),
+        "tmdb_id": identity.tmdb_id(row),
+        "identity": {**identity.describe(row), "encora_key_set": bool(prefs.get("encora_key")),
+                     "stagemedia_key_set": bool(prefs.get("stagemedia_key"))},
         "title": t, "looks": rules.looks(key),
         "never": {k: sorted(v) for k, v in rules.never(key).items()},
         "today_look_id": res.look_id, "upcoming": res.upcoming, "skip": res.skip,
@@ -151,7 +155,7 @@ async def title_candidates(jf_id: str, force: bool = False):
     if engine.is_stage(row):
         from . import stage
         try:
-            found = await stage.posters(row["stage_show_id"], force=force)
+            found = await stage.posters(identity.stage_id(row), force=force)
         except stage.StageError as exc:
             return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
                           "stage": True, "error": str(exc)})
@@ -160,11 +164,20 @@ async def title_candidates(jf_id: str, force: bool = False):
         return _json({"candidates": {"posters": items, "backdrops": [], "logos": []}, "stage": True,
                       "auto": {"poster": {"path": found[0], "kind": "poster"} if found else None, "logo": None},
                       "title": stage.show_name(row["name"])})
-    tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
-    if not tmdb_id:
-        return _json({"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None,
-                      "error": "No TMDB match yet: link one to see artwork."})
+    empty = {"candidates": {"posters": [], "backdrops": [], "logos": []}, "auto": None}
+    if identity.kind(row) == identity.OWN:
+        return _json({**empty, "own": True})   # nothing to look up: your images only
+    tmdb_id, imdb_id, tvdb_id = identity.ids(row)
     try:
+        if not tmdb_id and row["jf_type"] != "Season":
+            # Known by its IMDb or TVDB id only: TMDB's artwork when TMDB lists it too.
+            found = await (identity.find_tmdb("imdb", imdb_id, _media_type(row)) if imdb_id
+                           else identity.find_tmdb("tvdb", tvdb_id, _media_type(row)))
+            tmdb_id = found["tmdb_id"] if found else None
+        if not tmdb_id:
+            return _json({**empty, "note": "No artwork to choose from for this title (it is drawn from its "
+                                           f"{'IMDb' if imdb_id else 'TVDB'} id alone): the automatic poster "
+                                           "still works, and you can add your own images."})
         result = await candidates.for_title(_media_type(row), tmdb_id, force=force)
         if row["jf_type"] == "Season":
             from . import seasons
@@ -185,7 +198,7 @@ async def stage_thumb(url: str, w: int = 342):
     the browser never sees).  Only images Studio already knows of: a show's
     StageMedia list or a saved look."""
     from . import stage
-    known = any(url in found for _, found in stage._lists.values()) or bool(
+    known = url in _search_thumbs or any(url in found for _, found in stage._lists.values()) or bool(
         db.query_one("SELECT 1 FROM looks WHERE poster = ? AND title_key LIKE 'stage:%'", (url,)))
     if not known:
         raise HTTPException(status_code=404, detail="Unknown image")
@@ -443,7 +456,7 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
     draft = db.get_setting("style_draft") if style == "draft" else None
     style = draft or prefs.get("style_applied")
     import config as _cfg
-    if not engine.is_stage(row):
+    if not engine.in_process(row):
         from . import artwork
         try:
             params = await artwork.realize(params)
@@ -453,7 +466,7 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
                             with_quality=engine._style_uses_quality(style), access_key=_cfg.ACCESS_KEY or "",
                             extra=params)
     try:
-        if engine.is_stage(row):
+        if engine.in_process(row):
             from . import stage
             data, ctype = await stage.render(row, style, params, w if w in PREVIEW_WIDTHS else 500)
         else:
@@ -556,8 +569,8 @@ async def frames(jf_id: str):
                                 "name": f"{it.get('Name', '')[:30]} · {secs // 60}:{secs % 60:02d}"})
     out = out[:120]
     # Official episode stills from TMDB for shows (a season's own, or the first seasons').
-    tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
-    if tmdb_id and row["jf_type"] in ("Series", "Season") and not engine.is_stage(row):
+    tmdb_id = identity.tmdb_id(row)
+    if tmdb_id and row["jf_type"] in ("Series", "Season"):
         out = await _episode_stills(tmdb_id, [int(row["season_number"] or 0)] if row["jf_type"] == "Season" else [1, 2, 3]) + out
     return _json({"frames": out})
 
@@ -641,7 +654,11 @@ async def bulk(request: Request):
     return _json({"titles": len(keys)})
 
 
-# ── Matching titles Jellyfin couldn't ───────────────────────────────────────
+# ── Identifying a title ─────────────────────────────────────────────────────
+
+# Show posters a StageMedia search just listed, so /stage-thumb will serve them.
+_search_thumbs: set[str] = set()
+
 
 @router.get("/tmdb/search")
 async def tmdb_search(q: str, type: str = "movie"):
@@ -651,7 +668,8 @@ async def tmdb_search(q: str, type: str = "movie"):
     import config as _cfg
     import main
     if not _cfg.SERVER_TMDB_KEY:
-        raise HTTPException(status_code=400, detail="PostersPlus has no TMDB key")
+        raise HTTPException(status_code=400, detail="PostersPlus has no TMDB key: identify the title by its "
+                                                    "IMDb or TVDB id instead")
     kind = "tv" if type == "tv" else "movie"
     resp = await main._proxy_tmdb_get(f"https://api.themoviedb.org/3/search/{kind}",
                                       {"api_key": _cfg.SERVER_TMDB_KEY, "query": q, "include_adult": "false"})
@@ -666,13 +684,113 @@ async def tmdb_search(q: str, type: str = "movie"):
     return _json({"results": out})
 
 
+@router.get("/stage/search")
+async def stage_search(q: str):
+    """Theatre shows by name: the ones already in your library (their id came
+    with the Encora plugin), then Encora's own search when its key is set."""
+    from . import encora, stage
+    q = q.strip()
+    if not q or len(q) > 200:
+        raise HTTPException(status_code=400, detail="Type a show's name to search")
+    out, seen = [], set()
+    for r in db.query("SELECT name, jf_type, stage_show_id, manual_stage_id, manual_tmdb_id, match_source FROM items "
+                      "WHERE present = 1 AND (stage_show_id IS NOT NULL OR manual_stage_id IS NOT NULL)"):
+        sid = identity.stage_id(r)
+        name = stage.show_name(r["name"])
+        if sid and sid not in seen and q.lower() in name.lower():
+            seen.add(sid)
+            out.append({"id": sid, "name": name, "year": None, "thumb": None, "from": "library"})
+    note = None
+    if encora.enabled():
+        try:
+            for r in await encora.search_shows(q):
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                thumb = None
+                if r["poster"] and stage.valid_poster(r["poster"]):
+                    if len(_search_thumbs) > 2000:
+                        _search_thumbs.clear()
+                    _search_thumbs.add(r["poster"])
+                    thumb = f"/studio/api/stage-thumb?w=154&url={quote(r['poster'], safe='')}"
+                out.append({"id": r["id"], "name": r["name"], "year": r["year"], "thumb": thumb, "from": "encora"})
+        except encora.EncoraError as exc:
+            note = str(exc)
+    else:
+        note = ("Only shows already in your library are listed. Add your Encora API key in Settings to search "
+                "all of Encora.")
+    return _json({"results": out[:30], "note": note})
+
+
+async def _resolve_match(row: dict, body: dict) -> tuple[dict, str]:
+    """The items columns for an identification, and a line saying what it is."""
+    src = str(body.get("source") or ("tmdb" if body.get("tmdb_id") else "auto"))
+    raw = str(body.get("id") or body.get("tmdb_id") or "")
+    cols = {"match_source": "", "manual_tmdb_id": None, "manual_imdb_id": None, "manual_tvdb_id": None,
+            "manual_stage_id": None}
+    if src == "auto":
+        return cols, "Following Jellyfin's ids"
+    if src == "none":
+        return {**cols, "match_source": "none"}, "Drawn from your own images"
+    if src not in identity.SOURCES:
+        raise HTTPException(status_code=400, detail="Unknown way to identify a title")
+    cols["match_source"] = src
+    if src == "stage":
+        if body.get("recording"):
+            from . import encora
+            m = re.search(r"(\d{1,10})\D*$", str(body["recording"]).strip())
+            if not m:
+                raise HTTPException(status_code=400, detail="An Encora recording id is a number")
+            try:
+                rec = await encora.recording(m.group(1))
+            except encora.EncoraError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            cols["manual_stage_id"] = rec["show_id"]
+            return cols, f"Linked to {rec['show'] or 'show ' + rec['show_id']} (StageMedia show {rec['show_id']})"
+        try:
+            cols["manual_stage_id"] = identity.parse_id("stage", raw)
+        except ValueError as exc:
+            _bad(exc)
+        return cols, f"Linked to StageMedia show {cols['manual_stage_id']}"
+    try:
+        ext = identity.parse_id(src, raw)
+    except ValueError as exc:
+        _bad(exc)
+    if src == "tmdb":
+        cols["manual_tmdb_id"] = ext
+        return cols, f"Linked to TMDB {ext}"
+    cols[f"manual_{src}_id"] = ext
+    label = "IMDb" if src == "imdb" else "TVDB"
+    try:
+        found = await identity.find_tmdb(src, ext, _media_type(row))
+    except Exception as exc:
+        logger.warning(f"Studio: TMDB lookup of {src} {ext} failed: {exc}")
+        found = None
+    if found:
+        cols["manual_tmdb_id"] = found["tmdb_id"]
+        return cols, f"Linked to {found['title']}{' (' + found['year'] + ')' if found['year'] else ''}"
+    return cols, f"Linked to {label} {ext} (not found on TMDB: drawn from {label} alone)"
+
+
 @router.put("/items/{jf_id}/match")
 async def match(jf_id: str, request: Request):
+    """Body {source: auto|tmdb|imdb|tvdb|stage|none, id} (or {source: stage,
+    recording: <Encora recording id>}); {tmdb_id} alone still works."""
     row, body = _item(jf_id), await _body(request)
-    tmdb_id = str(body.get("tmdb_id") or "").strip()
-    if tmdb_id and not tmdb_id.isdigit():
-        raise HTTPException(status_code=400, detail="tmdb_id must be a number")
-    status = engine.NEW if (tmdb_id or row.get("tmdb_id") or row.get("imdb_id")) else engine.NEEDS_MATCH
-    db.execute("UPDATE items SET manual_tmdb_id = ?, status = ?, pushed_hash = NULL WHERE jf_id = ?",
-               (tmdb_id or None, status, jf_id))
-    return _json(_title_payload(_item(jf_id)))
+    if row["jf_type"] == "Season":
+        raise HTTPException(status_code=400, detail="A season follows its show: identify the show")
+    cols, linked = await _resolve_match(row, body)
+    old_key = rules.title_key(row)
+    new_row = {**row, **cols}
+    new_key = rules.title_key(new_row)
+    # Images and choices made before it was identified come along.
+    moved = old_key.startswith("jf:") and rules.move_title(old_key, new_key)
+    policy = prefs.library_policy(row["library_id"], row["library_name"])
+    status = engine._item_status({**new_row, "status": engine.NEEDS_MATCH, "pushed_hash": None}, policy)
+    sets = ", ".join(f"{k} = ?" for k in cols)
+    db.execute(f"UPDATE items SET {sets}, status = ?, pushed_hash = NULL, last_error = NULL WHERE jf_id = ?",
+               (*cols.values(), status, jf_id))
+    # Its seasons follow at once (their status at the next scan).
+    db.execute("UPDATE items SET match_source = ?, manual_tmdb_id = ? WHERE parent_jf_id = ?",
+               (cols["match_source"], cols["manual_tmdb_id"], jf_id))
+    return _json({**_title_payload(_item(jf_id)), "linked": linked, "moved_rules": bool(moved)})

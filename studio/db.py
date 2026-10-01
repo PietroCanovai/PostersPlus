@@ -169,6 +169,12 @@ _ADDED_COLUMNS = (
     ("items", "season_number", "INTEGER"),
     ("items", "productions", "TEXT"),   # theatre: the show's productions (Jellyfin seasons), "|"-joined
     ("jf_art", "logo", "TEXT NOT NULL DEFAULT ''"),   # thumb: '' poster's, 'text', 'none', or a logo path
+    # How you identified the title (studio.identity): '' = Jellyfin's ids, or
+    # tmdb / imdb / tvdb / stage / none, with the id you gave.
+    ("items", "match_source", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "manual_imdb_id", "TEXT"),
+    ("items", "manual_tvdb_id", "TEXT"),
+    ("items", "manual_stage_id", "TEXT"),
 )
 
 

@@ -21,7 +21,7 @@ const ACTION_LABEL = {
 };
 const REASON = { new: 'first upload', changed: 'poster changed', reverted: 'Jellyfin had replaced it', forced: 'forced' };
 const STATUS_LABEL = {
-  ok: ['Up to date', 'ok'], new: ['Not uploaded yet', 'info'], needs_match: ['Needs a TMDB match', 'warn'],
+  ok: ['Up to date', 'ok'], new: ['Not uploaded yet', 'info'], needs_match: ['Not identified', 'warn'],
   left_alone: ['Left alone', ''], error: ['Error', 'bad'],
 };
 
@@ -278,11 +278,19 @@ function SyncSettings({ s, reload }) {
 
 function StageSettings({ s, reload }) {
   const [key, setKey] = useState('');
+  const [enc, setEnc] = useState('');
   async function save(value) {
     try {
       await api('/settings', { method: 'PUT', body: { stagemedia_key: value } });
       setKey(''); reload();
       toast(value ? 'StageMedia key saved. Run a preview from Activity to pick up your theatre titles.' : 'StageMedia key removed');
+    } catch (ex) { toast(ex.message, true); }
+  }
+  async function saveEncora(value) {
+    try {
+      await api('/settings', { method: 'PUT', body: { encora_key: value } });
+      setEnc(''); reload();
+      toast(value ? 'Encora key saved' : 'Encora key removed');
     } catch (ex) { toast(ex.message, true); }
   }
   return html`<${Section} title="Theatre (StageMedia)" sub="Posters for Encora recordings, from StageMedia's art.">
@@ -292,6 +300,12 @@ function StageSettings({ s, reload }) {
       <div class="hint-sm">Also switch the Theatre library on under Libraries.</div></div>
     <div class="row"><button class="primary" onClick=${() => save(key)} disabled=${!key}>Save</button>
       ${s.stagemedia_key_set && html`<button class="danger" onClick=${() => save('')}>Remove</button>`}</div>
+    <div class="field" style="margin-top:18px"><label for="enc-key">Encora API key <span class="hint-sm">(optional)</span></label>
+      <input id="enc-key" type="password" autocomplete="off" value=${enc} onInput=${e => setEnc(e.target.value)}
+        placeholder=${s.encora_key_set ? `Saved (${s.encora_key_hint}) — type to replace` : 'The key your Encora plugin uses'} />
+      <div class="hint-sm">Only for identifying a title by hand on its page: search Encora’s shows, or give a recording’s id. Never used by a run.</div></div>
+    <div class="row"><button class="primary" onClick=${() => saveEncora(enc)} disabled=${!enc}>Save</button>
+      ${s.encora_key_set && html`<button class="danger" onClick=${() => saveEncora('')}>Remove</button>`}</div>
   <//>`;
 }
 

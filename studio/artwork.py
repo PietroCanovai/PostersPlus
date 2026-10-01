@@ -230,17 +230,24 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     if c["mode"] == "keep":
         return None
     pinned = c["mode"] == "pinned" and bool(c.get("path"))
-    renderable = not engine.is_stage(row) and bool(row.get("manual_tmdb_id") or row.get("tmdb_id")) \
-        and row.get("jf_type") != "Season"
+    from . import identity
+    tmdb_id, imdb_id, _ = identity.ids(row)
+    renderable = bool(tmdb_id) and row.get("jf_type") != "Season"
     import config as _cfg
     # A generated thumb draws the style on whatever art it has, a pinned image included.
     generated = kind == "thumb" and renderable and (landscape or library_rules()["thumb"]["source"] == "landscape")
-    if (kind == "thumb" and engine.is_stage(row) and row.get("jf_type") != "Season"
+    if (kind == "thumb" and engine.in_process(row) and row.get("jf_type") != "Season"
             and (landscape or library_rules()["thumb"]["source"] == "landscape")):
         from . import stage
         style_str = style_str if style_str is not None else prefs.get("style_applied")
-        return await stage.render_thumb(row, style_str, rules.resolve(key).params,
-                                        art=c["path"] if pinned else "", crop=c.get("crop") or "", logo=c.get("logo") or "")
+        try:
+            return await stage.render_thumb(row, style_str, rules.resolve(key).params,
+                                            art=c["path"] if pinned else "", crop=c.get("crop") or "",
+                                            logo=c.get("logo") or "")
+        except stage.NoArt:
+            if identity.kind(row) == identity.STAGE:
+                raise
+            return None   # a title with no image of yours yet: Jellyfin's thumb stays
     if pinned and not generated:
         return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
     if not renderable:
@@ -248,12 +255,11 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     style_str = style_str if style_str is not None else prefs.get("style_applied")
     style = dict(parse_qsl(style_str, keep_blank_values=True))
     media = "tv" if row["jf_type"] == "Series" else "movie"
-    tmdb_id = row.get("manual_tmdb_id") or row["tmdb_id"]
     if kind == "logo":
         lang = style.get("logo_language") or "en"
         params = {"tmdb_id": tmdb_id, "type": media, "lang": lang}
-        if row.get("imdb_id"):
-            params["imdb_id"] = row["imdb_id"]
+        if imdb_id:
+            params["imdb_id"] = imdb_id
         if _cfg.ACCESS_KEY:
             params["access_key"] = _cfg.ACCESS_KEY
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as http:

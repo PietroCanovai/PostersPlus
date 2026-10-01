@@ -169,25 +169,96 @@ function TextLogoDialog({ id, initial, onSaved, onClose }) {
     </div></div>`;
 }
 
-function MatchPanel({ t, onDone }) {
-  const [q, setQ] = useState(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''));
+// ── Which title is this? ────────────────────────────────────────────────────
+const ID_SOURCES = [['auto', 'Jellyfin’s'], ['tmdb', 'TMDB'], ['imdb', 'IMDb'], ['tvdb', 'TVDB'], ['stage', 'StageMedia'], ['none', 'None']];
+const ID_NAMES = { tmdb: 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', stage: 'StageMedia' };
+// What the title is known by, in a few words (the header line).
+function identityLine(idn) {
+  const ids = [['TMDB', idn.tmdb_id], ['IMDb', idn.imdb_id], ['TVDB', idn.tvdb_id], ['StageMedia', idn.stage_id]]
+    .filter(x => x[1]).map(x => x.join(' '));
+  if (idn.kind === 'own') return idn.source === 'none' ? 'Your own images' : 'Not identified';
+  return `${ids.slice(0, 2).join(' · ')}${idn.source === 'auto' ? '' : ' · set by you'}`;
+}
+
+function IdentityPanel({ t, onDone, onClose }) {
+  const idn = t.identity;
+  const [src, setSrc] = useState(idn.source === 'auto' && idn.kind === 'own' ? 'tmdb' : idn.source);
+  const [q, setQ] = useState((t.stage ? t.item.name.split(/\s+-\s+/)[0] : t.item.name).replace(/\s*\(\d{4}\)\s*$/, ''));
+  const [val, setVal] = useState('');
+  const [rec, setRec] = useState('');
   const [res, setRes] = useState(null);
+  const [note, setNote] = useState(null);
+  const [busy, setBusy] = useState(false);
   const type = t.item.jf_type === 'Series' ? 'tv' : 'movie';
+  const searchable = src === 'tmdb' || src === 'stage';
+
   async function search(e) {
     if (e) e.preventDefault();
-    try { setRes((await api(`/tmdb/search?type=${type}&q=${encodeURIComponent(q)}`)).results); } catch (ex) { toast(ex.message, true); }
+    if (!q.trim()) return;
+    try {
+      const r = await api(src === 'stage' ? `/stage/search?q=${encodeURIComponent(q)}` : `/tmdb/search?type=${type}&q=${encodeURIComponent(q)}`);
+      setRes(r.results); setNote(r.note || null);
+    } catch (ex) { setRes([]); setNote(ex.message); }
   }
-  useEffect(() => { search(); }, []);
-  async function link(tmdb) {
-    try { await api(`/items/${t.item.jf_id}/match`, { method: 'PUT', body: { tmdb_id: tmdb } }); onDone(); } catch (ex) { toast(ex.message, true); }
+  useEffect(() => { setRes(null); setNote(null); setVal(''); if (searchable) search(); }, [src]);
+
+  async function link(body) {
+    setBusy(true);
+    try {
+      const r = await api(`/items/${t.item.jf_id}/match`, { method: 'PUT', body });
+      toast(r.linked + (r.moved_rules ? ' · your images and choices came along' : ''));
+      onDone();
+    } catch (ex) { toast(ex.message, true); }
+    setBusy(false);
   }
-  return html`<div class="card">
-    <h2>Which title is this?</h2>
-    <form class="row" onSubmit=${search} style="margin:10px 0"><input type="search" value=${q} onInput=${e => setQ(e.target.value)} style="flex:1" /><button class="primary">Search TMDB</button></form>
-    ${res && (res.length ? html`<div class="list">${res.map(r => html`<div class="list-row">
-        ${r.thumb ? html`<img src=${r.thumb} alt="" class="mini-poster" referrerpolicy="no-referrer" />` : html`<span class="mini-poster"></span>`}
-        <div class="grow"><div class="name">${r.title}${r.year ? ` (${r.year})` : ''}</div><div class="meta">${r.overview}</div></div>
-        <button onClick=${() => link(r.tmdb_id)}>This one</button></div>`)}</div>` : html`<div class="empty">Nothing found.</div>`)}
+  const jf = idn.jellyfin;
+  const jfIds = [['TMDB', jf.tmdb_id], ['IMDb', jf.imdb_id], ['TVDB', jf.tvdb_id], ['StageMedia', jf.stage_id]].filter(x => x[1]);
+  const current = v => idn.source === src && String({ tmdb: idn.tmdb_id, stage: idn.stage_id }[src] || '') === String(v);
+  const idField = (placeholder, value, set, body, label = 'Use this id') => html`<form class="own-row" onSubmit=${e => { e.preventDefault(); if (value.trim()) link(body(value.trim())); }}>
+      <input type="text" placeholder=${placeholder} value=${value} onInput=${e => set(e.target.value)} style="flex:1;min-width:160px" />
+      <button disabled=${busy || !value.trim()}>${label}</button></form>`;
+
+  return html`<div class="card identity">
+    <div class="row" style="justify-content:space-between"><h2>Which title is this?</h2>
+      ${onClose && html`<button class="link" onClick=${onClose}>Close</button>`}</div>
+    <p class="sub">Now: ${identityLine(idn)}. This is kept in Studio only; Jellyfin isn’t changed.</p>
+    <${Seg} small value=${src} onChange=${setSrc} options=${ID_SOURCES} />
+
+    ${src === 'auto' && html`<p class="hint-sm" style="margin-top:12px">${jfIds.length
+        ? `Jellyfin says: ${jfIds.map(x => x.join(' ')).join(' · ')}.` : 'Jellyfin has no id for this title.'}</p>
+      <button class=${idn.source === 'auto' ? '' : 'primary'} disabled=${busy || idn.source === 'auto'} onClick=${() => link({ source: 'auto' })}>
+        ${idn.source === 'auto' ? 'In use' : 'Follow Jellyfin’s ids'}</button>`}
+
+    ${src === 'none' && html`<p class="hint-sm" style="margin-top:12px">For a title no database knows (a home video, a recording):
+        Studio draws the poster from an image you pin (an upload, a link or a frame), with your style and the title as text or a logo of yours.
+        ${idn.kind === 'own' && idn.source !== 'none' ? ' That already works once you pin an image; choosing this just stops it being listed as needing attention.' : ''}</p>
+      <button class=${idn.source === 'none' ? '' : 'primary'} disabled=${busy || idn.source === 'none'} onClick=${() => link({ source: 'none' })}>
+        ${idn.source === 'none' ? 'In use' : 'Use my own images'}</button>`}
+
+    ${searchable && html`<form class="row" onSubmit=${search} style="margin:12px 0">
+      <input type="search" value=${q} onInput=${e => setQ(e.target.value)} style="flex:1" aria-label="Search" />
+      <button class="primary">${src === 'stage' ? 'Search shows' : 'Search TMDB'}</button></form>`}
+    ${src === 'stage' && !idn.stagemedia_key_set && html`<div class="notice warn"><p>Add your StageMedia API key in <a href="#settings">Settings</a> to get the show’s posters.</p></div>`}
+    ${searchable && note && html`<p class="hint-sm">${note}</p>`}
+    ${searchable && res && (res.length ? html`<div class="list">${res.map(r => {
+        const rid = src === 'stage' ? r.id : r.tmdb_id;
+        return html`<div class="list-row">
+          ${r.thumb ? html`<img src=${r.thumb} alt="" class="mini-poster" referrerpolicy="no-referrer" />` : html`<span class="mini-poster"></span>`}
+          <div class="grow"><div class="name">${r.title || r.name}${r.year ? ` (${r.year})` : ''}</div>
+            <div class="meta">${src === 'stage' ? `Show ${r.id}${r.from === 'library' ? ' · in your library' : ''}` : r.overview}</div></div>
+          <button disabled=${busy || current(rid)} onClick=${() => link({ source: src, id: rid })}>${current(rid) ? 'In use' : 'This one'}</button></div>`;
+      })}</div>` : html`<div class="empty">Nothing found.</div>`)}
+
+    ${src === 'tmdb' && idField('Or a TMDB id or link', val, setVal, v => ({ source: 'tmdb', id: v }))}
+    ${src === 'imdb' && html`<p class="hint-sm" style="margin-top:12px">Works without TMDB: a title only IMDb lists is drawn from IMDb’s data.</p>
+      ${idField('IMDb id or link (tt0113277)', val, setVal, v => ({ source: 'imdb', id: v }))}`}
+    ${src === 'tvdb' && html`<p class="hint-sm" style="margin-top:12px">The number on the title’s TheTVDB page. A title TMDB doesn’t list needs a TVDB key in PostersPlus.</p>
+      ${idField('TVDB id (81189)', val, setVal, v => ({ source: 'tvdb', id: v }))}`}
+    ${src === 'stage' && html`
+      ${idField('Or a show id (Encora’s and StageMedia’s are the same)', val, setVal, v => ({ source: 'stage', id: v }))}
+      ${idn.encora_key_set
+        ? idField('Or an Encora recording id or link ({e-12345})', rec, setRec, v => ({ source: 'stage', recording: v }), 'Find its show')
+        : html`<p class="hint-sm">With an Encora API key in <a href="#settings">Settings</a> you can also search all of Encora, or give a recording’s id.</p>`}`}
   </div>`;
 }
 
@@ -233,13 +304,14 @@ export function Editor({ id, review }) {
   const [link, setLink] = useState('');
   const [notch, setNotch] = useState(null);
   const [textLogo, setTextLogo] = useState(null);   // (path) => apply it here
+  const [identify, setIdentify] = useState(false);  // the "Which title is this?" panel is open
   const saveTimer = useRef(null);
 
   const load = useCallback(async () => {
     try { setT(await api(`/title/${id}`)); } catch (ex) { toast(ex.message, true); }
   }, [id]);
   useEffect(() => {
-    setT(null); setCands(null); setFrames(null); setFocus(null); setDraft(null); setNotch(null); setSlot('poster'); setSub('art');
+    setT(null); setCands(null); setFrames(null); setFocus(null); setDraft(null); setNotch(null); setSlot('poster'); setSub('art'); setIdentify(false);
     load();
     api(`/title/${id}/candidates`).then(setCands).catch(ex => setCands({ error: ex.message, candidates: { posters: [], backdrops: [], logos: [] } }));
   }, [id]);
@@ -251,6 +323,9 @@ export function Editor({ id, review }) {
       api(`/title/${id}/frames`).then(d => setFrames(d.frames)).catch(() => setFrames([]));
     }
   }, [art, slot, id]);
+  // A title no database knows has only your images to offer.
+  const ownKind = !!t && t.identity.kind === 'own';
+  useEffect(() => { if (ownKind && art === 'textless') setArt('yours'); }, [ownKind, id]);
 
   // In a show's seasons, ← → step through the show and its seasons; elsewhere, the Library's list.
   const family = t && t.parent ? [t.parent, ...t.seasons.map(s => s.jf_id)] : null;
@@ -280,7 +355,13 @@ export function Editor({ id, review }) {
   }
 
   if (!t) return html`<div class="empty">Loading…</div>`;
-  const matched = !!t.tmdb_id || t.stage;
+  const idn = t.identity;
+  const local = idn.kind !== 'poster';              // drawn by Studio itself: theatre, or your own images
+  const unidentified = ownKind && idn.source === 'auto';
+  const reidentified = () => {
+    setIdentify(false); setFocus(null); setNotch(null); setCands(null); setFrames(null); framesAsked.current = null; refresh();
+    api(`/title/${id}/candidates`).then(setCands).catch(ex => setCands({ error: ex.message, candidates: { posters: [], backdrops: [], logos: [] } }));
+  };
   const mode = t.title.mode;
   const looks = t.looks;
   const pinned = looks.find(l => l.look_id === t.title.pinned_look_id);
@@ -438,7 +519,8 @@ export function Editor({ id, review }) {
       const r = await api(`/title/${id}/push`, { method: 'POST', body: {} });
       const c = r.counts || {};
       toast(r.status !== 'done' ? (r.message || 'Push failed') : c.error ? `Failed: ${(r.items.find(i => i.action === 'error') || {}).detail || 'error'}`
-        : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? 'Skipped' : 'Jellyfin already has it', !!(c.error || r.status !== 'done'));
+        : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? `Skipped: ${(r.items.find(i => i.action === 'skipped') || {}).detail || 'nothing to send'}`
+        : 'Jellyfin already has it', !!(c.error || r.status !== 'done' || (c.skipped && !c.uploaded && !c.reverted)));
       await refresh();
     } catch (ex) { toast(ex.message, true); }
     setBusy(false);
@@ -469,7 +551,7 @@ export function Editor({ id, review }) {
     const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
     previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
     caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin keeps its own' : ch.mode === 'pinned' ? 'Pinned'
-      : t.stage && slot !== 'thumb' ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
+      : local && slot !== 'thumb' ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
   // Which source image the preview shows, for its size.
@@ -580,7 +662,7 @@ export function Editor({ id, review }) {
       options=${[['look', 'This poster', editLook ? '' : 'disabled'], ['title', 'Whole title']]} />
     ${lib ? html`<${StyleControls} values=${values} inherited=${inherited} from=${styleTarget === 'look' ? 'title' : 'library'}
       onSet=${setStyleKey} pickColor=${k => setPick(k)} groups=${[...GROUPS, ...extraGroups]} />` : html`<div class="empty">Loading…</div>`}
-    ${!t.stage && html`<details class="labels" onToggle=${e => { if (e.target.open && !notch) api(`/title/${id}/notch`).then(setNotch).catch(ex => setNotch({ available: false, reason: ex.message })); }}>
+    ${!local && html`<details class="labels" onToggle=${e => { if (e.target.open && !notch) api(`/title/${id}/notch`).then(setNotch).catch(ex => setNotch({ available: false, reason: ex.message })); }}>
       <summary>Notch labels for this title</summary>
       ${!notch ? html`<div class="empty">Loading…</div>` : !notch.available ? html`<p class="hint-sm">${notch.reason}</p>` : html`
         <p class="hint-sm">Now: <strong>${notch.shown ? notch.shown.label : 'nothing'}</strong></p>
@@ -628,7 +710,7 @@ export function Editor({ id, review }) {
     return html`
       <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
         options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
-      ${ch.mode === 'auto' && (t.stage && k !== 'thumb' ? html`<p class="hint-sm">Theatre has no automatic ${k}: pin one below.</p>`
+      ${ch.mode === 'auto' && (local && k !== 'thumb' ? html`<p class="hint-sm">${t.stage ? 'Theatre has' : 'This title has'} no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
       ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
       ${part === 'art' ? html`${uploadRow(k === 'logo' ? 'logo' : 'backdrop', k === 'logo' ? [] : FRAME_SITES,
@@ -651,7 +733,8 @@ export function Editor({ id, review }) {
           ? html`<button class="back-show" onClick=${() => goTo(t.parent)}>← ${t.parent_item.name}</button>`
           : html`<div class="crumbs"><a href="#library">Library</a></div>`}
         <h1>${t.item.name}${t.item.year && !t.parent ? html` <span class="dim-text">${t.item.year}</span>` : ''}</h1>
-        <div class="head-chips">${chips.map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}${t.item.pushed_at ? html`<span class="dim-text">sent ${ago(t.item.pushed_at)}</span>` : ''}</div>
+        <div class="head-chips">${chips.map(([l, c]) => html`<span class="chip ${c}">${l}</span>`)}${t.item.pushed_at ? html`<span class="dim-text">sent ${ago(t.item.pushed_at)}</span>` : ''}
+          ${!t.parent && html`<button class="link" onClick=${() => setIdentify(!identify)} title="Which title is this?">${identityLine(idn)} · Change</button>`}</div>
       </div>
       <div class="row nav-btns"><button onClick=${() => prevId && goTo(prevId)} disabled=${!prevId} aria-label="Previous">←</button>
         <button onClick=${() => nextId && goTo(nextId)} disabled=${!nextId} aria-label="Next">→</button></div>
@@ -665,7 +748,7 @@ export function Editor({ id, review }) {
           <span class="chip ${s.label === 'Show' ? 'info' : ''}">${s.label}</span></button>`)}
     </div>`}
 
-    ${!matched && html`<${MatchPanel} t=${t} onDone=${() => { refresh(); api(`/title/${id}/candidates`).then(setCands); }} />`}
+    ${!t.parent && (identify || unidentified) && html`<${IdentityPanel} t=${t} onDone=${reidentified} onClose=${identify ? () => setIdentify(false) : null} />`}
 
     <div class="editor">
       <aside class="ed-side">
@@ -674,7 +757,7 @@ export function Editor({ id, review }) {
         <${SizeLine} ...${sizeInfo} />
         ${lookBar}
         <div class="row side-actions">
-          <button class="primary" onClick=${push} disabled=${busy || !matched || t.title.hands_off}>Push now</button>
+          <button class="primary" onClick=${push} disabled=${busy || t.title.hands_off}>Push now</button>
           <button class=${t.title.hands_off ? 'on' : ''} onClick=${() => call(`/title/${id}`, { method: 'PUT', body: { hands_off: !t.title.hands_off } })}
             title="Studio leaves this title's images alone">Hands off</button>
         </div>
@@ -707,6 +790,9 @@ export function Editor({ id, review }) {
             </div>`)}</div>`}
           <${Seg} value=${sub} onChange=${setSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />
           ${cands && cands.error && html`<div class="notice warn"><p>${cands.error}</p></div>`}
+          ${cands && cands.note && html`<div class="notice info"><p>${cands.note}</p></div>`}
+          ${ownKind && !t.parent && html`<div class="notice info"><p>${unidentified ? 'Not identified yet, which is fine: ' : ''}Pin an image of yours
+            (upload, link or a frame) and Studio makes the poster from it. <strong>Push now</strong> works as soon as one is pinned.</p></div>`}
           ${sub === 'art' ? artPane : sub === 'logo' ? logoPane : stylePane}`}
         ${slot !== 'poster' && otherPane(slot)}
       </section>

@@ -17,7 +17,7 @@ Studio starts safe: until you turn uploads on, every run is a preview.
 
 ## Library
 
-Every title Studio manages, with the poster Jellyfin has right now. Chips show what's special about a title: *Pinned*, *Rotating ×3*, *Never ×2*, *Styled*, *Hands off*, *Needs match*, *Error*. A green tick means you've reviewed it.
+Every title Studio manages, with the poster Jellyfin has right now. Chips show what's special about a title: *Pinned*, *Rotating ×3*, *Never ×2*, *Styled*, *Hands off*, *Needs match* (not identified, and no image of yours pinned), *Error*. A green tick means you've reviewed it.
 
 - **Search, filter and sort** at the top; the library buttons narrow to one library.
 - **Review one by one** walks through the list with a big preview: fix what's wrong, then press **Looks good** (or Enter). ← → move without marking.
@@ -51,7 +51,18 @@ Backdrops of exactly the size in Settings (1920×1080 by default) come first, th
 
 Each tab has its own Upload / link / drop row (your backdrops and logos are shared with the Poster section). *Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render, the Thumb source in Settings) is drawn on whatever art it has, a pinned image included. The Thumb tab has *Art*, *Logo* (the poster's, the title as text, none for art that already shows the title, or any logo) and *Style* (art, logo position, bands, the info line and badge); the Style page's **Thumbs** switch sets that style for the library. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title.
 
-Titles Jellyfin couldn't match show a **Which title is this?** panel; the match is kept in Studio only.
+### Which title is this?
+
+Under a title's name is what Studio knows it by (e.g. *TMDB 949 · IMDb tt0113277*) with **Change**; a title Jellyfin gave no id for shows the panel straight away. It is kept in Studio only: Jellyfin isn't changed. Choose how to identify it:
+
+- **Jellyfin's**: follow Jellyfin's ids (the default): StageMedia for theatre, else TMDB, IMDb or TVDB, whichever it has.
+- **TMDB**: search, or paste an id or link.
+- **IMDb**: an id or link (`tt0113277`). Works without TMDB: a title only IMDb lists is drawn from IMDb's data.
+- **TVDB**: the series or movie id. A title TMDB doesn't list needs a TVDB key in PostersPlus.
+- **StageMedia**: search shows by name, give a show id (Encora's and StageMedia's are the same number), or give an Encora recording's id and Studio finds its show. Without an Encora API key (Settings) the search only lists shows already in your library.
+- **None**: no database knows it (a home video, a recording). Studio makes the poster from an image you pin: an upload, a link or a frame, with your style and the title as text or a logo of yours.
+
+You don't have to identify a title to push a poster: pin an image of yours on an unidentified title and **Push now** (and the nightly run) sends it. Images and choices made before a title was identified come along when you identify it. Seasons follow their show.
 
 ## Poster style
 
@@ -78,7 +89,7 @@ Two designs, chosen per show under *Style → Theatre → Design*:
 - **Posters+ style**: the global style over the art, with your logo or the show's name.
 - **Playbill**: the yellow PLAYBILL header with the venue (taken from the recording's name, editable), the art below.
 
-Without a StageMedia key, theatre recordings are left alone.
+Without a StageMedia key, theatre recordings are left alone. A recording the plugin didn't tag (or tagged wrongly) can be tied to its show by hand: *Change → StageMedia* on its page.
 
 ## Seasons
 
@@ -92,7 +103,7 @@ The nightly run happens at the time set in Settings (04:00 by default). If the s
 
 ## Settings
 
-Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
+Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, an optional Encora key (only for identifying theatre titles by hand), and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
 
 ## Updating
 

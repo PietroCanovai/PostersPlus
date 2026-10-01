@@ -38,9 +38,11 @@ _NOT_STYLE = {"tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_i
 
 
 def title_key(row: dict) -> str:
-    if row.get("stage_show_id") and not row.get("manual_tmdb_id") and row.get("jf_type") != "Season":
-        return f"stage:{row['stage_show_id']}"   # theatre: every recording of a show shares its rules
-    tmdb_id = row.get("manual_tmdb_id") or row.get("tmdb_id")
+    from . import identity
+    stage_id = identity.stage_id(row)
+    if stage_id:
+        return f"stage:{stage_id}"   # theatre: every recording of a show shares its rules
+    tmdb_id = identity.key_tmdb_id(row)
     if tmdb_id and row.get("jf_type") == "Season":
         return f"tmdb:tv:{tmdb_id}:s{int(row.get('season_number') or 0)}"
     if tmdb_id:
@@ -256,6 +258,33 @@ def reset_title(key: str) -> None:
     db.execute("DELETE FROM looks WHERE title_key = ?", (key,))
     db.execute("DELETE FROM never WHERE title_key = ?", (key,))
     db.execute("DELETE FROM titles WHERE title_key = ?", (key,))
+
+
+_KEYED_TABLES = ("titles", "looks", "never", "uploads", "jf_art")
+
+
+def move_title(old: str, new: str) -> bool:
+    """Carry a title's rules and images over to a new key (it was identified
+    after you had worked on it).  Only when nothing is filed under the new
+    key yet; returns whether anything moved."""
+    if old == new or any(db.query_one(f"SELECT 1 FROM {t} WHERE title_key = ?", (new,)) for t in _KEYED_TABLES):
+        return False
+    moved = 0
+    for table in _KEYED_TABLES:
+        moved += db.execute(f"UPDATE {table} SET title_key = ? WHERE title_key = ?", (new, old)).rowcount
+    return moved > 0
+
+
+def has_own_art(key: str) -> bool:
+    """Whether the title's rules name a poster image (pinned, or in the
+    rotation): enough to draw a title no database knows."""
+    t = get_title(key)
+    if t["mode"] == "pinned":
+        return bool(db.query_one("SELECT 1 FROM looks WHERE look_id = ? AND title_key = ? AND poster != ''",
+                                 (t["pinned_look_id"], key)))
+    if t["mode"] == "rotation":
+        return bool(db.query_one("SELECT 1 FROM looks WHERE title_key = ? AND in_rotation = 1 AND poster != ''", (key,)))
+    return False
 
 
 def summaries() -> dict[str, dict]:

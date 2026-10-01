@@ -80,8 +80,8 @@ async def title_notch(jf_id: str):
     row = db.query_one("SELECT * FROM items WHERE jf_id = ?", (jf_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Unknown title")
-    if engine.is_stage(row):
-        return _json({"available": False, "reason": "Theatre titles have no award or release data: use Notch text."})
+    if engine.in_process(row):
+        return _json({"available": False, "reason": "No award or release data for this title: use Notch text."})
     key = rules.title_key(row)
     params = rules.resolve(key, look_override={}).params
     if row["jf_type"] == "Season":

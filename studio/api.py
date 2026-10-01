@@ -210,6 +210,8 @@ def _settings_payload() -> dict:
         "jf_art": artwork.library_rules(),
         "stagemedia_key_set": bool(prefs.get("stagemedia_key")),
         "stagemedia_key_hint": _secret_hint(prefs.get("stagemedia_key") or ""),
+        "encora_key_set": bool(prefs.get("encora_key")),
+        "encora_key_hint": _secret_hint(prefs.get("encora_key") or ""),
         "resolution": int(prefs.get("resolution") or 1000),
         "resolutions": list(prefs.RESOLUTIONS),
         "style_applied": prefs.get("style_applied"),
@@ -234,6 +236,8 @@ async def put_settings(request: Request):
         prefs.set("jellyfin_api_key", str(body["jellyfin_api_key"]).strip())
     if "stagemedia_key" in body:
         prefs.set("stagemedia_key", str(body["stagemedia_key"] or "").strip())
+    if "encora_key" in body:
+        prefs.set("encora_key", str(body["encora_key"] or "").strip())
     if "uploads_enabled" in body:
         prefs.set("uploads_enabled", bool(body["uploads_enabled"]))
     if "seasons_enabled" in body:
