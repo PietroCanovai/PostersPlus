@@ -129,6 +129,18 @@ class PickingTests(unittest.TestCase):
             asyncio.run(artwork.resolve(row, "thumb"))
             self.assertNotIn("art_poster", urls[-1])
             self.assertEqual(urls[-1]["landscape_art"], "original")
+            # A show only IMDb knows gets its thumb too, drawn on the backdrop you pinned.
+            show = {"jf_id": "s9", "imdb_id": "tt6280300", "jf_type": "Series", "name": "Color Classics"}
+            k9 = rules.title_key(show)
+            artwork.set_logo(k9, "thumb", "custom:aaaaaaaaaaaaaaaa.png")
+            self.assertEqual(asyncio.run(artwork.resolve(show, "thumb")), (b"thumb", "image/jpeg"))
+            self.assertEqual((urls[-1]["imdb_id"], urls[-1]["shape"], urls[-1]["art_logo"]),
+                             ("tt6280300", "landscape", "custom:aaaaaaaaaaaaaaaa.png"))
+            self.assertNotIn("tmdb_id", urls[-1])
+            self.assertNotIn("art_poster", urls[-1])
+            artwork.set_choice(k9, "backdrop", "pinned", "custom:bbbbbbbbbbbbbbbb.jpg")
+            asyncio.run(artwork.resolve(show, "thumb"))
+            self.assertEqual(urls[-1]["art_poster"], "custom:landscape/x.jpg")
         finally:
             engine.render, artwork.realize_path = orig_render, orig_realize
             if real_cfg is None and isinstance(sys.modules.get("config"), types.SimpleNamespace):

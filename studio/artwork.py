@@ -244,8 +244,9 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         return None
     pinned = c["mode"] == "pinned" and bool(c.get("path"))
     from . import identity
-    tmdb_id, imdb_id, _ = identity.ids(row)
-    renderable = bool(tmdb_id) and row.get("jf_type") != "Season"
+    tmdb_id, imdb_id, tvdb_id = identity.ids(row)
+    # Anything /poster can draw: a TMDB id isn't needed, an IMDb or TVDB id will do.
+    renderable = identity.kind(row) == identity.POSTER and row.get("jf_type") != "Season"
     import config as _cfg
     # A generated thumb draws the style on whatever art it has, a pinned image included.
     generated = kind == "thumb" and renderable and (landscape or library_rules()["thumb"]["source"] == "landscape")
@@ -269,8 +270,12 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     style = dict(parse_qsl(style_str, keep_blank_values=True))
     media = "tv" if row["jf_type"] == "Series" else "movie"
     if kind == "logo":
+        if not (tmdb_id or imdb_id):
+            return None   # /logo knows titles by TMDB or IMDb id only
         lang = style.get("logo_language") or "en"
-        params = {"tmdb_id": tmdb_id, "type": media, "lang": lang}
+        params = {"type": media, "lang": lang}
+        if tmdb_id:
+            params["tmdb_id"] = tmdb_id
         if imdb_id:
             params["imdb_id"] = imdb_id
         if _cfg.ACCESS_KEY:
@@ -296,6 +301,11 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
             extra["art_logo"] = logo
         if pinned:
             extra["art_poster"] = await realize_path(c["path"], c.get("crop") or "")
+        elif not tmdb_id:
+            # No TMDB backdrop to draw on: the backdrop you pinned for this title, when there is one.
+            bd = choice(key, "backdrop")
+            if bd["mode"] == "pinned" and bd.get("path"):
+                extra["art_poster"] = await realize_path(bd["path"], bd.get("crop") or "")
         # The landscape layout has its own rating switch: follow a style that hides ratings.
         if (style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style
                 and "landscape_hide_rating" not in extra):
@@ -304,7 +314,7 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
                                 access_key=_cfg.ACCESS_KEY or "", extra=await realize(extra))
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as http:
             return await engine.render(http, url)
-    cands = await (cands_loader or _load_cands)(media, tmdb_id)
+    cands = await (cands_loader(media, tmdb_id) if cands_loader else _load_cands(media, tmdb_id, imdb_id, tvdb_id))
     if kind == "backdrop":
         path = auto_backdrop(cands)
     else:
@@ -312,9 +322,9 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
     return _frame(await fetch(path), "", 16 / 9) if path else None
 
 
-async def _load_cands(media: str, tmdb_id: str) -> dict:
+async def _load_cands(media: str, tmdb_id, imdb_id=None, tvdb_id=None) -> dict:
     from . import candidates
-    return (await candidates.for_title(media, tmdb_id))["candidates"]
+    return (await candidates.for_title(media, tmdb_id, imdb_id=imdb_id, tvdb_id=tvdb_id))["candidates"]
 
 
 # ── Pushed state ────────────────────────────────────────────────────────────
