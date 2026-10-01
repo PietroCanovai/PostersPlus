@@ -185,33 +185,23 @@ class Client:
         if resp.status_code >= 400:
             raise JellyfinError(f"Upload refused: HTTP {resp.status_code}")
 
-    async def replace_backdrop(self, item_id: str, image: bytes, content_type: str,
-                               old_tag: str | None = None) -> None:
-        """Make *image* the item's main backdrop (index 0).
+    async def replace_backdrop(self, item_id: str, image: bytes, content_type: str) -> None:
+        """Replace the item's backdrop with *image*, the way an upload replaces
+        a poster or a logo.
 
-        Jellyfin ignores the index on an upload: a backdrop is always added at
-        the end of the list, so the main one stayed and every push left one
-        more copy.  So: remove what we sent before (the backdrop with
-        *old_tag*, and any copy of these exact bytes), upload, then move the
-        new one to the front.  Jellyfin's other backdrops are left in place,
-        after ours."""
-        tags = (await self.item(item_id)).raw.get("BackdropImageTags") or []
-        doomed = {tags.index(old_tag)} if old_tag and old_tag in tags else set()
-        try:
-            infos = await self._get(f"/Items/{item_id}/Images")
-        except JellyfinError:
-            infos = []
-        for info in infos if isinstance(infos, list) else []:
-            if info.get("ImageType") == "Backdrop" and info.get("Size") == len(image) and info.get("ImageIndex") is not None:
-                doomed.add(int(info["ImageIndex"]))
-        for index in sorted(doomed, reverse=True):   # last first: deleting shifts the ones after
-            await self._send("DELETE", f"/Items/{item_id}/Images/Backdrop/{index}")
-        before = set((await self.item(item_id)).raw.get("BackdropImageTags") or []) if doomed else set(tags)
+        Jellyfin keeps a list of backdrops and ignores the index on an upload:
+        the image is always added at the end, so the old one stayed in front.
+        So the new one is uploaded first (nothing is lost if that fails), then
+        every other backdrop is removed, which leaves ours as the only one."""
+        before = set((await self.item(item_id)).raw.get("BackdropImageTags") or [])
         await self.upload_image(item_id, "Backdrop", image, content_type)
         after = (await self.item(item_id)).raw.get("BackdropImageTags") or []
-        new = next((i for i, t in enumerate(after) if t not in before), len(after) - 1)
-        if new > 0:
-            await self._send("POST", f"/Items/{item_id}/Images/Backdrop/{new}/Index", params={"newIndex": 0})
+        if not after:
+            raise JellyfinError("Jellyfin didn't keep the backdrop")
+        ours = next((i for i, t in enumerate(after) if t not in before), len(after) - 1)
+        for index in range(len(after) - 1, -1, -1):   # last first: deleting shifts the ones after
+            if index != ours:
+                await self._send("DELETE", f"/Items/{item_id}/Images/Backdrop/{index}")
 
     async def _send(self, method: str, path: str, **kw) -> None:
         try:

@@ -139,6 +139,20 @@ async def scan(client: Client) -> dict:
     return counts
 
 
+async def _refresh_tags(jf: Client, row: dict) -> None:
+    """Jellyfin's current image tags for one item, as the scan would record them."""
+    from . import artwork
+    try:
+        item = await jf.item(row["jf_id"])
+    except JellyfinError:
+        return
+    if item.image_tag != row.get("jf_image_tag"):
+        row["jf_image_tag"] = item.image_tag
+        db.execute("UPDATE items SET jf_image_tag = ? WHERE jf_id = ?", (item.image_tag, row["jf_id"]))
+    for kind in artwork.KINDS:
+        artwork.record_seen(row["jf_id"], kind, item.tag(kind))
+
+
 def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
     old = db.query_one("SELECT * FROM items WHERE jf_id = ?", (item.id,))
     row = dict(old or {})
@@ -316,6 +330,11 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                 if item_ids is None:
                     await scan(jf)
                 rows = _selected(item_ids)
+                if item_ids is not None:
+                    # A push of chosen titles skips the scan: look at what Jellyfin
+                    # holds right now, so an image it replaced is sent again.
+                    for row in rows:
+                        await _refresh_tags(jf, row)
                 style = prefs.get("style_applied")
                 resolution = int(prefs.get("resolution") or 1000)
                 with_quality = _style_uses_quality(style)
@@ -472,7 +491,7 @@ async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
                 actions.append("would_upload")
                 continue
             if kind == "backdrop":
-                await jf.replace_backdrop(jf_id, data, ctype, st.get("pushed_tag"))
+                await jf.replace_backdrop(jf_id, data, ctype)
             else:
                 await jf.upload_image(jf_id, label, data, ctype)
             fresh = await jf.item(jf_id)
