@@ -24,6 +24,9 @@ logger = logging.getLogger("studio")
 
 LOOPBACK = "http://127.0.0.1:8000"
 RENDER_CONCURRENCY = 2
+# How long a run waits for a Jellyfin that stopped answering (a restart after a
+# plugin or image update takes seconds) before giving the run up.
+JELLYFIN_WAIT = 300.0
 # A title Jellyfin keeps replacing this many times gets a note to check its settings.
 REVERT_WARN_AT = 3
 
@@ -326,7 +329,7 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
         counts: dict[str, int] = {}
         status, message = "done", None
         try:
-            async with jellyfin_client(transport=jf_transport) as jf:
+            async with jellyfin_client(transport=jf_transport, wait=JELLYFIN_WAIT) as jf:
                 if item_ids is None:
                     await scan(jf)
                 rows = _selected(item_ids)
@@ -350,7 +353,7 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
 
                     async def one(row: dict) -> None:
                         async with sem:
-                            if progress.cancel:
+                            if progress.cancel or jf.down:
                                 return
                             progress.current = row["name"]
                             action = await _process(row, jf, http, style, resolution, with_quality,
@@ -364,8 +367,13 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                             progress.counts = dict(counts)
 
                     await asyncio.gather(*(one(r) for r in rows))
+                gone = jf.down
             if progress.cancel:
                 status, message = "cancelled", "Stopped by you"
+            elif gone:
+                status = "failed"
+                message = (f"Jellyfin stopped answering and didn't come back in {int(JELLYFIN_WAIT // 60)} minutes: "
+                           "the titles not reached are left for the next run")
         except JellyfinError as exc:
             status, message = "failed", str(exc)
         except Exception as exc:

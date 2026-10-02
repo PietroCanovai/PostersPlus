@@ -6,11 +6,12 @@ import os
 import tempfile
 import unittest
 from datetime import datetime
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from studio import auth, db, engine, prefs
+from studio import auth, db, engine, jellyfin, prefs
 from studio.jellyfin import quality_tokens
 
 
@@ -203,6 +204,54 @@ class EngineTests(unittest.TestCase):
         self.run_sync()
         run = self.run_sync(force=True, item_ids=["m1"])
         self.assertEqual(self.counts(run), {"uploaded": 1})
+
+    def restarting(self, failures):
+        """A Jellyfin that restarts under the run: its uploads are refused, then
+        answered 503 (starting up), *failures* times each before they work."""
+        left = {"refused": failures, "starting": failures}
+        answer = self.jf.handler
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                if left["refused"] > 0:
+                    left["refused"] -= 1
+                    raise httpx.ConnectError("refused", request=request)
+                if left["starting"] > 0:
+                    left["starting"] -= 1
+                    return httpx.Response(503)
+            return answer(request)
+
+        self.jf.handler = handler
+
+    def test_run_waits_for_a_jellyfin_restart(self):
+        prefs.set("uploads_enabled", True)
+        self.restarting(3)
+        with mock.patch.object(jellyfin, "_RETRY_DELAYS", (0.0,)):
+            run = self.run_sync()
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(self.counts(run), {"uploaded": 3, "skipped": 2})
+        self.assertEqual(db.query("SELECT 1 FROM items WHERE status = 'error'"), [])
+
+    def test_run_gives_up_on_a_jellyfin_that_stays_down(self):
+        prefs.set("uploads_enabled", True)
+        self.restarting(10 ** 6)
+        with mock.patch.object(jellyfin, "_RETRY_DELAYS", (0.0,)), mock.patch.object(engine, "JELLYFIN_WAIT", 0.05):
+            run = self.run_sync()
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("Jellyfin stopped answering", run["message"])
+        self.assertEqual(self.jf.uploads, [])
+        # Only the titles in hand when it went away are errors, not every one after.
+        self.assertLess(self.counts(run)["error"], 3)
+
+    def test_other_calls_dont_wait(self):
+        # The UI's own calls (thumbnails, the connection test) fail at once.
+        self.restarting(1)
+        with mock.patch.object(jellyfin, "_RETRY_DELAYS", (60.0,)):
+            async def go():
+                async with engine.jellyfin_client(transport=httpx.MockTransport(self.jf.handler)) as jf:
+                    await jf.upload_primary("m1", b"x", "image/jpeg")
+            with self.assertRaises(jellyfin.JellyfinError):
+                asyncio.run(go())
 
     def test_schedule(self):
         prefs.set("schedule_time", "04:00")

@@ -103,6 +103,8 @@ Each run reads the library, renders every managed title and uploads a poster **o
 
 The nightly run happens at the time set in Settings (04:00 by default). If the server was off, it runs as soon as it's back. Rotations move on only in the nightly run.
 
+If Jellyfin restarts while a run is going (after a plugin update, say), the run waits for it, up to five minutes, and carries on. If Jellyfin doesn't come back, the run stops as *failed* and the titles it didn't reach are done by the next one.
+
 ## Settings
 
 Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, an optional Encora key (only for identifying theatre titles by hand), and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.

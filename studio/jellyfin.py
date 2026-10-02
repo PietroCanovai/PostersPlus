@@ -5,8 +5,10 @@ Studio replaces); see that file's docstring for the reasoning behind each rule.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -14,6 +16,8 @@ import httpx
 _AUTH = ('MediaBrowser Client="PostersPlus Studio", Device="server", '
          'DeviceId="postersplus-studio", Version="1.0", Token="{token}"')
 _PAGE = 200
+# Seconds between tries while Jellyfin is restarting (the last one repeats).
+_RETRY_DELAYS = (2.0, 4.0, 8.0, 15.0)
 ITEM_FIELDS = "ProviderIds,MediaSources,MediaStreams,Path,ProductionYear,Chapters"
 
 
@@ -66,9 +70,13 @@ def item_from_json(d: dict) -> Item:
 
 
 class Client:
-    """One per operation (a scan, a run, a test): cheap to make, closes cleanly."""
+    """One per operation (a scan, a run, a test): cheap to make, closes cleanly.
 
-    def __init__(self, base_url: str, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None):
+    With *wait* (seconds) the client sits out a Jellyfin restart instead of
+    failing: see `_request`.  `down` is set once that wait ran out."""
+
+    def __init__(self, base_url: str, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None,
+                 wait: float = 0.0):
         if not base_url or not api_key:
             raise JellyfinError("Jellyfin isn't set up yet: add its address and API key in Settings.")
         self._http = httpx.AsyncClient(
@@ -77,6 +85,8 @@ class Client:
             timeout=httpx.Timeout(30.0, connect=8.0),
             transport=transport,
         )
+        self._wait = wait
+        self.down = False
 
     async def __aenter__(self) -> "Client":
         return self
@@ -84,9 +94,33 @@ class Client:
     async def __aexit__(self, *exc) -> None:
         await self._http.aclose()
 
+    async def _request(self, method: str, path: str, **kw) -> httpx.Response:
+        """One request.  A refused connection or a 503 (Jellyfin starting up)
+        means the request never ran, so it is safe to send again, uploads and
+        deletes included: it is retried until Jellyfin answers or *wait* is
+        used up.  After that the client stops waiting (`down`), so what is
+        left of a run fails at once instead of waiting once per title."""
+        deadline = time.monotonic() + self._wait
+        attempt = 0
+        while True:
+            error = None
+            try:
+                resp = await self._http.request(method, path, **kw)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                error = exc
+            if error is None and resp.status_code != 503:
+                return resp
+            if not self._wait or self.down or time.monotonic() >= deadline:
+                self.down = bool(self._wait)
+                if error is not None:
+                    raise error
+                return resp
+            await asyncio.sleep(_RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)])
+            attempt += 1
+
     async def _get(self, path: str, **params) -> dict | list:
         try:
-            resp = await self._http.get(path, params={k: v for k, v in params.items() if v is not None})
+            resp = await self._request("GET", path, params={k: v for k, v in params.items() if v is not None})
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
         if resp.status_code == 401:
@@ -163,7 +197,7 @@ class Client:
         stored file exactly as it is."""
         params = {"maxHeight": max_height, "quality": 85} if max_height else {}
         try:
-            resp = await self._http.get(f"/Items/{item_id}/Images/Primary", params=params)
+            resp = await self._request("GET", f"/Items/{item_id}/Images/Primary", params=params)
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
         if resp.status_code != 200:
@@ -179,7 +213,8 @@ class Client:
         Backdrops go to an index (0 = the main one) so they replace, not add."""
         path = f"/Items/{item_id}/Images/{image_type}" + (f"/{index}" if index is not None else "")
         try:
-            resp = await self._http.post(path, content=base64.b64encode(image), headers={"Content-Type": content_type})
+            resp = await self._request("POST", path, content=base64.b64encode(image),
+                                       headers={"Content-Type": content_type})
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Upload failed ({type(exc).__name__})") from exc
         if resp.status_code >= 400:
@@ -205,7 +240,7 @@ class Client:
 
     async def _send(self, method: str, path: str, **kw) -> None:
         try:
-            resp = await self._http.request(method, path, **kw)
+            resp = await self._request(method, path, **kw)
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
         if resp.status_code >= 400:
@@ -216,7 +251,7 @@ class Client:
         params = {"maxHeight": max_height, "quality": 85} if max_height else {}
         suffix = "/0" if image_type == "Backdrop" else ""
         try:
-            resp = await self._http.get(f"/Items/{item_id}/Images/{image_type}{suffix}", params=params)
+            resp = await self._request("GET", f"/Items/{item_id}/Images/{image_type}{suffix}", params=params)
         except httpx.HTTPError as exc:
             raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
         if resp.status_code != 200:
