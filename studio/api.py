@@ -129,7 +129,7 @@ async def status():
         "last_scan_at": db.get_setting("last_scan_at"),
         "items": by_status,
         "total": sum(by_status.values()),
-        "missing": len(api_library.missing_rows()),
+        "missing": api_library.missing_count(),
         "progress": engine.progress.as_dict(),
         "runs": runs,
         "version": _version(),

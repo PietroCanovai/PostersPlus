@@ -651,6 +651,13 @@ def missing_rows() -> list[dict]:
     return out
 
 
+def missing_count() -> int:
+    """How many titles missing_rows() lists, in one query (the menu's count is asked for on every poll)."""
+    return db.query_one(
+        "SELECT COUNT(*) AS n FROM items i WHERE present = 1 AND (jf_image_tag IS NULL OR (jf_type != 'Season' AND "
+        "(SELECT COUNT(*) FROM item_images m WHERE m.jf_id = i.jf_id AND m.seen_tag IS NOT NULL) < 3))")["n"]
+
+
 @router.get("/missing")
 async def missing():
     rows = missing_rows()

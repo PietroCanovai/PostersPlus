@@ -397,6 +397,7 @@ class EngineArtTests(unittest.TestCase):
         rows = {r["jf_id"]: r["missing"] for r in api_library.missing_rows()}
         self.assertEqual(rows["m1"], ["poster", "thumb"])
         self.assertIn("m2", rows)                                       # left-alone titles count too
+        self.assertEqual(api_library.missing_count(), len(rows))        # the menu's count agrees
 
     def test_keep_is_respected(self):
         artwork.set_library_rules({"logo": {"enabled": True}})
