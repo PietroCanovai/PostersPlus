@@ -36,6 +36,8 @@ class FakeJellyfin:
         self.uploads: list[tuple[str, bytes, str]] = []
         self.art_uploads: list[tuple[str, str, bytes]] = []
         self.backdrop_sizes: dict[str, int] = {}
+        self.blobs: dict[str, bytes] = {}    # image tag → the stored bytes (an unknown tag: its own name)
+        self.unreadable: set[str] = set()    # items whose files Jellyfin can't read (an unplugged drive)
         self._tag = 0
 
     def _item(self, id_, type_, name, tmdb=None, imdb=None):
@@ -77,6 +79,19 @@ class FakeJellyfin:
             return httpx.Response(200, json=[
                 {"ImageType": "Backdrop", "ImageIndex": i, "Size": self.backdrop_sizes.get(t, 999)}
                 for i, t in enumerate(it.get("BackdropImageTags") or [])])
+        if "/Images/" in path and request.method == "GET":
+            parts = path.split("/")          # /Items/<id>/Images/<Type>[/<index>]
+            it, kind = self.find(parts[2]), parts[4]
+            if kind == "Primary" or parts[2] in self.unreadable:
+                return httpx.Response(404)
+            if kind == "Backdrop":
+                tags, i = it.get("BackdropImageTags") or [], int(parts[5]) if len(parts) > 5 else 0
+                tag = tags[i] if i < len(tags) else None
+            else:
+                tag = it["ImageTags"].get(kind)
+            if tag is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=self.blobs.get(tag, tag.encode()), headers={"content-type": "image/jpeg"})
         if "/Images/Backdrop/" in path and request.method == "DELETE":
             parts = path.split("/")
             self.find(parts[2])["BackdropImageTags"].pop(int(parts[5]))
@@ -97,9 +112,14 @@ class FakeJellyfin:
             else:
                 data = base64.b64decode(request.content)
                 self.art_uploads.append((id_, path, data))
+                self.blobs[f"ours-{self._tag}"] = data
                 if kind == "Backdrop":
-                    # Like Jellyfin: a backdrop is added at the end, whatever index was asked for.
-                    it.setdefault("BackdropImageTags", []).append(f"ours-{self._tag}")
+                    # Like Jellyfin: a backdrop is added at the end, whatever index was asked for,
+                    # and the ones already there come back with new tags too.
+                    old = it.get("BackdropImageTags") or []
+                    for t in old:
+                        self.blobs[t + "'"] = self.blobs.get(t, t.encode())
+                    it["BackdropImageTags"] = [t + "'" for t in old] + [f"ours-{self._tag}"]
                     self.backdrop_sizes[f"ours-{self._tag}"] = len(data)
                 else:
                     it["ImageTags"][kind] = f"ours-{self._tag}"
@@ -178,6 +198,40 @@ class EngineTests(unittest.TestCase):
         row = db.query_one("SELECT revert_count, pushed_tag FROM items WHERE jf_id = 's1'")
         self.assertEqual(row["revert_count"], 1)
         self.assertTrue(row["pushed_tag"].startswith("ours-"))
+
+    def test_a_removed_poster_is_put_back(self):
+        prefs.set("uploads_enabled", True)
+        self.run_sync()
+        del self.jf.find("s1")["ImageTags"]["Primary"]            # someone deleted the poster in Jellyfin
+        run = self.run_sync()
+        self.assertEqual(self.counts(run).get("reverted"), 1)
+        self.assertEqual(self.jf.uploads[-1][0], "s1")
+
+    def test_your_choices_survive_jellyfin_changing_its_mind(self):
+        """Jellyfin re-identifies a title (or a plugin rewrites its ids): what you set for it
+        still applies, and only a title you never touched follows Jellyfin's new id."""
+        from studio import rules
+        prefs.set("uploads_enabled", True)
+        self.run_sync()
+        key = rules.title_key(db.query_one("SELECT * FROM items WHERE jf_id = 'm1'"))
+        look = rules.add_look(key, {"poster": "/mine.jpg"})
+        rules.set_mode(key, "pinned", look["look_id"])
+        rules.set_never("jf:m2", "logo", "/not-this.png", True)
+        self.jf.find("m1")["ProviderIds"]["Tmdb"] = "111"         # Heat, now filed as something else
+        self.jf.find("s1")["ProviderIds"]["Tmdb"] = "222"         # Dark too, but you never touched it
+        self.jf.find("m2")["ProviderIds"]["Tmdb"] = "333"         # the home video gets an id
+        self.pp.version.update({"222": b"other-show", "333": b"home-video"})
+        self.pp.requests.clear()
+        run = self.run_sync()
+        self.assertEqual(self.counts(run).get("error"), None)
+        m1 = db.query_one("SELECT * FROM items WHERE jf_id = 'm1'")
+        self.assertEqual((rules.title_key(m1), m1["match_source"], m1["manual_tmdb_id"], m1["tmdb_id"]),
+                         (key, "tmdb", "949", "111"))
+        asked = [q for q in self.pp.requests if q.get("art_poster") == "/mine.jpg"]
+        self.assertEqual([q["tmdb_id"] for q in asked], ["949"])  # still Heat, still your poster
+        self.assertEqual(rules.title_key(db.query_one("SELECT * FROM items WHERE jf_id = 's1'")), "tmdb:tv:222")
+        self.assertEqual(rules.never("tmdb:movie:333")["logo"], {"/not-this.png"})   # came along
+        self.assertEqual(rules.never("jf:m2")["logo"], set())
 
     def test_unmatched_policies(self):
         self.run_sync()

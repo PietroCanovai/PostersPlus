@@ -169,6 +169,8 @@ def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
     from . import artwork
     for kind in artwork.KINDS:
         artwork.record_seen(item.id, kind, item.tag(kind))
+    if old is not None:
+        _keep_your_choices(old, row)
     row["status"] = _item_status(row, policy)
     if old is None:
         db.execute(
@@ -185,6 +187,36 @@ def _upsert(item: Item, lib: Library, policy: dict, now: float) -> None:
             (lib.id, lib.name, item.type, item.name, item.year, item.tmdb_id, item.imdb_id, item.tvdb_id,
              item.stage_show_id, row.get("quality") or "", item.image_tag, row["status"], now, item.id),
         )
+
+
+def _keep_your_choices(old: dict, row: dict) -> None:
+    """Jellyfin changed its mind about which title this is (a re-identify, a
+    plugin): what you set for it must not silently stop applying.
+
+    Your rules are filed under the title's key.  When Jellyfin's new ids give
+    another key and you had set something under the old one, the item stays
+    the title it was: the old id is recorded as a match of yours (changeable
+    on its page).  A title that had no id before takes its rules along to the
+    new key instead.  *row* is updated in place, and saved."""
+    if identity.source(old) != "auto":
+        return                       # identified by you already: Jellyfin's ids don't decide
+    was, now = rules.title_key(old), rules.title_key(row)
+    if was == now or not rules.is_customised(was):
+        return
+    if was.startswith("jf:"):
+        if rules.move_title(was, now):
+            logger.info(f"Studio: {row['name']!r} got an id from Jellyfin; your choices moved to {now}")
+        return
+    if was.startswith("stage:"):
+        fields = {"match_source": "stage", "manual_stage_id": was.split(":", 1)[1]}
+    elif was.startswith("tmdb:"):
+        fields = {"match_source": "tmdb", "manual_tmdb_id": was.split(":")[2]}
+    else:
+        return
+    row.update(fields)
+    db.execute(f"UPDATE items SET {', '.join(f'{k} = ?' for k in fields)} WHERE jf_id = ?",
+               (*fields.values(), row["jf_id"]))
+    logger.info(f"Studio: Jellyfin now files {row['name']!r} under {now}; it has choices of yours, so it stays {was}")
 
 
 def _upsert_season(s: dict, series: Item, lib: Library, policy: dict, now: float) -> None:
@@ -301,8 +333,8 @@ def decide(row: dict, image_hash: str, *, force: bool = False) -> Decision:
         return Decision("upload", "forced")
     if not row.get("pushed_hash"):
         return Decision("upload", "new")
-    if row.get("pushed_tag") and row.get("jf_image_tag") and row["jf_image_tag"] != row["pushed_tag"]:
-        return Decision("upload", "reverted")
+    if row.get("pushed_tag") and row.get("jf_image_tag") != row["pushed_tag"]:
+        return Decision("upload", "reverted")   # replaced, or removed: Jellyfin has no poster at all
     if image_hash != row["pushed_hash"]:
         return Decision("upload", "changed")
     return Decision("unchanged", "")
@@ -361,7 +393,8 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                                                     advance=trigger == "schedule")
                             counts[action] = counts.get(action, 0) + 1
                             if action not in ("skipped", "error"):
-                                for extra in await _process_art(row, jf, dry_run, force, run_id):
+                                for extra in await _process_art(row, jf, dry_run, force, run_id,
+                                                                advance=trigger == "schedule"):
                                     counts[extra] = counts.get(extra, 0) + 1
                             progress.done += 1
                             progress.counts = dict(counts)
@@ -463,10 +496,14 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
         return "error"
 
 
-async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
+async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -> list[str]:
     """Backdrop, Logo and Thumb for one item, where Studio manages them.
     Same rules as the poster: send only what changed (noise ignored), put
-    back what Jellyfin replaced."""
+    back what Jellyfin replaced.
+
+    What Jellyfin holds is read and compared each time, instead of trusting
+    its image tags: they said "ours is still there" for backdrops that were
+    Jellyfin's own, and "replaced" for ones that weren't."""
     from . import artwork
     key, jf_id, name = rules.title_key(row), row["jf_id"], row["name"]
     actions = []
@@ -475,25 +512,23 @@ async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
             continue
         label = artwork.JF_TYPE[kind]
         try:
-            res = await artwork.resolve(row, kind)
+            res = await artwork.resolve(row, kind, advance=advance)
             if res is None:
                 continue
             data, ctype = res
             image_hash = hashlib.sha256(data).hexdigest()
             st = artwork.state(jf_id, kind)
-            reverted = bool(st.get("pushed_tag") and st.get("seen_tag") and st["seen_tag"] != st["pushed_tag"])
-            if not force and not reverted and st.get("pushed_hash") == image_hash:
+            try:
+                current, _ = await jf.image(jf_id, label)
+            except JellyfinError:
+                current = None
+            if not force and current is not None and (current == data or looks_the_same(current, data)):
+                if not dry_run and st.get("pushed_hash") != image_hash:
+                    artwork.record_pushed(jf_id, kind, image_hash, st.get("seen_tag"))
                 continue
-            if not force and not reverted and st.get("pushed_hash"):
-                try:
-                    current, _ = await jf.image(jf_id, label)
-                except JellyfinError:
-                    current = None
-                if current is not None and looks_the_same(current, data):
-                    if not dry_run:
-                        artwork.record_pushed(jf_id, kind, image_hash, st.get("pushed_tag"))
-                    continue
-            reason = "reverted" if reverted else ("changed" if st.get("pushed_hash") else "new")
+            # The image we sent before and nothing changed on our side: Jellyfin replaced it.
+            reverted = not force and st.get("pushed_hash") == image_hash
+            reason = "forced" if force else "reverted" if reverted else "changed" if st.get("pushed_hash") else "new"
             if dry_run:
                 db.log_run_item(run_id, jf_id, name, "would_upload", f"{label}: {reason}")
                 actions.append("would_upload")
@@ -502,6 +537,11 @@ async def _process_art(row, jf, dry_run, force, run_id) -> list[str]:
                 await jf.replace_backdrop(jf_id, data, ctype)
             else:
                 await jf.upload_image(jf_id, label, data, ctype)
+                try:
+                    await jf.image(jf_id, label)
+                except JellyfinError:
+                    raise JellyfinError(f"Jellyfin can't give back the {kind} it was just sent (if the title is on "
+                                        "a drive that was unplugged, restart Jellyfin)") from None
             fresh = await jf.item(jf_id)
             artwork.record_pushed(jf_id, kind, image_hash, fresh.tag(kind))
             act = "reverted" if reverted else "uploaded"

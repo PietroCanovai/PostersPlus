@@ -2,7 +2,7 @@
 
 Studio is this fork's own page for managing the posters of a **Jellyfin** library. It lives inside the PostersPlus container at **`http://<server>:8183/studio`**. PostersPlus draws the posters; Studio decides which art, logo and colours each title gets, and sends the result to Jellyfin.
 
-- [Getting started](#getting-started) · [Library](#library) · [Editing a title](#editing-a-title) · [Poster style](#poster-style)
+- [Getting started](#getting-started) · [Library](#library) · [Missing](#missing) · [Editing a title](#editing-a-title) · [Poster style](#poster-style)
 - [Theatre](#theatre-stagemedia) · [Seasons](#seasons) · [Activity and the nightly run](#activity-and-the-nightly-run) · [Settings](#settings) · [Updating](#updating)
 
 ## Getting started
@@ -24,6 +24,10 @@ Every title Studio manages, with the poster Jellyfin has right now. Chips show w
 - **Select** lets you tick titles (or *Select all shown*) and apply **Hands off**, **Manage again**, **Mark reviewed**, **Push now** or **Reset rules** to all of them.
 
 Copies of the same film in two libraries (a 4K and a 1080p, say) share one set of rules.
+
+## Missing
+
+Every title Jellyfin has no **poster**, **backdrop**, **logo** or **thumb** for (**Missing** in the menu, with the count). The buttons at the top choose which of the four to list; a tile says what it lacks and opens the title on that tab. The list is what Studio saw the last time it read the library (every run does, previews included): **Read again** reads it now.
 
 ## Editing a title
 
@@ -50,6 +54,20 @@ Backdrops of exactly the size in Settings (1920×1080 by default) come first, th
 ### Backdrop, Logo, Thumb
 
 Each tab has its own Upload / link / drop row (your backdrops and logos are shared with the Poster section). *Automatic* follows **Settings → Jellyfin images** (off until you switch it on: Jellyfin keeps its own). A generated Thumb (the landscape render, the Thumb source in Settings) is drawn on whatever art it has, a pinned image included. The Thumb tab has *Art*, *Logo* (the poster's, the title as text, none for art that already shows the title, or any logo) and *Style* (art, logo position, bands, the info line and badge); the Style page's **Thumbs** switch sets that style for the library. A title TMDB doesn't list (known by its IMDb or TVDB id) gets its generated Thumb too: on the backdrop you pinned for it, else on whatever IMDb or TVDB has. Theatre has no automatic pick: pin any image, StageMedia art included (framed to 16:9). *Pinned*: Pin any image (backdrops and thumbs can be framed with ⤢). *Keep Jellyfin's* leaves that image alone for this title. A pushed Backdrop replaces the title's backdrops in Jellyfin, the way a poster replaces the poster: Jellyfin keeps only the one Studio sent.
+
+**Rotating backdrops**: **↻** on a backdrop puts it in the title's *Daily rotation* (the first one switches it on, and a pinned backdrop comes along). Like the posters' rotation: a different one each night, shuffled, no repeats until each has had its day. The strip shows them (*Today*, *Next*); ✕ takes one out, and taking the last one out goes back to Automatic.
+
+**Resize to 1920×1080** (in the Backdrop tab, and in Settings): on, a backdrop you pin or rotate that has another size is cropped to fit (around the middle, or as you framed it) and resized to exactly the size in Settings. It applies to every title. Automatic backdrops are always exactly that size already.
+
+### What you set stays
+
+A choice of yours (a pinned or rotating poster or backdrop, a pinned logo or thumb, a style) is only ever changed by you:
+
+- Studio draws exactly that image. Only what is drawn from data changes by itself: the notch, ratings and quality badges. (A look whose logo is *Automatic* follows PostersPlus's logo pick; choose a logo to fix it.)
+- Every run checks what Jellyfin really holds. An image Jellyfin or a plugin replaced, or removed, is put back and reported as *Put back*.
+- If Jellyfin later files the title under another id (a re-identify, a plugin), the title stays what it was in Studio, with your choices: its page then says *set by you*, and *Change → Jellyfin's* follows the new id if that is what you want.
+- An image of yours that is pinned or in a rotation can't be deleted by a clean-up.
+- Backups include these choices.
 
 ### Which title is this?
 
@@ -99,15 +117,17 @@ Turn on **Season posters** in Settings. Each season gets TMDB's season art (or t
 
 ## Activity and the nightly run
 
-Each run reads the library, renders every managed title and uploads a poster **only when it actually changed**. If Jellyfin (a metadata refresh, say) replaced a poster Studio sent, the next run puts it back and says so. Activity shows the next run, live progress, the last runs and their per-title results, and anything that needs attention.
+Each run reads the library, renders every managed title and uploads a poster **only when it actually changed**. If Jellyfin (a metadata refresh, say) replaced or removed an image Studio sent, the next run puts it back and says so. For backdrops, logos and thumbs it compares the image Jellyfin holds, not just Jellyfin's word for it. Activity shows the next run, live progress, the last runs and their per-title results, and anything that needs attention.
 
 The nightly run happens at the time set in Settings (04:00 by default). If the server was off, it runs as soon as it's back. Rotations move on only in the nightly run.
 
 If Jellyfin restarts while a run is going (after a plugin update, say), the run waits for it, up to five minutes, and carries on. If Jellyfin doesn't come back, the run stops as *failed* and the titles it didn't reach are done by the next one.
 
+**"Jellyfin can't give back the image it was just sent"** means Jellyfin can't read that title's folder: usually a USB drive that was unplugged and plugged back in. Jellyfin then shows no images at all for the titles on it until it is restarted (`docker restart jellyfin`).
+
 ## Settings
 
-Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, an optional Encora key (only for identifying theatre titles by hand), and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
+Jellyfin connection, libraries, uploads, the nightly run and its time, season posters, poster size (1000×1500 recommended), **Jellyfin images** (automatic backdrops of an exact size, textless first; resizing the backdrops you pick to that size; logos; thumbs as a landscape render or a titled backdrop), the StageMedia key, an optional Encora key (only for identifying theatre titles by hand), and **Backup**: download all your rules, restore them from a file. Studio also keeps a backup of the last 14 nights in the cache volume's `studio-backups` folder. API keys are never in a backup.
 
 ## Updating
 

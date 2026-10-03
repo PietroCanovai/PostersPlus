@@ -100,7 +100,7 @@ function CropDialog({ src, aspect, initial, actions, onClose }) {
 }
 
 // The chosen image's own size: from the provider's data, or measured for your uploads.
-function SizeLine({ c, path, framed }) {
+function SizeLine({ c, path, framed, note }) {
   const [measured, setMeasured] = useState(null);
   const known = c && c.width ? `${c.width}×${c.height}` : '';
   useEffect(() => {
@@ -113,7 +113,7 @@ function SizeLine({ c, path, framed }) {
   const size = known || measured;
   if (!path) return null;
   const src = c ? (PROVIDERS[c.provider] || c.provider) : path.startsWith('custom:') ? 'Yours' : path.startsWith('jf-chapter:') ? 'Frame' : '';
-  const bits = [src, size, framed ? 'framed' : ''].filter(Boolean);
+  const bits = [src, size, framed ? 'framed' : '', note || ''].filter(Boolean);
   return bits.length ? html`<div class="ed-size">${bits.join(' · ')}</div>` : null;
 }
 
@@ -284,7 +284,7 @@ function Seg({ value, options, onChange, small }) {
 }
 
 // ── The editor ──────────────────────────────────────────────────────────────
-export function Editor({ id, review }) {
+export function Editor({ id, review, slot: startSlot }) {
   const [t, setT] = useState(null);
   const [cands, setCands] = useState(null);
   const [frames, setFrames] = useState(null);
@@ -311,7 +311,7 @@ export function Editor({ id, review }) {
     try { setT(await api(`/title/${id}`)); } catch (ex) { toast(ex.message, true); }
   }, [id]);
   useEffect(() => {
-    setT(null); setCands(null); setFrames(null); setFocus(null); setDraft(null); setNotch(null); setSlot('poster'); setSub('art'); setIdentify(false);
+    setT(null); setCands(null); setFrames(null); setFocus(null); setDraft(null); setNotch(null); setSlot(SLOTS.some(s => s[0] === startSlot) ? startSlot : 'poster'); setSub('art'); setIdentify(false);
     load();
     api(`/title/${id}/candidates`).then(setCands).catch(ex => setCands({ error: ex.message, candidates: { posters: [], backdrops: [], logos: [] } }));
   }, [id]);
@@ -467,10 +467,19 @@ export function Editor({ id, review }) {
 
   // ── Jellyfin's other images ──
   const setArtChoice = (k, body) => call(`/title/${id}/art/${k}`, { method: 'PUT', body });
+  const rotateArt = (k, c, on, cropVal = '') => setArtChoice(k, { rotate: { path: c.path, crop: cropVal, on } });
   function frameArt(c, k) {
     setCrop({ src: fullImageUrl(c.path), aspect: 16 / 9, initial: null,
       actions: [{ label: 'Preview', run: v => setFocus({ art: c, crop: cropToStr(v) }) },
+        ...(k === 'backdrop' ? [{ label: '↻ Rotation', run: v => rotateArt(k, c, true, cropToStr(v)) }] : []),
         { label: 'Pin', primary: true, run: v => setArtChoice(k, { mode: 'pinned', path: c.path, crop: cropToStr(v) }) }] });
+  }
+  // The size rule and its "resize what I pick" switch are the library's (Settings), shown where you pick.
+  async function setResize(on) {
+    setBusy(true);
+    try { await api('/settings', { method: 'PUT', body: { jf_art: { backdrop: { resize: on } } } }); await refresh(); }
+    catch (ex) { toast(ex.message, true); }
+    setBusy(false);
   }
 
   // ── Style ──
@@ -551,6 +560,7 @@ export function Editor({ id, review }) {
     const q = focus && focus.art ? `mode=pinned&path=${encodeURIComponent(focus.art.path)}&crop=${encodeURIComponent(focus.crop || '')}` : '';
     previewSrc = `/studio/api/preview-art/${id}/${slot}?${q}&_=${ts}`;
     caption = focus && focus.art ? 'Preview · not saved' : ch.mode === 'keep' ? 'Jellyfin keeps its own' : ch.mode === 'pinned' ? 'Pinned'
+      : ch.mode === 'rotation' ? `Today · ${ch.pool.length} in rotation`
       : local && slot !== 'thumb' ? 'Nothing pinned yet' : ch.library_on ? 'Automatic' : 'What Automatic would pick (off in Settings)';
   }
 
@@ -563,8 +573,12 @@ export function Editor({ id, review }) {
     sizeInfo = { path: p || '', c: (focus && focus.c && focus.c.path === p ? focus.c : null) || byPath.get(p), framed };
   } else {
     const ch = t.art[slot];
-    const p = focus && focus.art ? focus.art.path : ch.mode === 'pinned' ? ch.path : '';
-    sizeInfo = { path: p || '', c: byPath.get(p), framed: !!(focus && focus.art ? focus.crop : ch.crop) };
+    const today = ch.mode === 'rotation' ? ch.pool.find(x => x.path === ch.today) : null;
+    const p = focus && focus.art ? focus.art.path : ch.mode === 'pinned' ? ch.path : today ? today.path : '';
+    const c = byPath.get(p);
+    const rs = t.art.rules.backdrop;
+    const resized = slot === 'backdrop' && rs.resize && !!p && !!c && !!c.width && (c.width !== rs.min_w || c.height !== rs.min_h);
+    sizeInfo = { path: p || '', c, framed: !!(focus && focus.art ? focus.crop : today ? today.crop : ch.crop), note: resized ? `sent as ${rs.min_w}×${rs.min_h}` : '' };
   }
 
   const chips = chipsFor({ ...t.item, mode, hands_off: !!t.title.hands_off, rotation: rotation.length, never: never.poster.size + never.logo.size, styled: false });
@@ -687,17 +701,32 @@ export function Editor({ id, review }) {
     const part = generated ? thumbSub : 'art';
     const pinArt = c => (c.needsFrame ? frameArt(c, k)
       : setArtChoice(k, { mode: 'pinned', path: c.path, ...(generated && c.language ? { logo: 'none' } : {}) }));
+    const rotates = k === 'backdrop';
+    const inPool = c => ch.pool.some(x => x.path === c.path);
+    const resizing = rotates && r.resize;
     const artGrid = html`<div class="cands ${k === 'logo' ? 'logos' : 'backdrops'}">${pool.map(c => {
       const b = [];
       if (ch.mode === 'pinned' && ch.path === c.path) b.push(['Pinned', 'info']);
-      if (k !== 'logo' && fitRank(c, r) === 2) b.push([`Not ${r.min_w}×${r.min_h}`, 'warn']);
+      if (rotates && inPool(c)) b.push(['Rotation', 'info']);
+      if (k !== 'logo' && fitRank(c, r) === 2) b.push(resizing ? [`→ ${r.min_w}×${r.min_h}`, ''] : [`Not ${r.min_w}×${r.min_h}`, 'warn']);
       if (isFrame(c)) b.push(['Frame', '']);
       return html`<${Card} key=${c.path} c=${c} kind=${k === 'logo' ? 'logos' : 'backdrops'} focused=${isFocused(c)} badges=${b}
         onFocus=${() => (c.needsFrame ? frameArt(c, k) : setFocus({ art: c, crop: '' }))} onFrame=${k === 'logo' ? null : () => frameArt(c, k)}>
         <button onClick=${() => pinArt(c)} disabled=${busy}>Pin</button>
+        ${rotates && html`<button class=${inPool(c) ? 'on' : ''} disabled=${busy} title="Daily rotation"
+          onClick=${() => (inPool(c) ? rotateArt(k, c, false) : c.needsFrame ? frameArt(c, k) : rotateArt(k, c, true))}>↻</button>`}
         ${c.provider === 'custom' && html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`}
       </${Card}>`;
     })}</div>`;
+    const rotationStrip = rotates && ch.mode === 'rotation' && html`<div class="strip wide">
+      ${ch.pool.map(x => html`<div class="strip-cell" key=${x.path}>
+        <button class="strip-item ${isFocused(x) ? 'on' : ''}" onClick=${() => setFocus({ art: byPath.get(x.path) || x, crop: x.crop })}>
+          <img src=${thumbUrl(x.path, 'backdrops')} alt="" referrerpolicy="no-referrer" />
+          ${x.path === ch.today ? html`<span class="chip ok">Today</span>` : ch.upcoming[0] === x.path ? html`<span class="chip">Next</span>` : ''}
+        </button>
+        <button class="strip-x" title="Remove from rotation" aria-label="Remove from rotation" disabled=${busy}
+          onClick=${() => { setFocus(null); rotateArt(k, x, false); }}>✕</button>
+      </div>`)}</div>`;
     const logoGrid = html`
       <div class="own-row">
         ${[['', 'Poster’s'], ['text', 'Title as text'], ['none', 'None (art has its title)']].map(([v, l]) => html`<button class=${(ch.logo || '') === v ? 'on' : ''}
@@ -708,8 +737,16 @@ export function Editor({ id, review }) {
         <button onClick=${() => setArtChoice(k, { logo: c.path })} disabled=${busy}>Use</button>
         ${c.provider === 'custom' && html`<button onClick=${() => removeUpload(c)} disabled=${busy} title="Delete">✕</button>`}</${Card}>`)}</div>`;
     return html`
-      <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below') : setArtChoice(k, { mode: m }))}
-        options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'], ['keep', 'Keep Jellyfin’s']]} />
+      <div class="mode-row">
+        <${Seg} small value=${ch.mode} onChange=${m => (m === 'pinned' ? toast('Pick an image below')
+            : m === 'rotation' && !ch.pool.length ? toast('Add backdrops with ↻ below') : setArtChoice(k, { mode: m }))}
+          options=${[['auto', 'Automatic'], ['pinned', 'Pinned', ch.mode === 'pinned' ? '' : 'disabled'],
+            ...(rotates ? [['rotation', 'Daily rotation']] : []), ['keep', 'Keep Jellyfin’s']]} />
+        ${rotates && ch.mode === 'rotation' && html`<span class="hint-sm">${ch.pool.length} backdrops, shuffled daily</span>`}
+        ${rotates && html`<label class="own-check" title="For every title: a backdrop you pick that has another size is cropped to fit and resized">
+          <input type="checkbox" checked=${r.resize} disabled=${busy} onChange=${e => setResize(e.target.checked)} /> Resize to ${r.min_w}×${r.min_h}</label>`}
+      </div>
+      ${rotationStrip}
       ${ch.mode === 'auto' && (local && k !== 'thumb' ? html`<p class="hint-sm">${t.stage ? 'Theatre has' : 'This title has'} no automatic ${k}: pin one below.</p>`
         : !ch.library_on && html`<p class="hint-sm">Automatic ${k}s are off in <a href="#settings">Settings</a>: Jellyfin’s stays until you pin one.</p>`)}
       ${generated && html`<${Seg} value=${thumbSub} onChange=${setThumbSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}

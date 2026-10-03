@@ -167,6 +167,86 @@ class PickingTests(unittest.TestCase):
         same, _ = artwork._frame(buf.getvalue(), "", 16 / 9)
         self.assertEqual(same, buf.getvalue())
 
+    def test_resize_what_you_pick(self):
+        """With "resize" on, a backdrop of yours of another size goes out at exactly the rule's size."""
+        from PIL import Image
+
+        def jpeg(w, h):
+            buf = io.BytesIO()
+            Image.new("RGB", (w, h), (10, 20, 30)).save(buf, format="JPEG")
+            return buf.getvalue()
+        size = lambda data: Image.open(io.BytesIO(data)).size
+        tall, exact = jpeg(1000, 1000), jpeg(1920, 1080)
+        self.assertEqual(artwork._own_backdrop(tall, "")[0], tall)                     # off: sent as it is
+        artwork.set_library_rules({"backdrop": {"resize": True}})
+        self.assertEqual(size(artwork._own_backdrop(tall, "")[0]), (1920, 1080))       # cropped around the middle, enlarged
+        self.assertEqual(size(artwork._own_backdrop(jpeg(3840, 2160), "")[0]), (1920, 1080))
+        self.assertEqual(size(artwork._own_backdrop(jpeg(1921, 1080), "")[0]), (1920, 1080))
+        self.assertEqual(artwork._own_backdrop(exact, "")[0], exact)                   # already right: untouched
+        self.assertEqual(size(artwork._own_backdrop(tall, "0.0000,0.0000,2.000")[0]), (1920, 1080))   # your frame, then resized
+        a = artwork._own_backdrop(tall, "")[0]
+        self.assertEqual(a, artwork._own_backdrop(tall, "")[0])                        # same bytes every time: no re-upload
+        artwork.set_library_rules({"backdrop": {"min_w": 2560, "min_h": 1440}})
+        self.assertEqual(size(artwork._own_backdrop(exact, "")[0]), (2560, 1440))
+
+    def test_backdrop_rotation(self):
+        import random
+        from datetime import date
+        k = "tmdb:movie:1"
+        artwork.set_choice(k, "backdrop", "pinned", "/a.jpg", "0.5000,0.5000,1.000")
+        with self.assertRaises(ValueError):
+            artwork.rotate(k, "logo", "/x.png")                        # only backdrops rotate
+        c = artwork.rotate(k, "backdrop", "/b.jpg")
+        self.assertEqual(c["mode"], "rotation")                         # the first one switches it on...
+        self.assertEqual([p["path"] for p in c["pool"]], ["/a.jpg", "/b.jpg"])   # ...and the pinned one comes along
+        self.assertEqual(c["pool"][0]["crop"], "0.5000,0.5000,1.000")
+        self.assertTrue(artwork.managed(k, "backdrop"))
+        c = artwork.rotate(k, "backdrop", "/c.jpg", "0.1000,0.2000,1.500")
+        rng = random.Random(7)
+        d1 = date(2026, 10, 3)
+        first, rest = artwork.rotation_pick(artwork.choice(k, "backdrop"), today=d1, rng=rng)
+        self.assertEqual(len(rest), 2)
+        # A preview or a push on a later day shows the same one: only the nightly run moves on.
+        again, _ = artwork.rotation_pick(artwork.choice(k, "backdrop"), today=date(2026, 10, 9), rng=rng)
+        self.assertEqual(again, first)
+        seen = [artwork.rotation_pick(artwork.choice(k, "backdrop"), advance=True, today=d1, rng=rng)[0]["path"]]
+        self.assertEqual(seen[0], first["path"])                        # the first night starts the clock
+        same_night, _ = artwork.rotation_pick(artwork.choice(k, "backdrop"), advance=True, today=d1, rng=rng)
+        self.assertEqual(same_night, first)                             # a second copy of the title, same night
+        for day in (4, 5):
+            seen.append(artwork.rotation_pick(artwork.choice(k, "backdrop"), advance=True, today=date(2026, 10, day), rng=rng)[0]["path"])
+        self.assertEqual(sorted(seen), ["/a.jpg", "/b.jpg", "/c.jpg"])  # every image once before any repeats
+        nxt = artwork.rotation_pick(artwork.choice(k, "backdrop"), advance=True, today=date(2026, 10, 6), rng=rng)[0]["path"]
+        self.assertNotEqual(nxt, seen[-1])                              # a new deck never opens on the one just shown
+        self.assertEqual(artwork.chosen(artwork.choice(k, "backdrop"))["path"], nxt)
+        # Taking one out, then the rest: back to automatic.
+        today_path = nxt
+        c = artwork.rotate(k, "backdrop", "/a.jpg", on=False)
+        self.assertEqual(len(c["pool"]), 2)
+        artwork.rotate(k, "backdrop", "/b.jpg", on=False)
+        c = artwork.rotate(k, "backdrop", "/c.jpg", on=False)
+        self.assertEqual((c["mode"], c["pool"]), ("auto", []))
+        self.assertFalse(artwork.managed(k, "backdrop"))
+        self.assertIsNotNone(today_path)
+        with self.assertRaises(ValueError):
+            artwork.set_choice(k, "backdrop", "rotation")                # nothing to rotate
+        # Switching to Pinned and back keeps the pool.
+        artwork.rotate(k, "backdrop", "/a.jpg")
+        artwork.set_choice(k, "backdrop", "pinned", "/z.jpg")
+        self.assertEqual(artwork.chosen(artwork.choice(k, "backdrop"))["path"], "/z.jpg")
+        self.assertEqual(artwork.set_choice(k, "backdrop", "rotation")["mode"], "rotation")
+        self.assertEqual(artwork.chosen(artwork.choice(k, "backdrop"))["path"], "/a.jpg")
+
+    def test_a_pinned_upload_is_never_deleted(self):
+        from studio import uploads
+        k = "tmdb:movie:1"
+        artwork.set_choice(k, "backdrop", "pinned", "custom:aaaaaaaaaaaaaaaa.jpg")
+        artwork.set_choice(k, "logo", "pinned", "custom:bbbbbbbbbbbbbbbb.png")
+        artwork.rotate("tmdb:movie:2", "backdrop", "custom:cccccccccccccccc.jpg")
+        for p in ("custom:aaaaaaaaaaaaaaaa.jpg", "custom:bbbbbbbbbbbbbbbb.png", "custom:cccccccccccccccc.jpg"):
+            self.assertTrue(uploads.in_use(p))
+            self.assertIn(p, uploads.studio_custom_paths())             # safe from the Artwork tab's clean-up too
+
 
 class EngineArtTests(unittest.TestCase):
     def setUp(self):
@@ -241,6 +321,82 @@ class EngineArtTests(unittest.TestCase):
         self.assertEqual(counts, {"reverted": 2})                 # poster and backdrop alike
         self.assertTrue(m1["BackdropImageTags"][0].startswith("ours-"))
         self.assertEqual(self.sync(item_ids=["m1"]), {"unchanged": 1})
+
+    def test_ours_is_the_backdrop_that_stays(self):
+        """Jellyfin re-tags the backdrops it already had when one is uploaded: going by tags,
+        Studio deleted its own upload and kept Jellyfin's.  It goes by the bytes now."""
+        artwork.set_library_rules({"backdrop": {"enabled": True}})
+        m1 = self.jf.find("m1")
+        m1["BackdropImageTags"] = ["jellyfins-own", "jellyfins-second"]
+        self.sync()
+        tags = m1["BackdropImageTags"]
+        self.assertEqual([self.jf.blobs[t] for t in tags], [b"bd-1"])
+
+    def test_a_wrong_backdrop_is_noticed_and_replaced(self):
+        """Studio believed its backdrop was in Jellyfin (hash and tag said so) while Jellyfin
+        showed another image: every run now compares what Jellyfin really holds."""
+        artwork.set_library_rules({"backdrop": {"enabled": True}})
+        self.sync()
+        m1 = self.jf.find("m1")
+        tag = m1["BackdropImageTags"][0]
+        self.jf.blobs[tag] = b"not-what-we-sent"                # same tag, another image
+        counts = self.sync()
+        self.assertEqual(counts.get("reverted"), 1)
+        self.assertEqual([self.jf.blobs[t] for t in m1["BackdropImageTags"]], [b"bd-1"])
+        self.assertEqual(self.sync().get("reverted"), None)     # and it stays put
+
+    def test_an_unreadable_drive_is_an_error_not_a_success(self):
+        artwork.set_library_rules({"backdrop": {"enabled": True}, "logo": {"enabled": True}})
+        self.jf.unreadable.add("m1")
+        rid_counts = self.sync()
+        self.assertEqual(rid_counts.get("error"), 2)
+        details = [r["detail"] for r in db.query("SELECT detail FROM run_items WHERE action = 'error'")]
+        self.assertTrue(all("restart Jellyfin" in d for d in details), details)
+        self.assertEqual(artwork.state("m1", "backdrop").get("pushed_hash"), None)   # not recorded as sent
+
+    def test_rotation_moves_on_only_at_night(self):
+        real = self._orig
+        seen = []
+
+        async def resolve(row, kind, **kw):
+            if row["jf_id"] != "m1" or kind != "backdrop":
+                return None
+            pin = artwork.chosen(artwork.choice(rules.title_key(row), kind), advance=kw.get("advance", False))
+            seen.append((pin["path"], kw.get("advance", False)))
+            return pin["path"].encode(), "image/jpeg"
+        artwork.resolve = resolve
+        try:
+            key = rules.title_key({"jf_id": "m1", "tmdb_id": "949", "jf_type": "Movie"})
+            artwork.rotate(key, "backdrop", "/a.jpg")
+            artwork.rotate(key, "backdrop", "/b.jpg")
+            self.sync()                                              # a manual run: today's, not advanced
+            self.assertFalse(seen[-1][1])
+            today = seen[-1][0]
+            self.assertEqual(self.jf.blobs[self.jf.find("m1")["BackdropImageTags"][0]], today.encode())
+            self.sync(item_ids=["m1"])
+            self.assertEqual(seen[-1], (today, False))               # nor does pushing the title
+            rid = asyncio.run(engine.run(trigger="schedule", dry_run=False,
+                                         jf_transport=httpx.MockTransport(self.jf.handler),
+                                         render_transport=httpx.MockTransport(self.pp.handler)))
+            self.assertTrue(seen[-1][1])                             # the nightly run does
+            self.assertIsNotNone(rid)
+        finally:
+            artwork.resolve = real
+
+    def test_missing_lists_what_jellyfin_lacks(self):
+        from studio import api_library
+        self.sync()
+        rows = {r["jf_id"]: r["missing"] for r in api_library.missing_rows()}
+        self.assertEqual(rows["m1"], ["backdrop", "logo", "thumb"])     # the fake library has posters only
+        m1 = self.jf.find("m1")
+        m1["BackdropImageTags"] = ["b"]
+        m1["ImageTags"]["Logo"] = "l"
+        prefs.set("uploads_enabled", False)
+        del m1["ImageTags"]["Primary"]
+        self.sync()                                                     # a preview run reads the library too
+        rows = {r["jf_id"]: r["missing"] for r in api_library.missing_rows()}
+        self.assertEqual(rows["m1"], ["poster", "thumb"])
+        self.assertIn("m2", rows)                                       # left-alone titles count too
 
     def test_keep_is_respected(self):
         artwork.set_library_rules({"logo": {"enabled": True}})

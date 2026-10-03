@@ -227,16 +227,36 @@ class Client:
         Jellyfin keeps a list of backdrops and ignores the index on an upload:
         the image is always added at the end, so the old one stayed in front.
         So the new one is uploaded first (nothing is lost if that fails), then
-        every other backdrop is removed, which leaves ours as the only one."""
-        before = set((await self.item(item_id)).raw.get("BackdropImageTags") or [])
+        every other backdrop is removed, which leaves ours as the only one.
+
+        Which one is ours is told by its bytes (Jellyfin stores an upload as it
+        was sent).  Its tags can't say: an upload gives the backdrops already
+        there new tags too, and going by "the tag that wasn't there before"
+        deleted our own upload and kept Jellyfin's (seen on the live server,
+        2026-10-02)."""
         await self.upload_image(item_id, "Backdrop", image, content_type)
-        after = (await self.item(item_id)).raw.get("BackdropImageTags") or []
-        if not after:
-            raise JellyfinError("Jellyfin didn't keep the backdrop")
-        ours = next((i for i, t in enumerate(after) if t not in before), len(after) - 1)
-        for index in range(len(after) - 1, -1, -1):   # last first: deleting shifts the ones after
+        count = len((await self.item(item_id)).raw.get("BackdropImageTags") or [])
+        ours = None
+        for index in range(count - 1, -1, -1):        # added at the end: found on the first look
+            if await self._stored(item_id, f"Backdrop/{index}") == image:
+                ours = index
+                break
+        if ours is None:
+            raise JellyfinError("Jellyfin can't give back the backdrop it was just sent (if the title is on a drive "
+                                "that was unplugged, restart Jellyfin)")
+        for index in range(count - 1, -1, -1):        # last first: deleting shifts the ones after
             if index != ours:
                 await self._send("DELETE", f"/Items/{item_id}/Images/Backdrop/{index}")
+        if await self._stored(item_id, "Backdrop/0") != image:
+            raise JellyfinError("Jellyfin kept another backdrop in front of the one sent")
+
+    async def _stored(self, item_id: str, image: str) -> bytes | None:
+        """An image exactly as Jellyfin stores it, or None when it has none it can read."""
+        try:
+            resp = await self._request("GET", f"/Items/{item_id}/Images/{image}")
+        except httpx.HTTPError as exc:
+            raise JellyfinError(f"Can't reach Jellyfin ({type(exc).__name__})") from exc
+        return resp.content if resp.status_code == 200 else None
 
     async def _send(self, method: str, path: str, **kw) -> None:
         try:

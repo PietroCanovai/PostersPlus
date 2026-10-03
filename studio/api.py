@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import artwork, auth, db, engine, prefs
+from . import api_library, artwork, auth, db, engine, prefs
 from .jellyfin import Client, JellyfinError
 
 router = APIRouter()
@@ -129,6 +129,7 @@ async def status():
         "last_scan_at": db.get_setting("last_scan_at"),
         "items": by_status,
         "total": sum(by_status.values()),
+        "missing": len(api_library.missing_rows()),
         "progress": engine.progress.as_dict(),
         "runs": runs,
         "version": _version(),

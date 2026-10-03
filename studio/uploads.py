@@ -82,6 +82,8 @@ def in_use(path: str) -> bool:
         return True
     if db.query_one("SELECT 1 FROM looks WHERE poster = ? OR logo = ?", (path, path)):
         return True
+    if path in _art_paths():
+        return True
     try:
         from cache import get_db
         return get_db().execute("SELECT 1 FROM art_overrides WHERE path = ?", (path,)).fetchone() is not None
@@ -89,11 +91,26 @@ def in_use(path: str) -> bool:
         return True   # can't tell: keep the file
 
 
+def _art_paths() -> set[str]:
+    """The images pinned, or in a rotation, as a title's Backdrop / Logo / Thumb."""
+    import json
+    paths: set[str] = set()
+    for r in db.query("SELECT path, logo, pool FROM jf_art"):
+        paths.update(p for p in (r["path"], r["logo"]) if p)
+        try:
+            paths.update(p.get("path") or "" for p in json.loads(r.get("pool") or "[]"))
+        except (ValueError, AttributeError):
+            pass
+    paths.discard("")
+    return paths
+
+
 def studio_custom_paths() -> set[str]:
     """Every custom image Studio uses (for art_overrides' clean-up, which
     otherwise only knows the Artwork tab's own choices)."""
     paths = {r["path"] for r in db.query("SELECT path FROM uploads WHERE path LIKE 'custom:%'")}
     paths |= {r["custom"] for r in db.query("SELECT custom FROM frame_cache")}
+    paths |= {p for p in _art_paths() if p.startswith("custom:")}
     for r in db.query("SELECT poster, logo FROM looks"):
         for p in (r["poster"], r["logo"]):
             if p and p.startswith("custom:"):

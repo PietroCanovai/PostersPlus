@@ -1,5 +1,5 @@
 """Backups of everything you decided in Studio: per-title rules (modes, looks,
-Never lists, styles) and the global style.  Secrets are never included.
+Never lists, styles, Backdrop / Logo / Thumb choices) and the global style.  Secrets are never included.
 
 Written automatically after each nightly run to /app/cache/studio-backups/
 (the last KEEP days), and downloadable / restorable from Settings.
@@ -17,7 +17,7 @@ VERSION = 1
 KEEP = 14
 # Settings worth carrying over; secrets (API keys, session secret) never are.
 _SETTINGS = ("style_applied", "style_draft", "style_previous", "libraries", "schedule_time", "resolution",
-             "seasons_enabled")
+             "seasons_enabled", "jf_art")
 
 
 def backup_dir() -> str:
@@ -34,6 +34,7 @@ def export() -> dict:
         "looks": db.query("SELECT * FROM looks"),
         "never": db.query("SELECT * FROM never"),
         "uploads": db.query("SELECT * FROM uploads"),
+        "jf_art": db.query("SELECT * FROM jf_art"),
         "settings": {k: db.get_setting(k) for k in _SETTINGS if db.get_setting(k) is not None},
     }
 
@@ -50,8 +51,15 @@ def restore(data: dict) -> dict:
         conn = db.connect()
         conn.execute("BEGIN")
         try:
-            for table in ("looks", "never", "titles") + (("uploads",) if "uploads" in data else ()):
+            for table in ("looks", "never", "titles") + tuple(t for t in ("uploads", "jf_art") if t in data):
                 conn.execute(f"DELETE FROM {table}")
+            # Backdrop / Logo / Thumb choices, rotations included (in backups made since 2026-10-03).
+            for a in data.get("jf_art") or []:
+                conn.execute("INSERT OR REPLACE INTO jf_art (title_key, kind, mode, path, crop, logo, pool, updated_at) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                             (str(a["title_key"]), str(a["kind"]), a.get("mode") or "auto", a.get("path") or "",
+                              a.get("crop") or "", a.get("logo") or "", a.get("pool") or "[]",
+                              float(a.get("updated_at") or time.time())))
             for u in data.get("uploads") or []:
                 conn.execute("INSERT OR IGNORE INTO uploads (title_key, kind, path, name, own_title, added_at) "
                              "VALUES (?, ?, ?, ?, ?, ?)",

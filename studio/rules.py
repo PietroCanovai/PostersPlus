@@ -275,6 +275,16 @@ def move_title(old: str, new: str) -> bool:
     return moved > 0
 
 
+def is_customised(key: str) -> bool:
+    """Whether you set anything for this title: a mode, a style, looks, Never
+    images, hands off, images of yours, or a Backdrop / Logo / Thumb choice."""
+    t = db.query_one("SELECT mode, hands_off, style FROM titles WHERE title_key = ?", (key,))
+    if t and (t["mode"] != "auto" or t["hands_off"] or t["style"] not in ("{}", "")):
+        return True
+    return any(db.query_one(f"SELECT 1 FROM {table} WHERE title_key = ?", (key,))
+               for table in ("looks", "never", "uploads", "jf_art"))
+
+
 def has_own_art(key: str) -> bool:
     """Whether the title's rules name a poster image (pinned, or in the
     rotation): enough to draw a title no database knows."""

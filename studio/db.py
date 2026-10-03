@@ -175,6 +175,13 @@ _ADDED_COLUMNS = (
     ("items", "manual_imdb_id", "TEXT"),
     ("items", "manual_tvdb_id", "TEXT"),
     ("items", "manual_stage_id", "TEXT"),
+    # A rotation of your own images (backdrops): the pool [{path, crop}], and its
+    # shuffled deck of paths, like a title's poster rotation.
+    ("jf_art", "pool", "TEXT NOT NULL DEFAULT '[]'"),
+    ("jf_art", "deck", "TEXT NOT NULL DEFAULT '[]'"),
+    ("jf_art", "deck_pos", "INTEGER NOT NULL DEFAULT 0"),
+    ("jf_art", "current", "TEXT"),
+    ("jf_art", "rotated_on", "TEXT"),
 )
 
 

@@ -140,8 +140,13 @@ def _title_payload(row: dict) -> dict:
 def _art_payload(key: str) -> dict:
     from . import artwork
     rules_ = artwork.library_rules()
-    return {k: {**artwork.choice(key, k), "managed": artwork.managed(key, k), "library_on": rules_[k]["enabled"]}
-            for k in artwork.KINDS} | {"rules": rules_}
+    out = {}
+    for k in artwork.KINDS:
+        c = artwork.choice(key, k)
+        today, upcoming = artwork.rotation_pick(c) if c["mode"] == "rotation" else (None, [])
+        out[k] = {**c, "managed": artwork.managed(key, k), "library_on": rules_[k]["enabled"],
+                  "today": today["path"] if today else None, "upcoming": upcoming}
+    return out | {"rules": rules_}
 
 
 @router.get("/title/{jf_id}")
@@ -497,12 +502,21 @@ async def push(jf_id: str):
 
 @router.put("/title/{jf_id}/art/{kind}")
 async def set_art(jf_id: str, kind: str, request: Request):
-    """Body {mode: auto|pinned|keep, path, crop}."""
+    """Body {mode: auto|pinned|rotation|keep, path, crop}, {logo}, or
+    {rotate: {path, crop, on}} to put an image in the daily rotation (or take
+    it out)."""
     from . import artwork
     row, body = _item(jf_id), await _body(request)
     key = rules.title_key(row)
     path = str(body.get("path") or "")
     try:
+        if isinstance(body.get("rotate"), dict):
+            r = body["rotate"]
+            rpath = str(r.get("path") or "")
+            if rpath and not rpath.startswith("jf-chapter:") and r.get("on", True):
+                _validator(key)(rpath)
+            rules.ensure_title(key, row["name"])
+            artwork.rotate(key, kind, rpath, rules.clean_crop(r.get("crop")), bool(r.get("on", True)))
         if "logo" in body:
             logo = str(body.get("logo") or "")
             if logo not in ("", "text", "none"):
@@ -614,6 +628,34 @@ async def import_frame(jf_id: str, request: Request):
     key = rules.title_key(row)
     rules.ensure_title(key, row["name"])
     return _json({"path": stored, "upload": uploads.add(key, "backdrop", stored, str(body.get("name") or "Frame")[:80])})
+
+
+# ── What Jellyfin is missing ────────────────────────────────────────────────
+
+def missing_rows() -> list[dict]:
+    """Every title Jellyfin has no poster, backdrop, logo or thumb for, as of
+    the last time Studio read the library.  Seasons only ever need a poster."""
+    seen: dict[str, dict] = {}
+    for r in db.query("SELECT jf_id, kind, seen_tag FROM item_images"):
+        seen.setdefault(r["jf_id"], {})[r["kind"]] = r["seen_tag"]
+    out = []
+    for r in db.query("SELECT * FROM items WHERE present = 1 ORDER BY name COLLATE NOCASE"):
+        tags = seen.get(r["jf_id"]) or {}
+        missing = [] if r["jf_image_tag"] else ["poster"]
+        if r["jf_type"] != "Season":
+            missing += [k for k in ("backdrop", "logo", "thumb") if not tags.get(k)]
+        if missing:
+            out.append({"jf_id": r["jf_id"], "name": r["name"], "year": r["year"], "library_name": r["library_name"],
+                        "jf_type": r["jf_type"], "jf_image_tag": r["jf_image_tag"], "status": r["status"],
+                        "title_key": rules.title_key(r), "missing": missing})
+    return out
+
+
+@router.get("/missing")
+async def missing():
+    rows = missing_rows()
+    return _json({"items": rows, "last_scan_at": db.get_setting("last_scan_at"),
+                  "counts": {k: sum(1 for r in rows if k in r["missing"]) for k in ("poster", "backdrop", "logo", "thumb")}})
 
 
 # ── Bulk actions (the Library's selection) ──────────────────────────────────

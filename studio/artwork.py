@@ -3,14 +3,19 @@
 Unlike the Primary poster these aren't composed from a style (except the
 Thumb's "landscape" source): Studio picks an image and sends it as it is.
 
-Per title and kind: automatic, pinned (a path, optionally framed), or keep
-(leave Jellyfin's).  Automatic follows the library rules in Settings:
+Per title and kind: automatic, pinned (a path, optionally framed), a daily
+rotation of images you chose (backdrops), or keep (leave Jellyfin's).
+Automatic follows the library rules in Settings:
   backdrop  the providers' backgrounds of exactly the rule's size (default
             1920x1080), textless first if asked
   logo      PostersPlus's own pick in the style's language order (/logo)
   thumb     PostersPlus's landscape render (logo + style over a backdrop),
             or the best backdrop with the title on it
 A kind is only managed once switched on in Settings.
+
+What you pinned or put in a rotation is yours: Studio sends exactly that and
+puts it back when Jellyfin (or a plugin) replaces it.  With "resize" on, a
+backdrop of yours that isn't the rule's size is cropped and resized to it.
 """
 from __future__ import annotations
 
@@ -18,8 +23,10 @@ import asyncio
 import io
 import json
 import logging
+import random
 import re
 import time
+from datetime import date
 from urllib.parse import parse_qsl, urlencode
 
 import httpx
@@ -30,11 +37,13 @@ logger = logging.getLogger("studio")
 
 KINDS = ("backdrop", "logo", "thumb")
 JF_TYPE = {"backdrop": "Backdrop", "logo": "Logo", "thumb": "Thumb"}
-MODES = ("auto", "pinned", "keep")
+MODES = ("auto", "pinned", "rotation", "keep")
+ROTATING = ("backdrop",)   # the kinds that can rotate
 ASPECT = {"backdrop": 16 / 9, "thumb": 16 / 9}
 
 DEFAULT_RULES = {
-    "backdrop": {"enabled": False, "min_w": 1920, "min_h": 1080, "wide_only": True, "textless": True},
+    "backdrop": {"enabled": False, "min_w": 1920, "min_h": 1080, "wide_only": True, "textless": True,
+                 "resize": False},
     "logo": {"enabled": False},
     "thumb": {"enabled": False, "source": "landscape"},
 }
@@ -114,7 +123,12 @@ async def realize(params: dict) -> dict:
 
 def choice(title_key: str, kind: str) -> dict:
     row = db.query_one("SELECT * FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
-    return row or {"title_key": title_key, "kind": kind, "mode": "auto", "path": "", "crop": "", "logo": ""}
+    if not row:
+        return {"title_key": title_key, "kind": kind, "mode": "auto", "path": "", "crop": "", "logo": "",
+                "pool": [], "deck": [], "deck_pos": 0, "current": None, "rotated_on": None}
+    row["pool"] = json.loads(row.get("pool") or "[]")
+    row["deck"] = json.loads(row.get("deck") or "[]")
+    return row
 
 
 def set_choice(title_key: str, kind: str, mode: str, path: str = "", crop: str = "") -> dict:
@@ -122,13 +136,17 @@ def set_choice(title_key: str, kind: str, mode: str, path: str = "", crop: str =
         raise ValueError("bad kind or mode")
     if mode == "pinned" and not path:
         raise ValueError("pin which image?")
-    if mode == "auto" and not path and not choice(title_key, kind).get("logo"):
+    old = choice(title_key, kind)
+    if mode == "rotation" and (kind not in ROTATING or not old["pool"]):
+        raise ValueError("Add images to the rotation first (the ↻ button)")
+    if mode == "auto" and not path and not old.get("logo") and not old["pool"]:
         db.execute("DELETE FROM jf_art WHERE title_key = ? AND kind = ?", (title_key, kind))
     else:
         db.execute("INSERT INTO jf_art (title_key, kind, mode, path, crop, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
                    "ON CONFLICT(title_key, kind) DO UPDATE SET mode=excluded.mode, path=excluded.path, "
                    "crop=excluded.crop, updated_at=excluded.updated_at",
-                   (title_key, kind, mode, path if mode == "pinned" else "", crop or "", time.time()))
+                   (title_key, kind, mode, path if mode == "pinned" else "", crop if mode == "pinned" else "",
+                    time.time()))
     return choice(title_key, kind)
 
 
@@ -137,7 +155,7 @@ def managed(title_key: str, kind: str) -> bool:
     c = choice(title_key, kind)
     if c["mode"] == "keep":
         return False
-    return c["mode"] == "pinned" or library_rules()[kind]["enabled"]
+    return c["mode"] in ("pinned", "rotation") or library_rules()[kind]["enabled"]
 
 
 def set_logo(title_key: str, kind: str, logo: str) -> dict:
@@ -148,6 +166,70 @@ def set_logo(title_key: str, kind: str, logo: str) -> dict:
                "ON CONFLICT(title_key, kind) DO UPDATE SET logo=excluded.logo, updated_at=excluded.updated_at",
                (title_key, kind, c["mode"], c.get("path") or "", c.get("crop") or "", logo, time.time()))
     return choice(title_key, kind)
+
+
+# ── Rotation: images of yours, one a day ────────────────────────────────────
+
+def rotate(title_key: str, kind: str, path: str, crop: str = "", on: bool = True) -> dict:
+    """Put an image in the title's daily rotation, or take it out.  The first
+    one added switches the title to rotation (a pinned image comes along);
+    taking the last one out goes back to automatic."""
+    if kind not in ROTATING:
+        raise ValueError(f"A {kind} can't rotate")
+    if not path:
+        raise ValueError("rotate which image?")
+    c = choice(title_key, kind)
+    pool = [p for p in c["pool"] if p["path"] != path]
+    if on:
+        if not pool and c["mode"] == "pinned" and c.get("path") and c["path"] != path:
+            pool.append({"path": c["path"], "crop": c.get("crop") or ""})
+        pool.append({"path": path, "crop": crop or ""})
+    mode = "rotation" if pool else ("auto" if c["mode"] == "rotation" else c["mode"])
+    keep = mode == "pinned"
+    db.execute("INSERT INTO jf_art (title_key, kind, mode, path, crop, logo, pool, updated_at) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+               "ON CONFLICT(title_key, kind) DO UPDATE SET mode=excluded.mode, path=excluded.path, crop=excluded.crop, "
+               "pool=excluded.pool, updated_at=excluded.updated_at",
+               (title_key, kind, mode, (c.get("path") or "") if keep else "", (c.get("crop") or "") if keep else "",
+                c.get("logo") or "", json.dumps(pool), time.time()))
+    return choice(title_key, kind)
+
+
+def rotation_pick(c: dict, *, advance: bool = False, today: date | None = None,
+                  rng: random.Random | None = None) -> tuple[dict | None, list[str]]:
+    """Today's image of a rotation ({path, crop}) and the paths coming next.
+    Like the posters' rotation: a shuffled deck that runs through every image
+    before one repeats, moved on only by the nightly run (*advance*), on a new
+    day; previews and pushes show today's."""
+    pool = c.get("pool") or []
+    if not pool:
+        return None, []
+    paths = [p["path"] for p in pool]
+    deck, pos, current = list(c.get("deck") or []), int(c.get("deck_pos") or 0), c.get("current")
+    day, rng, changed = (today or date.today()).isoformat(), rng or random.Random(), False
+    if sorted(deck) != sorted(paths) or not (0 <= pos < len(deck)):
+        deck, pos, changed = rules._shuffled(paths, current, rng), 0, True   # a new pool: a fresh deck
+    elif advance and c.get("rotated_on") not in (None, day):
+        pos += 1
+        if pos >= len(deck):
+            deck, pos = rules._shuffled(paths, deck[-1], rng), 0
+        changed = True
+    if advance or changed:
+        db.execute("UPDATE jf_art SET deck = ?, deck_pos = ?, current = ?, rotated_on = ? "
+                   "WHERE title_key = ? AND kind = ?",
+                   (json.dumps(deck), pos, deck[pos], day if advance else c.get("rotated_on"),
+                    c["title_key"], c["kind"]))
+    return next(p for p in pool if p["path"] == deck[pos]), deck[pos + 1:]
+
+
+def chosen(c: dict, *, advance: bool = False) -> dict | None:
+    """The image you chose for this title today ({path, crop}): the pinned one,
+    or today's of the rotation.  None when it is left to Studio or Jellyfin."""
+    if c["mode"] == "pinned" and c.get("path"):
+        return {"path": c["path"], "crop": c.get("crop") or ""}
+    if c["mode"] == "rotation":
+        return rotation_pick(c, advance=advance)[0]
+    return None
 
 
 # ── Picking ─────────────────────────────────────────────────────────────────
@@ -209,40 +291,58 @@ async def fetch(path: str) -> bytes:
     return r.content
 
 
-def _frame(data: bytes, crop: str, aspect: float, max_w: int = 3840) -> tuple[bytes, str]:
+def _frame(data: bytes, crop: str, aspect: float, max_w: int = 3840,
+           exact: tuple[int, int] | None = None) -> tuple[bytes, str]:
     """The image framed to *aspect* (x,y,zoom as the poster frames), as JPEG;
-    PNGs (logos) and unframed images pass through."""
+    PNGs (logos) and unframed images pass through.  With *exact* (w, h) it
+    comes out at exactly that size, cropped around its middle when no frame
+    was chosen; an image already that size passes through."""
     from PIL import Image
     im = Image.open(io.BytesIO(data))
-    if not crop:
+    if not crop and (not exact or im.size == tuple(exact)):
         fmt = (im.format or "JPEG").upper()
         return data, "image/png" if fmt == "PNG" else "image/webp" if fmt == "WEBP" else "image/jpeg"
-    x, y, zoom = (float(p) for p in crop.split(","))
+    x, y, zoom = (float(p) for p in crop.split(",")) if crop else (0.5, 0.5, 1.0)
     im = im.convert("RGB")
     base_w = min(im.width, im.height * aspect)
     cw = base_w / max(1.0, zoom)
     ch = cw / aspect
     left, top = (im.width - cw) * x, (im.height - ch) * y
     im = im.crop((round(left), round(top), round(left + cw), round(top + ch)))
-    if im.width > max_w:
+    if exact:
+        if im.size != tuple(exact):
+            im = im.resize(tuple(exact), Image.Resampling.LANCZOS)
+    elif im.width > max_w:
         im = im.resize((max_w, round(max_w / aspect)), Image.Resampling.LANCZOS)
     out = io.BytesIO()
     im.save(out, format="JPEG", quality=92)
     return out.getvalue(), "image/jpeg"
 
 
+def _own_backdrop(data: bytes, crop: str) -> tuple[bytes, str]:
+    """A backdrop you chose, as it is sent: framed as you framed it, and with
+    "resize" on in Settings brought to exactly the rule's size."""
+    r = library_rules()["backdrop"]
+    if r["resize"] and r["min_w"] and r["min_h"]:
+        return _frame(data, crop, r["min_w"] / r["min_h"], exact=(r["min_w"], r["min_h"]))
+    return _frame(data, crop, ASPECT["backdrop"])
+
+
 async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None = None,
-                  style_str: str | None = None, landscape: bool = False) -> tuple[bytes, str] | None:
+                  style_str: str | None = None, landscape: bool = False,
+                  advance: bool = False) -> tuple[bytes, str] | None:
     """The image Studio would send for this item and kind, or None to leave
     Jellyfin's.  *draft* ({mode, path, crop}) previews an unsaved choice;
     *style_str* a library style other than the applied one (the Style page's
-    draft) and *landscape* the landscape thumb whatever the Thumb source."""
+    draft) and *landscape* the landscape thumb whatever the Thumb source.
+    *advance* (the nightly run) moves a rotation on to the next day's image."""
     from . import engine
     key = rules.title_key(row)
     c = {**choice(key, kind), **(draft or {})}
     if c["mode"] == "keep":
         return None
-    pinned = c["mode"] == "pinned" and bool(c.get("path"))
+    pin = chosen(c, advance=advance)      # {path, crop}: what you pinned, or today's of your rotation
+    pinned = pin is not None
     from . import identity
     tmdb_id, imdb_id, tvdb_id = identity.ids(row)
     # Anything /poster can draw: a TMDB id isn't needed, an IMDb or TVDB id will do.
@@ -256,14 +356,17 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         style_str = style_str if style_str is not None else prefs.get("style_applied")
         try:
             return await stage.render_thumb(row, style_str, rules.resolve(key).params,
-                                            art=c["path"] if pinned else "", crop=c.get("crop") or "",
+                                            art=pin["path"] if pinned else "", crop=pin["crop"] if pinned else "",
                                             logo=c.get("logo") or "")
         except stage.NoArt:
             if identity.kind(row) == identity.STAGE:
                 raise
             return None   # a title with no image of yours yet: Jellyfin's thumb stays
     if pinned and not generated:
-        return _frame(await fetch(c["path"]), c.get("crop") or "", ASPECT.get(kind, 0) or 1)
+        data = await fetch(pin["path"])
+        if kind == "backdrop":
+            return _own_backdrop(data, pin["crop"])
+        return _frame(data, pin["crop"], ASPECT.get(kind, 0) or 1)
     if not renderable:
         return None   # nothing to pick from automatically
     style_str = style_str if style_str is not None else prefs.get("style_applied")
@@ -300,12 +403,12 @@ async def resolve(row: dict, kind: str, *, cands_loader=None, draft: dict | None
         elif logo:
             extra["art_logo"] = logo
         if pinned:
-            extra["art_poster"] = await realize_path(c["path"], c.get("crop") or "")
+            extra["art_poster"] = await realize_path(pin["path"], pin["crop"])
         elif not tmdb_id:
-            # No TMDB backdrop to draw on: the backdrop you pinned for this title, when there is one.
-            bd = choice(key, "backdrop")
-            if bd["mode"] == "pinned" and bd.get("path"):
-                extra["art_poster"] = await realize_path(bd["path"], bd.get("crop") or "")
+            # No TMDB backdrop to draw on: the backdrop you chose for this title, when there is one.
+            bd = chosen(choice(key, "backdrop"))
+            if bd:
+                extra["art_poster"] = await realize_path(bd["path"], bd["crop"])
         # The landscape layout has its own rating switch: follow a style that hides ratings.
         if (style.get("rating_display_mode") == "0" and "landscape_hide_rating" not in style
                 and "landscape_hide_rating" not in extra):

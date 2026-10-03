@@ -54,6 +54,28 @@ class BackupTests(unittest.TestCase):
         self.assertEqual({k: rules.resolve(k, look_override={}).params for k in (K1, K2)}, before)
         self.assertEqual(rules.never(K2)["logo"], {"/bad.png"})
 
+    def test_backdrop_logo_and_thumb_choices_are_backed_up(self):
+        from studio import artwork
+        artwork.set_choice(K1, "logo", "pinned", "/logo.png")
+        artwork.set_choice(K1, "thumb", "keep")
+        artwork.rotate(K2, "backdrop", "/b1.jpg", "0.5000,0.5000,1.000")
+        artwork.rotate(K2, "backdrop", "/b2.jpg")
+        artwork.set_library_rules({"backdrop": {"resize": True}})
+        data = backup.export()
+        db.execute("DELETE FROM jf_art")
+        db.execute("DELETE FROM settings WHERE key = 'jf_art'")
+        backup.restore(data)
+        self.assertEqual(artwork.choice(K1, "logo")["path"], "/logo.png")
+        self.assertEqual(artwork.choice(K1, "thumb")["mode"], "keep")
+        c = artwork.choice(K2, "backdrop")
+        self.assertEqual((c["mode"], [p["path"] for p in c["pool"]]), ("rotation", ["/b1.jpg", "/b2.jpg"]))
+        self.assertTrue(artwork.library_rules()["backdrop"]["resize"])
+        # A backup from before these were included leaves today's choices alone.
+        old = {k: v for k, v in data.items() if k != "jf_art"}
+        artwork.set_choice(K1, "backdrop", "pinned", "/kept.jpg")
+        backup.restore(old)
+        self.assertEqual(artwork.choice(K1, "backdrop")["path"], "/kept.jpg")
+
     def test_rejects_other_files(self):
         with self.assertRaises(ValueError):
             backup.restore({"hello": 1})

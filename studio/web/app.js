@@ -4,6 +4,7 @@ import { Library } from './library.js';
 import { Editor } from './editor.js';
 import { Style } from './style.js';
 import { Notch } from './notch.js';
+import { Missing } from './missing.js';
 
 function useHash() {
   const [h, setH] = useState(location.hash.slice(1) || 'library');
@@ -319,11 +320,13 @@ function ArtRules({ s, reload }) {
     <span><span class="t">${label}</span>${sub && html`<span class="d" style="display:block">${sub}</span>`}</span></label>`;
   return html`<${Section} title="Jellyfin images" sub="Off: Jellyfin keeps its own, unless a title pins one.">
     ${sw('backdrop', 'Backdrops')}
-    ${r.backdrop.enabled && html`<div class="rule-row">
+    <div class="rule-row">
       <label>Exactly <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_w} onChange=${e => put('backdrop', { min_w: +e.target.value })} />
         × <input type="number" min="0" max="10000" step="10" value=${r.backdrop.min_h} onChange=${e => put('backdrop', { min_h: +e.target.value })} /></label>
-      <label class="own-check"><input type="checkbox" checked=${r.backdrop.textless} onChange=${e => put('backdrop', { textless: e.target.checked })} /> Textless first</label>
-    </div>`}
+      ${r.backdrop.enabled && html`<label class="own-check"><input type="checkbox" checked=${r.backdrop.textless} onChange=${e => put('backdrop', { textless: e.target.checked })} /> Textless first</label>`}
+      <label class="own-check" title="A backdrop you pin or rotate that has another size is cropped to fit and resized"><input type="checkbox" checked=${r.backdrop.resize}
+        onChange=${e => put('backdrop', { resize: e.target.checked })} /> Resize the ones I pick to this size</label>
+    </div>
     ${sw('logo', 'Logos', 'The same logo the posters use.')}
     ${sw('thumb', 'Thumbs')}
     ${r.thumb.enabled && html`<div class="rule-row"><label>From <select value=${r.thumb.source} onChange=${e => put('thumb', { source: e.target.value })}>
@@ -420,6 +423,7 @@ function App() {
   async function logout() { await api('/logout', { method: 'POST', body: {} }).catch(() => {}); setSession({ ...session, logged_in: false }); }
   const [path, query] = route.split('?');
   const [page, arg] = path.split('/');
+  const params = new URLSearchParams(query || '');
   const problems = status ? (status.items.error || 0) : 0;
   const nav = (id, label, extra) => html`<a href="#${id}" class=${page === id || (id === 'activity' && page === 'run') || (id === 'library' && page === 'title') ? 'active' : ''}>${label}${extra}</a>`;
   return html`<div class="shell">
@@ -428,6 +432,7 @@ function App() {
       ${nav('library', 'Library', status && status.items.needs_match ? html`<span class="chip warn">${status.items.needs_match}</span>` : '')}
       ${nav('style', 'Style', status && status.style_draft ? html`<span class="chip warn" title="Changes not applied yet">draft</span>` : '')}
       ${nav('notch', 'Notch', '')}
+      ${nav('missing', 'Missing', status && status.missing ? html`<span class="chip">${status.missing}</span>` : '')}
       ${nav('activity', 'Activity', problems ? html`<span class="chip bad">${problems}</span>` : (status && status.progress.running ? html`<span class="chip info">running</span>` : ''))}
       ${nav('settings', 'Settings', '')}
       <div class="spacer"></div>
@@ -439,7 +444,8 @@ function App() {
         : page === 'activity' ? html`<${Activity} status=${status} refresh=${refresh} />`
         : page === 'style' ? html`<${Style} refreshStatus=${refresh} />`
         : page === 'notch' ? html`<${Notch} refreshStatus=${refresh} />`
-        : page === 'title' ? html`<${Editor} id=${arg} review=${query === 'review'} key=${arg} />`
+        : page === 'missing' ? html`<${Missing} />`
+        : page === 'title' ? html`<${Editor} id=${arg} review=${params.has('review')} slot=${params.get('slot')} key=${arg} />`
         : status && !status.configured ? html`<${Activity} status=${status} refresh=${refresh} />`
         : html`<${Library} />`}
     </main>
