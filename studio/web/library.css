@@ -188,6 +188,17 @@ button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }
 .tl-preview { display: grid; place-items: center; min-height: 150px; padding: 16px; border-radius: 10px; border: 1px solid var(--border);
   background: repeating-conic-gradient(#2a2c33 0% 25%, #22242a 0% 50%) 50% / 18px 18px; }
 .tl-preview img { max-width: 100%; max-height: 180px; }
+.pb-cols { display: grid; grid-template-columns: minmax(0, 1fr) 336px; gap: 18px; align-items: start; }
+.pb-art .crop-stage img { max-height: 52vh; }
+.pb-art .crop-bar { margin-top: 10px; }
+.pb-strip { margin: 12px 0 0; }
+.pb-strip .pb-add { display: grid; place-items: center; font-size: 22px; cursor: pointer; }
+.pb-side { display: grid; gap: 12px; }
+.pb-preview { display: grid; place-items: center; aspect-ratio: 2/3; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; background: #0d0e11; }
+.pb-preview img { width: 100%; height: 100%; object-fit: contain; }
+.pb-venue { display: grid; gap: 6px; font-weight: 560; }
+.pb-venue input { width: 100%; max-width: none; }
+@media (max-width: 760px) { .pb-cols { grid-template-columns: 1fr; } .pb-preview { max-width: 240px; margin: 0 auto; } }
 .tl-form { display: grid; gap: 10px; margin-top: 12px; }
 .tl-form input[type=text] { width: 100%; }
 .tl-form select { flex: 1; }

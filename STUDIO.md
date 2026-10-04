@@ -44,6 +44,7 @@ One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 A **look** is a poster plus its logo, frame and style. Under the strip:
 
 - **Art**: *No text*, *With title* (used as they are, no logo on top), *Backdrops*, *Frames* and *Yours*. Clicking a backdrop or frame previews it as a poster (centred); ⤢ frames it. On each image: **Pin**, **↻** (in or out of the rotation), **⊘** Never, and **⤢** to frame it (posters and backdrops alike). Add your own with **Upload** (several at once), an image link, or by dropping files; they stay until you delete them (✕). Tick **Has title** on an uploaded poster that already shows the title.
+- **Playbill cover** (next to Upload) makes a Playbill-style poster from any image: the yellow PLAYBILL header with the theatre's name, your image below it. Pick an image in the strip (yours, the candidates, frames; **+** uploads a new one, or drop a file on the dialog), drag the window and zoom to choose the part that sits under the header, and check the cover on the right. For theatre the **Theatre** is filled in for you: the show's Broadway house, else its West End one, else wherever your recordings played, the original run before revivals; the box lists the others, and you can type anything (empty = no name). **Save** adds the cover, 1000×1500, to *Yours* (ticked *Has title*, so no logo is drawn on it); **Save and pin** also makes it the poster.
 - **Logo**: automatic, the title as text, any candidate or your own PNGs. **All** puts a logo on every look. **Draw the logo** puts the logo on a look even when its art shows its own title (off for such art by default). **Text logo** makes a transparent PNG from any text (18 fonts, colour, capitals, outline, shadow, spacing) and saves it with your logos; *Use* also applies it (here, in the Logo tab for Jellyfin, or as the thumb's logo).
 - **Style**: *This poster* or *Whole title*: logo size and position, fades, notch, colours (**⌖** picks a colour from the preview). Each control shows the value it inherits until you change it; ↺ goes back. *Notch labels for this title* switches individual labels off.
 
@@ -107,7 +108,7 @@ Recordings imported by the Encora plugin have no TMDB entry, only a StageMedia s
 Two designs, chosen per show under *Style → Theatre → Design*:
 
 - **Posters+ style**: the global style over the art, with your logo or the show's name.
-- **Playbill**: the yellow PLAYBILL header with the venue (taken from the recording's name, editable), the art below.
+- **Playbill**: the yellow PLAYBILL header with the theatre (the show's Broadway house, else its West End one; editable under *Venue*), the art below. Studio draws it at every run on whatever art the show has. Leave this on *Posters+* for a cover you made with **Playbill cover**, which already has its header.
 
 Without a StageMedia key, theatre recordings are left alone. A recording the plugin didn't tag (or tagged wrongly) can be tied to its show by hand: *Change → StageMedia* on its page.
 

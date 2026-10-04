@@ -374,6 +374,85 @@ async def textlogo_save(jf_id: str, request: Request):
     return _json({"path": path, "upload": uploads.add(key, "logo", path, f"Text: {' '.join(text.split())[:60]}")})
 
 
+# ── Playbill covers, made from any image ────────────────────────────────────
+
+async def _playbill(row: dict, path: str, crop: str, venue: str, width: int, fmt: str) -> bytes:
+    """A Playbill cover (studio.playbill) on the image at *path*, framed with *crop*."""
+    import io
+
+    from PIL import Image
+
+    from . import artwork, playbill, stage
+    if not path:
+        raise ValueError("Choose an image first")
+    key = rules.title_key(row)
+    _validator(key)(path)
+    x, y, zoom = (float(p) for p in rules.clean_crop(crop).split(",")) if crop else (0.5, 0.5, 1.0)
+    # Theatre titles take any https link: stage.image_bytes downloads those with its public-address check.
+    data = await (stage.image_bytes(path) if key.startswith("stage:") else artwork.fetch(path))
+
+    def make() -> bytes:
+        out = playbill.compose(Image.open(io.BytesIO(data)), size=(width, width * 3 // 2),
+                               venue=venue.strip()[:80], crop=(x, y, zoom))
+        buf = io.BytesIO()
+        out.save(buf, format=fmt, **({"quality": 90} if fmt == "JPEG" else {}))
+        return buf.getvalue()
+    return await asyncio.to_thread(make)
+
+
+@router.get("/title/{jf_id}/playbill/venues")
+async def playbill_venues(jf_id: str):
+    """The theatre a cover of this title would name, and the others its
+    recordings played at.  Theatre shows only: the rest type their own."""
+    from . import playbill
+    row = _item(jf_id)
+    options: list[str] = []
+    if row["jf_type"] == "Series" and (row.get("stage_show_id") or engine.is_stage(row)):
+        try:
+            options = playbill.venues(await engine.shared_client().recordings(row["jf_id"]))
+        except Exception:
+            options = []
+    if not options and row.get("venue"):
+        options = [row["venue"]]
+    return _json({"venue": options[0] if options else "", "venues": options,
+                  "aspect": playbill.art_aspect(), "size": list(playbill.SIZE)})
+
+
+@router.get("/title/{jf_id}/playbill")
+async def playbill_preview(jf_id: str, path: str = "", crop: str = "", venue: str = ""):
+    """The cover as it would be made (not stored), half size."""
+    try:
+        data = await _playbill(_item(jf_id), path, crop, venue, 500, "JPEG")
+    except ValueError as exc:
+        _bad(exc)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.post("/title/{jf_id}/playbill")
+async def playbill_save(jf_id: str, request: Request):
+    """Body {path, crop, venue}: makes the cover, 1000×1500, and adds it to the
+    title's own posters.  It shows its own header, so no logo is drawn on it
+    (own_title) unless you say so."""
+    from . import playbill, uploads
+    row, body = _item(jf_id), await _body(request)
+    venue = str(body.get("venue") or "")
+    try:
+        data = await _playbill(row, str(body.get("path") or ""), str(body.get("crop") or ""), venue,
+                               playbill.SIZE[0], "PNG")      # PNG: stored as a JPEG once, not twice
+    except ValueError as exc:
+        _bad(exc)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
+    stored = await _store(data, "poster")
+    key = rules.title_key(row)
+    rules.ensure_title(key, row["name"])
+    uploads.add(key, "poster", stored, f"Playbill · {venue.strip()[:80]}" if venue.strip() else "Playbill")
+    uploads.set_own_title(key, stored, True)
+    return _json({"path": stored, "upload": uploads.get(key, stored)})
+
+
 @router.post("/title/{jf_id}/image-link")
 async def image_link(jf_id: str, request: Request):
     from . import uploads

@@ -168,6 +168,7 @@ _ADDED_COLUMNS = (
     ("items", "parent_jf_id", "TEXT"),
     ("items", "season_number", "INTEGER"),
     ("items", "productions", "TEXT"),   # theatre: the show's productions (Jellyfin seasons), "|"-joined
+    ("items", "venue", "TEXT"),         # theatre: the house a Playbill cover names (playbill.pick_venue)
     ("jf_art", "logo", "TEXT NOT NULL DEFAULT ''"),   # thumb: '' poster's, 'text', 'none', or a logo path
     # How you identified the title (studio.identity): '' = Jellyfin's ids, or
     # tmdb / imdb / tvdb / stage / none, with the id you gave.

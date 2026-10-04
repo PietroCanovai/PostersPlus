@@ -286,11 +286,13 @@ async def render(row: dict, style: str, params: dict, resolution: int) -> tuple[
         except Exception as exc:
             logger.warning(f"Studio: theatre logo {logo_ref} failed ({exc}); using the title as text")
 
-    # The venue: yours, else the recording's name ("Show - Broadway, date - …"),
-    # else the show's first production in Jellyfin (its seasons: Broadway, West End…).
+    # The venue: yours, else the show's theatre (its Broadway house, else its West End
+    # one: playbill.pick_venue, read at the scan), else the recording's name
+    # ("Show - Broadway, date - …"), else the show's first production in Jellyfin.
     from . import playbill as _playbill
     playbill_venue = venue if venue is not None else (
-        _playbill.venue_from_name(row["name"]) or (row.get("productions") or "").split("|")[0].upper())
+        row.get("venue") or _playbill.venue_from_name(row["name"])
+        or (row.get("productions") or "").split("|")[0])
 
     def _compose() -> bytes:
         if template == "playbill":

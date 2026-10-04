@@ -121,7 +121,10 @@ async def scan(client: Client) -> dict:
                 # for the Playbill venue, never turned into season posters.
                 try:
                     names = list(dict.fromkeys(s["name"] for s in await client.seasons(item.id) if s["name"]))
-                    db.execute("UPDATE items SET productions = ? WHERE jf_id = ?", ("|".join(names), item.id))
+                    from . import playbill
+                    venue = playbill.pick_venue(await client.recordings(item.id))
+                    db.execute("UPDATE items SET productions = ?, venue = COALESCE(NULLIF(?, ''), venue) WHERE jf_id = ?",
+                               ("|".join(names), venue, item.id))
                 except JellyfinError:
                     pass
             elif item.type == "Series" and prefs.get("seasons_enabled"):

@@ -131,7 +131,7 @@ class PlaybillTests(unittest.TestCase):
         art = Image.new("RGB", (1200, 800), (200, 30, 30))
         out = playbill.compose(art, size=(500, 750), venue="WALTER KERR THEATRE")
         self.assertEqual(out.size, (500, 750))
-        self.assertEqual(out.getpixel((250, 10))[:2], playbill.YELLOW[:2])   # yellow header
+        self.assertEqual(out.getpixel((250, 10)), playbill.YELLOW)            # yellow header
         self.assertEqual(out.getpixel((250, 600)), (200, 30, 30))             # the art below it
         self.assertEqual(out.getpixel((0, 400)), playbill.INK)                 # black frame
 
@@ -157,7 +157,8 @@ class PlaybillTests(unittest.TestCase):
         saved = stage.posters, stage.image_bytes
         stage.posters, stage.image_bytes = fake_posters, fake_bytes
         try:
-            row = {"jf_id": "t", "name": "Hadestown", "stage_show_id": "2045", "productions": "Broadway|West End"}
+            row = {"jf_id": "t", "name": "Hadestown", "stage_show_id": "2045", "productions": "Broadway|West End",
+                   "venue": "Walter Kerr Theatre"}
             for extra in ({}, {"studio_template": "playbill"}, {"studio_template": "playbill", "playbill_venue": "WALTER KERR"}):
                 data, ctype = asyncio.run(stage.render(row, "top_gradient=off", extra, 500))
                 self.assertEqual(Image.open(io.BytesIO(data)).size, (500, 750))

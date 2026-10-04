@@ -43,8 +43,8 @@ function Preview({ src, shape, onPick, picking }) {
 }
 
 // ── Framing: a window of *aspect* on an image; darkens only the image ───────
-function CropDialog({ src, aspect, initial, actions, onClose }) {
-  const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1, ...(initial || {}) });
+// The image and the window dragged over it; the frame itself is the caller's.
+function CropStage({ src, aspect, crop, setCrop }) {
   const img = useRef(null);
   const [geo, setGeo] = useState(null);
   const measure = useCallback(() => {
@@ -52,11 +52,13 @@ function CropDialog({ src, aspect, initial, actions, onClose }) {
     const dw = el.clientWidth, dh = el.clientHeight;
     const cw = Math.min(dw, dh * aspect) / crop.zoom, ch = cw / aspect;
     setGeo({ dw, dh, cw, ch, left: (dw - cw) * crop.x, top: (dh - ch) * crop.y });
-  }, [crop]);
-  useEffect(() => { measure(); }, [crop]);
+  }, [crop, aspect]);
+  useEffect(() => { measure(); }, [crop, aspect]);
+  useEffect(() => { setGeo(null); measure(); }, [src]);   // an image already loaded gets its window at once
   useEffect(() => {
     const onKey = e => {
-      if (e.key === 'Escape') onClose();
+      const el = e.target;
+      if (el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && el.type !== 'range') return;   // typing, not framing
       const step = e.shiftKey ? 0.1 : 0.02;
       const d = { ArrowLeft: ['x', -step], ArrowRight: ['x', step], ArrowUp: ['y', -step], ArrowDown: ['y', step] }[e.key];
       if (d) { e.preventDefault(); e.stopPropagation(); setCrop(c => ({ ...c, [d[0]]: Math.min(1, Math.max(0, c[d[0]] + d[1])) })); }
@@ -81,13 +83,23 @@ function CropDialog({ src, aspect, initial, actions, onClose }) {
     stage.onpointermove = move;
     stage.onpointerup = stage.onpointercancel = () => { stage.onpointermove = null; };
   }
+  return html`<div class="crop-stage" onPointerDown=${drag}>
+    <img key=${src} ref=${img} src=${src} alt="" referrerpolicy="no-referrer" draggable="false" onLoad=${measure} />
+    ${geo && html`<div class="crop-win" style=${`left:${geo.left}px;top:${geo.top}px;width:${geo.cw}px;height:${geo.ch}px`}></div>`}
+  </div>`;
+}
+
+function CropDialog({ src, aspect, initial, actions, onClose }) {
+  const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1, ...(initial || {}) });
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   const value = () => ({ x: +crop.x.toFixed(4), y: +crop.y.toFixed(4), zoom: +crop.zoom.toFixed(3) });
   return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="dialog wide" role="dialog" aria-label="Frame">
-      <div class="crop-stage" onPointerDown=${drag}>
-        <img ref=${img} src=${src} alt="" referrerpolicy="no-referrer" draggable="false" onLoad=${measure} />
-        ${geo && html`<div class="crop-win" style=${`left:${geo.left}px;top:${geo.top}px;width:${geo.cw}px;height:${geo.ch}px`}></div>`}
-      </div>
+      <${CropStage} src=${src} aspect=${aspect} crop=${crop} setCrop=${setCrop} />
       <div class="crop-bar">
         <label class="zoom">Zoom <input type="range" min="1" max="4" step="0.05" value=${crop.zoom} onInput=${e => setCrop(c => ({ ...c, zoom: +e.target.value }))} />
           <span>${crop.zoom.toFixed(1)}×</span></label>
@@ -115,6 +127,91 @@ function SizeLine({ c, path, framed, note }) {
   const src = c ? (PROVIDERS[c.provider] || c.provider) : path.startsWith('custom:') ? 'Yours' : path.startsWith('jf-chapter:') ? 'Frame' : '';
   const bits = [src, size, framed ? 'framed' : '', note || ''].filter(Boolean);
   return bits.length ? html`<div class="ed-size">${bits.join(' · ')}</div>` : null;
+}
+
+// A Playbill cover from any image: framed into the space under the yellow header,
+// previewed as the server makes it, saved with the title's own posters.
+const shapeOf = file => new Promise(done => {
+  const im = new Image(), url = URL.createObjectURL(file);
+  const end = k => { URL.revokeObjectURL(url); done(k); };
+  im.onload = () => end(im.naturalWidth > im.naturalHeight ? 'backdrop' : 'poster');
+  im.onerror = () => end('poster');
+  im.src = url;
+});
+function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
+  const [list, setList] = useState(images);
+  const [path, setPath] = useState(initial && images.some(c => c.path === initial) ? initial : (images[0] ? images[0].path : ''));
+  const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1 });
+  const [venue, setVenue] = useState(null);         // null until the title's own theatre is known
+  const [info, setInfo] = useState({ venues: [], aspect: 1000 / 1183 });
+  const [src, setSrc] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api(`/title/${id}/playbill/venues`)
+      .then(d => { setInfo(d); setVenue(v => (v === null ? d.venue : v)); })
+      .catch(() => setVenue(v => (v === null ? '' : v)));
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const cropStr = `${crop.x.toFixed(4)},${crop.y.toFixed(4)},${crop.zoom.toFixed(3)}`;
+  useEffect(() => {
+    if (!path || venue === null) { setSrc(''); return undefined; }
+    const h = setTimeout(() => setSrc(`/studio/api/title/${id}/playbill?${new URLSearchParams({ path, crop: cropStr, venue })}`), 300);
+    return () => clearTimeout(h);
+  }, [path, cropStr, venue]);
+  const choose = p => { setPath(p); setCrop({ x: 0.5, y: 0.5, zoom: 1 }); };
+  async function upload(files) {
+    const f = [...(files || [])].find(x => x && x.type.startsWith('image/'));
+    if (!f) return;
+    setBusy(true);
+    try {
+      const kind = await shapeOf(f);
+      const r = await api(`/title/${id}/image?kind=${kind}&name=${encodeURIComponent(f.name.slice(0, 100))}`, { method: 'POST', raw: f });
+      setList(l => [{ path: r.path, provider: 'custom' }, ...l.filter(c => c.path !== r.path)]);
+      choose(r.path);
+      onUploaded();
+    } catch (ex) { toast(ex.message, true); }
+    setBusy(false);
+  }
+  async function save(use) {
+    setBusy(true);
+    try {
+      const r = await api(`/title/${id}/playbill`, { method: 'POST', body: { path, crop: cropStr, venue: venue || '' } });
+      onClose(); await onSaved(r.path, use);
+    } catch (ex) { toast(ex.message, true); }
+    setBusy(false);
+  }
+  return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="dialog wide pb" role="dialog" aria-label="Playbill cover"
+      onDragOver=${e => e.preventDefault()} onDrop=${e => { e.preventDefault(); upload(e.dataTransfer.files); }}>
+      <h2 style="margin-bottom:12px">Playbill cover</h2>
+      <div class="pb-cols">
+        <div class="pb-art">
+          ${path ? html`<${CropStage} src=${fullImageUrl(path)} aspect=${info.aspect} crop=${crop} setCrop=${setCrop} />`
+            : html`<div class="empty">Upload an image, or drop one here.</div>`}
+          ${path && html`<div class="crop-bar"><label class="zoom">Zoom <input type="range" min="1" max="4" step="0.05" value=${crop.zoom}
+            onInput=${e => setCrop(c => ({ ...c, zoom: +e.target.value }))} /><span>${crop.zoom.toFixed(1)}×</span></label></div>`}
+          <div class="strip pb-strip">
+            <label class="btn strip-item pb-add" title="Upload an image">+<input type="file" accept="image/png,image/jpeg,image/webp" hidden
+              disabled=${busy} onChange=${e => { upload(e.target.files); e.target.value = ''; }} /></label>
+            ${list.map(c => html`<button key=${c.path} class="strip-item ${c.path === path ? 'on' : ''}" onClick=${() => choose(c.path)}>
+              <img loading="lazy" referrerpolicy="no-referrer" alt="" src=${c.thumb || thumbUrl(c.path, 'posters')} /></button>`)}
+          </div>
+        </div>
+        <div class="pb-side">
+          <div class="pb-preview">${src ? html`<img src=${src} alt="The cover" />` : html`<span class="hint-sm">${path ? 'Loading…' : 'No image yet'}</span>`}</div>
+          <label class="pb-venue">Theatre
+            <input type="text" maxlength="80" list="pb-venues" placeholder="None" value=${venue || ''} onInput=${e => setVenue(e.target.value)} /></label>
+          <datalist id="pb-venues">${info.venues.map(v => html`<option value=${v}></option>`)}</datalist>
+          <div class="row" style="justify-content:flex-end">
+            <button onClick=${onClose}>Cancel</button>
+            <button onClick=${() => save(false)} disabled=${busy || !path}>Save</button>
+            <button class="primary" onClick=${() => save(true)} disabled=${busy || !path}>Save and pin</button>
+          </div>
+        </div>
+      </div>
+    </div></div>`;
 }
 
 // A logo made from text: previewed live, saved into the title's own logos.
@@ -304,6 +401,7 @@ export function Editor({ id, review, slot: startSlot }) {
   const [link, setLink] = useState('');
   const [notch, setNotch] = useState(null);
   const [textLogo, setTextLogo] = useState(null);   // (path) => apply it here
+  const [playbill, setPlaybill] = useState(null);   // {initial}: the Playbill cover dialog is open
   const [identify, setIdentify] = useState(false);  // the "Which title is this?" panel is open
   const saveTimer = useRef(null);
 
@@ -602,6 +700,13 @@ export function Editor({ id, review, slot: startSlot }) {
     return b;
   };
   const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
+  // What a Playbill cover can be made from: yours first (not the covers themselves), then everything on offer.
+  const playbillImages = () => {
+    const seen = new Set();
+    return [...mine('poster').filter(c => !(c.name || '').startsWith('Playbill')), ...mine('backdrop'), ...all.posters.filter(c => !c.language),
+      ...all.backdrops, ...(frames || []), ...all.posters.filter(c => c.language)]
+      .filter(c => !seen.has(c.path) && seen.add(c.path)).slice(0, 150);
+  };
   const uploadKind = art === 'backdrops' || art === 'frames' ? 'backdrop' : 'poster';
 
   const uploadRow = (k, sites = [], onTextLogo = null) => html`<div class="own-row dropzone" ...${drop(k)}>
@@ -610,6 +715,8 @@ export function Editor({ id, review, slot: startSlot }) {
       <input type="url" placeholder=${k === 'logo' ? 'Logo link' : 'Image link'} value=${link} onInput=${e => setLink(e.target.value)} />
       <button onClick=${() => addLink(k)} disabled=${!link || busy}>Add</button>
       ${k === 'logo' && onTextLogo && html`<button onClick=${onTextLogo} disabled=${busy}>Text logo</button>`}
+      ${k !== 'logo' && slot === 'poster' && html`<button onClick=${() => setPlaybill({ initial: focus && focus.c ? focus.c.path : '' })}
+        disabled=${busy} title="A Playbill cover made from any image">Playbill cover</button>`}
       ${sites.map(([label, url]) => html`<a class="hint-sm" target="_blank" rel="noopener noreferrer"
         href=${url + encodeURIComponent(t.item.name.replace(/\s*\(\d{4}\)\s*$/, ''))}>${label} ↗</a>`)}
     </div>`;
@@ -835,6 +942,12 @@ export function Editor({ id, review, slot: startSlot }) {
       </section>
     </div>
     ${crop && html`<${CropDialog} ...${crop} onClose=${() => setCrop(null)} />`}
+    ${playbill && html`<${PlaybillDialog} id=${id} images=${playbillImages()} initial=${playbill.initial}
+      onClose=${() => setPlaybill(null)} onUploaded=${refresh}
+      onSaved=${async (p, use) => {
+        await refresh(); setSub('art'); setArt('yours');
+        if (use) await pin({ path: p, provider: 'custom', own_title: true }, 'posters'); else toast('Added to your posters');
+      }} />`}
     ${textLogo && html`<${TextLogoDialog} id=${id} initial=${(t.parent_item ? t.parent_item.name : t.item.name).replace(/\s*\(\d{4}\)\s*$/, '')}
       onClose=${() => setTextLogo(null)} onSaved=${async (p, use) => { await refresh(); if (use) await textLogo(p); else toast('Added to your logos'); }} />`}`;
 }

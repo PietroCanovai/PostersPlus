@@ -171,6 +171,18 @@ class Client:
                         "image_tag": (d.get("ImageTags") or {}).get("Primary")})
         return out
 
+    async def recordings(self, series_id: str) -> list[dict]:
+        """A theatre show's recordings as the Encora plugin files them: each
+        episode's production (its season: Broadway, West End…), theatre (its
+        studio) and date.  [] when Jellyfin can't say."""
+        try:
+            eps = [d async for d in self._paged(f"/Shows/{series_id}/Episodes", Fields="Studios,PremiereDate")]
+        except JellyfinError:
+            return []
+        return [{"production": e.get("SeasonName") or "",
+                 "venue": ((e.get("Studios") or [{}])[0] or {}).get("Name") or "",
+                 "date": (e.get("PremiereDate") or "")[:10]} for e in eps]
+
     async def item(self, item_id: str) -> Item:
         data = await self._get("/Items", Ids=item_id, Fields=ITEM_FIELDS)
         rows = data.get("Items") or []
