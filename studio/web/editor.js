@@ -9,6 +9,9 @@ const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB', imdb: 'IMDb', 
 const POSTER_SITES = [['ThePosterDB', 'https://theposterdb.com/search?term=']];
 const FRAME_SITES = [['FilmGrab', 'https://film-grab.com/?s='], ['Screencaps', 'https://movie-screencaps.com/?s=']];
 const SLOTS = [['poster', 'Poster'], ['backdrop', 'Backdrop'], ['logo', 'Logo'], ['thumb', 'Thumb']];
+// What a push did to an image (engine.run's report), as shown under it.
+const PUSHED = { sent: ['Sent', 'ok'], same: ['Up to date', 'ok'], none: ['Nothing set', ''], kept: ['Kept', ''], off: ['Off', ''],
+  skipped: ['Skipped', ''], would: ['Not sent', ''], error: ['Failed', 'bad'] };
 const JF_TYPE = { poster: 'Primary', backdrop: 'Backdrop', logo: 'Logo', thumb: 'Thumb' };
 // Old looks kept colours apart from their style; now everything is style parameters.
 const LEGACY_COLORS = { tint: 'tint_color', fade: 'fade_color', sash_text: 'notch_text_color', logo: 'logo_color', logo_mode: 'logo_color_mode' };
@@ -439,6 +442,7 @@ export function Editor({ id, review, slot: startSlot }) {
   const [ts, setTs] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [pushed, setPushed] = useState(null);       // the last push: {kind: {result, detail}}, n: how many so far
   const opened = useRef(Date.now());                // one look at Jellyfin's images per visit to a title
   const [crop, setCrop] = useState(null);           // {src, aspect, initial, actions}
   const [pick, setPick] = useState(null);           // colour param being eyedropped
@@ -491,7 +495,7 @@ export function Editor({ id, review, slot: startSlot }) {
   const refresh = async () => { await load(); setTs(Date.now()); };
   async function call(path, opts, okMsg) {
     setBusy(true);
-    try { const r = await api(path, opts); if (okMsg) toast(okMsg); await refresh(); return r; }
+    try { const r = await api(path, opts); if (okMsg) toast(okMsg); setPushed(p => (p ? { n: p.n } : p)); await refresh(); return r; }
     catch (ex) { toast(ex.message, true); return null; }
     finally { setBusy(false); }
   }
@@ -671,10 +675,17 @@ export function Editor({ id, review, slot: startSlot }) {
     setBusy(true); setPushing(true);
     try {
       const r = await api(`/title/${id}/push`, { method: 'POST', body: {} });
-      const c = r.counts || {};
-      toast(r.status !== 'done' ? (r.message || 'Push failed') : c.error ? `Failed: ${(r.items.find(i => i.action === 'error') || {}).detail || 'error'}`
-        : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? `Skipped: ${(r.items.find(i => i.action === 'skipped') || {}).detail || 'nothing to send'}`
-        : 'Jellyfin already has it', !!(c.error || r.status !== 'done' || (c.skipped && !c.uploaded && !c.reverted)));
+      const im = r.images || {};
+      const of = res => SLOTS.filter(([k]) => (im[k] || {}).result === res).map(([, l]) => l.toLowerCase());
+      const sent = of('sent'), same = of('same'), failed = of('error');
+      const first = k => (im[SLOTS.find(([, l]) => l.toLowerCase() === k)[0]] || {}).detail;
+      toast(r.status !== 'done' ? (r.message || 'Push failed')
+        : failed.length ? `Failed: ${failed.join(', ')} (${first(failed[0]) || 'error'})${sent.length ? ` · sent: ${sent.join(', ')}` : ''}`
+        : sent.length ? `Sent: ${sent.join(', ')}${same.length ? ` · already there: ${same.join(', ')}` : ''}`
+        : same.length ? `Jellyfin already has it: ${same.join(', ')}`
+        : `Nothing sent: ${(im.poster || {}).detail || 'nothing to send'}`, r.status !== 'done' || !!failed.length || !(sent.length || same.length));
+      // Every image is read from Jellyfin again, whatever the push said: what you see is what it has.
+      setPushed(p => ({ ...im, n: ((p && p.n) || 0) + 1 }));
       await load();          // the looks are as they were: only "In Jellyfin" has something new to show
     } catch (ex) { toast(ex.message, true); }
     setBusy(false); setPushing(false);
@@ -952,11 +963,18 @@ export function Editor({ id, review, slot: startSlot }) {
             title="Studio leaves this title's images alone">Hands off</button>
         </div>
         <div class="now-in-jf">
-          <${JfNow} key=${slot} id=${t.item.jf_id} type=${JF_TYPE[slot]} shape=${shape} sending=${pushing}
-            stamp=${(j => `${j.tag || ''}.${Math.round(j.at || 0)}.${opened.current}`)((t.jf_images || {})[slot] || {})} />
-          <div><div class="hint-sm" style="margin:0">In Jellyfin</div>
+          <div class="jf-head"><span class="hint-sm" style="margin:0">In Jellyfin</span>
             ${(looks.length || t.never.poster.length || t.never.logo.length || Object.keys(t.title.style).length) ? html`<button class="link danger"
               onClick=${() => confirm('Forget every choice for this title?') && call(`/title/${id}/reset`, { method: 'POST', body: {} })}>Reset title</button>` : ''}</div>
+          <div class="jf-all">${SLOTS.map(([k, label]) => {
+            const j = (t.jf_images || {})[k] || {}, res = pushed && pushed[k], word = res && PUSHED[res.result];
+            return html`<button class="jf-cell ${k === slot ? 'on' : ''}" onClick=${() => { setSlot(k); setFocus(null); }} title=${(res && res.detail) || label}>
+              <${JfNow} id=${t.item.jf_id} type=${JF_TYPE[k]} shape=${k === 'poster' ? 'portrait' : k === 'logo' ? 'logo' : 'wide'} sending=${pushing}
+                stamp=${`${j.tag || ''}.${Math.round(j.at || 0)}.${opened.current}.${(pushed && pushed.n) || 0}`} />
+              <span class="jf-label">${label}</span>
+              <span class="jf-res ${word ? word[1] : ''}">${word ? word[0] : '\u00a0'}</span>
+            </button>`;
+          })}</div>
         </div>
       </aside>
 

@@ -82,7 +82,7 @@ class FakeJellyfin:
         if "/Images/" in path and request.method == "GET":
             parts = path.split("/")          # /Items/<id>/Images/<Type>[/<index>]
             it, kind = self.find(parts[2]), parts[4]
-            if kind == "Primary" or parts[2] in self.unreadable:
+            if parts[2] in self.unreadable:
                 return httpx.Response(404)
             if kind == "Backdrop":
                 tags, i = it.get("BackdropImageTags") or [], int(parts[5]) if len(parts) > 5 else 0
@@ -109,6 +109,7 @@ class FakeJellyfin:
             if kind == "Primary":
                 self.uploads.append((id_, base64.b64decode(request.content), request.headers["content-type"]))
                 it["ImageTags"]["Primary"] = f"ours-{self._tag}"
+                self.blobs[f"ours-{self._tag}"] = self.uploads[-1][1]     # served back, like the real thing
             else:
                 data = base64.b64decode(request.content)
                 self.art_uploads.append((id_, path, data))

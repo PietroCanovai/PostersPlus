@@ -349,10 +349,60 @@ class EngineArtTests(unittest.TestCase):
         artwork.set_library_rules({"backdrop": {"enabled": True}, "logo": {"enabled": True}})
         self.jf.unreadable.add("m1")
         rid_counts = self.sync()
-        self.assertEqual(rid_counts.get("error"), 2)
+        self.assertEqual(rid_counts.get("error"), 3)                                  # the poster too: sent isn't there
         details = [r["detail"] for r in db.query("SELECT detail FROM run_items WHERE action = 'error'")]
         self.assertTrue(all("restart Jellyfin" in d for d in details), details)
         self.assertEqual(artwork.state("m1", "backdrop").get("pushed_hash"), None)   # not recorded as sent
+
+    def test_push_now_sends_every_image_and_says_what_happened_to_each(self):
+        """The library's Logo and Thumb rules are off: a nightly run leaves them, your own push sends them all."""
+        artwork.set_library_rules({"backdrop": {"enabled": True}})
+        self.sync()
+        self.assertEqual({p.split("/")[4] for _, p, _ in self.jf.art_uploads}, {"Backdrop"})
+        report = {}
+        counts = self.sync(item_ids=["m1"], everything=True, report=report)
+        self.assertEqual({p.split("/")[4] for _, p, _ in self.jf.art_uploads}, {"Backdrop", "Logo", "Thumb"})
+        self.assertEqual({k: v["result"] for k, v in report["m1"].items()},
+                         {"poster": "same", "backdrop": "same", "logo": "sent", "thumb": "sent"})
+        self.assertEqual(counts, {"unchanged": 1, "uploaded": 2})
+        # "Jellyfin keeps its own" is the one thing a push leaves alone; a changed image is sent again.
+        artwork.set_choice(rules.title_key(db.query_one("SELECT * FROM items WHERE jf_id = 'm1'")), "logo", "keep")
+        self.bytes.update(logo=b"logo-2", thumb=b"th-2")
+        report = {}
+        self.sync(item_ids=["m1"], everything=True, report=report)
+        self.assertEqual({k: v["result"] for k, v in report["m1"].items()},
+                         {"poster": "same", "backdrop": "same", "logo": "kept", "thumb": "sent"})
+        self.assertEqual(self.jf.blobs[self.jf.find("m1")["ImageTags"]["Logo"]], b"logo-1")
+        # Without "everything" (the nightly run), what is off stays off, and says so.
+        report = {}
+        self.sync(item_ids=["m1"], report=report)
+        self.assertEqual(report["m1"]["thumb"]["result"], "off")
+
+    def test_a_push_checks_the_poster_jellyfin_really_holds(self):
+        """Its tag said ours was still there while Jellyfin showed another image: a push reads the image."""
+        self.sync()
+        m1 = self.jf.find("m1")
+        self.jf.blobs[m1["ImageTags"]["Primary"]] = b"not-what-we-sent"          # same tag, another image
+        self.assertEqual(self.sync().get("reverted"), None)                       # a nightly run goes by the tag
+        report = {}
+        self.assertEqual(self.sync(item_ids=["m1"], report=report), {"reverted": 1})
+        self.assertEqual(report["m1"]["poster"]["result"], "sent")
+        self.assertEqual(self.jf.blobs[m1["ImageTags"]["Primary"]], self.jf.uploads[-1][1])
+        self.assertEqual(self.sync(item_ids=["m1"]), {"unchanged": 1})
+
+    def test_other_images_dont_wait_on_the_poster(self):
+        """A poster that can't be drawn left the backdrop unsent too."""
+        artwork.set_library_rules({"backdrop": {"enabled": True}})
+        self.pp.version.pop(self.jf.find("m1")["ProviderIds"]["Tmdb"])            # the renderer fails on it
+        report = {}
+        counts = self.sync(report=report)
+        self.assertEqual((report["m1"]["poster"]["result"], report["m1"]["backdrop"]["result"]), ("error", "sent"))
+        self.assertEqual(len(self.jf.art_uploads), 1)
+        # Hands off still stops everything.
+        rules.set_hands_off(rules.title_key(db.query_one("SELECT * FROM items WHERE jf_id = 'm1'")), True)
+        self.bytes["backdrop"] = b"bd-2"
+        self.sync()
+        self.assertEqual(len(self.jf.art_uploads), 1)
 
     def test_rotation_moves_on_only_at_night(self):
         real = self._orig

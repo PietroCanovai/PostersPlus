@@ -31,7 +31,11 @@ Every title Jellyfin has no **poster**, **backdrop**, **logo** or **thumb** for 
 
 ## Editing a title
 
-The preview on the left is what Jellyfin will get. **Clicking any image previews it** without saving; everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**. **Hands off** makes Studio leave the title alone; **Reset title** forgets every choice. ← → move to the previous or next title. Under the buttons, **In Jellyfin** is the image Jellyfin has now for the open tab (*None* when it has none): it is read when you open the title and again after a push, and spins while a push is on its way. A push is slow only when Jellyfin is, for instance during a library scan.
+The preview on the left is what Jellyfin will get. **Clicking any image previews it** without saving; everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**. **Hands off** makes Studio leave the title alone; **Reset title** forgets every choice. ← → move to the previous or next title. 
+
+**Push now** sends everything Studio has for the title: the poster and the Backdrop, Logo and Thumb, the automatic ones included even where *Settings → Jellyfin images* has that kind off (the nightly run leaves those alone). The one thing it doesn't touch is a kind you set to *Jellyfin keeps its own*. Each image is compared with what Jellyfin really holds, sent only if it differs, and read back afterwards.
+
+Under the buttons, **In Jellyfin** shows the four images Jellyfin has now (*None* where it has none; click one to open its tab). They are read from Jellyfin when you open the title and again after every push, and after a push each says what happened: **Sent**, **Up to date** (Jellyfin already had it), **Nothing set** (nothing to send: pin an image for it), **Kept** (*Jellyfin keeps its own*) or **Failed** (hover for the reason). A push is slow only when Jellyfin is, for instance during a library scan.
 
 One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 

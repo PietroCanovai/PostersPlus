@@ -72,7 +72,18 @@ label.btn { font-weight: 580; }
 .look-bar button { min-height: 36px; padding: 4px 12px; font-size: 13.5px; }
 .side-actions { margin-top: 12px; }
 .side-actions button { flex: 1; }
-.now-in-jf { display: flex; gap: 12px; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.now-in-jf { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); min-width: 0; }
+.jf-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.jf-all { display: grid; grid-template-columns: 2fr 3fr 3fr 3fr; gap: 8px; }
+.jf-cell { all: unset; cursor: pointer; display: grid; grid-template-rows: 1fr auto auto; gap: 3px; justify-items: center;
+  text-align: center; min-width: 0; }
+.jf-cell .jf-now { align-self: end; }
+.jf-cell:focus-visible .jf-now, .jf-cell.on .jf-now { outline: 2px solid var(--accent); outline-offset: 1px; }
+.jf-cell .jf-now, .jf-cell .jf-now.wide, .jf-cell .jf-now.logo { width: 100%; }
+.jf-label { font-size: 11px; color: var(--text-2); }
+.jf-res { font-size: 11px; font-weight: 600; line-height: 1.2; color: var(--text-3); white-space: nowrap; }
+.jf-res.ok { color: var(--ok); }
+.jf-res.bad { color: var(--bad); }
 .jf-now { position: relative; flex: none; width: 56px; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
   background: var(--surface-2); display: grid; place-items: center; }
 .jf-now.wide, .jf-now.logo { width: 96px; aspect-ratio: 16/9; }
@@ -224,7 +235,7 @@ button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }
   .ed-side > .ed-caption, .ed-side > .look-bar, .ed-side > .side-actions, .ed-side > .now-in-jf { grid-column: 2; margin-top: 0; }
   .ed-side .preview.portrait { grid-row: span 4; }
   .side-actions { flex-direction: column; align-items: stretch; }
-  .now-in-jf { border-top: 0; padding-top: 0; }
+  .now-in-jf { border-top: 0; padding-top: 0; grid-column: 1 / -1 !important; }
   .style-layout { grid-template-columns: 1fr; }
   .style-previews { position: static; }
   .ctl-groups { grid-template-columns: 1fr; }

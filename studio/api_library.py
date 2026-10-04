@@ -576,18 +576,22 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
 
 @router.post("/title/{jf_id}/push")
 async def push(jf_id: str):
-    """Send this title's poster(s) to Jellyfin now."""
+    """Send everything Studio has for this title to Jellyfin now: the poster and
+    the Backdrop, Logo and Thumb (all but a kind set to "Jellyfin keeps its
+    own"), for every copy of it.  "images" says what happened to each image of
+    the item you have open: {kind: {result, detail}}."""
     row = _item(jf_id)
     if not prefs.get("uploads_enabled"):
         raise HTTPException(status_code=400, detail="Uploads are off in Settings, so nothing can be sent")
     if engine._run_lock.locked():
         raise HTTPException(status_code=409, detail="A run is in progress; try again when it finishes")
     ids = [s["jf_id"] for s in _siblings(rules.title_key(row))] or [jf_id]
-    run_id = await engine.run(trigger="manual", dry_run=False, item_ids=ids)
+    report: dict = {}
+    run_id = await engine.run(trigger="manual", dry_run=False, item_ids=ids, everything=True, report=report)
     run = db.query_one("SELECT status, counts, message FROM runs WHERE id = ?", (run_id,))
     items = db.query("SELECT name, action, detail FROM run_items WHERE run_id = ?", (run_id,))
     return _json({"run_id": run_id, "status": run["status"], "counts": json.loads(run["counts"]),
-                  "message": run["message"], "items": items})
+                  "message": run["message"], "items": items, "images": report.get(jf_id, {})})
 
 
 # ── Jellyfin's other images: Backdrop, Logo, Thumb ──────────────────────────

@@ -352,8 +352,18 @@ def _selected(item_ids: list[str] | None) -> list[dict]:
 
 
 async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
-              force: bool = False, jf_transport=None, render_transport=None) -> int:
-    """One sync run.  Returns the run id.  Raises RuntimeError when one is already running."""
+              force: bool = False, jf_transport=None, render_transport=None,
+              everything: bool = False, report: dict | None = None) -> int:
+    """One sync run.  Returns the run id.  Raises RuntimeError when one is already running.
+
+    *everything* (the editor's Push now) sends the Backdrop, Logo and Thumb too
+    where the library rule for them is off: all Studio has for the title,
+    except a kind you set to "Jellyfin keeps its own".  *report*, a dict, is
+    filled with what happened to each image: {jf_id: {kind: {result, detail}}},
+    result one of sent / same / none / kept / off / skipped / would / error.
+
+    A run of chosen titles (*item_ids*) checks the poster Jellyfin really holds
+    instead of trusting its tag."""
     if _run_lock.locked():
         raise RuntimeError("A run is already in progress")
     async with _run_lock:
@@ -393,11 +403,16 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
                             progress.current = row["name"]
                             action = await _process(row, jf, http, style, resolution, with_quality,
                                                     access_key, dry_run, force, run_id,
-                                                    advance=trigger == "schedule")
+                                                    advance=trigger == "schedule",
+                                                    verify=item_ids is not None, report=report)
                             counts[action] = counts.get(action, 0) + 1
-                            if action not in ("skipped", "error"):
+                            # The other images don't wait on the poster: one that can't be drawn (no art
+                            # yet, a render error) leaves a backdrop or logo of yours just as sendable.
+                            # Hands off stops them all.
+                            if not rules.get_title(rules.title_key(row))["hands_off"] and not jf.down:
                                 for extra in await _process_art(row, jf, dry_run, force, run_id,
-                                                                advance=trigger == "schedule"):
+                                                                advance=trigger == "schedule",
+                                                                everything=everything, report=report):
                                     counts[extra] = counts.get(extra, 0) + 1
                             progress.done += 1
                             progress.counts = dict(counts)
@@ -422,20 +437,37 @@ async def run(*, trigger: str, dry_run: bool, item_ids: list[str] | None = None,
         return run_id
 
 
+def _note(report: dict | None, jf_id: str, kind: str, result: str, detail: str = "") -> None:
+    """What happened to one image of one item, for whoever asked for the run."""
+    if report is not None:
+        report.setdefault(jf_id, {})[kind] = {"result": result, "detail": detail or ""}
+
+
+UNREADABLE = ("Jellyfin can't give back the {kind} it was just sent (if the title is on a drive that was "
+              "unplugged, restart Jellyfin)")
+
+
 async def _process(row, jf, http, style, resolution, with_quality, access_key, dry_run, force, run_id,
-                   advance: bool = False) -> str:
+                   advance: bool = False, verify: bool = False, report: dict | None = None) -> str:
+    """The poster of one item.  *verify* (a push of chosen titles): what Jellyfin
+    holds is read and compared even when its tag says ours is still there."""
     name, jf_id = row["name"], row["jf_id"]
+
+    def note(result: str, detail: str = "") -> None:
+        _note(report, jf_id, "poster", result, detail)
     try:
         res = rules.resolve(rules.title_key(row), advance=advance)
         if res.skip:
             db.log_run_item(run_id, jf_id, name, "skipped", res.reason)
+            note("skipped", res.reason)
             return "skipped"
         own = identity.kind(row) == identity.OWN
         if own and (row["jf_type"] == "Season" or not res.params.get("art_poster")):
             # Nothing to look it up by and no image of yours: Jellyfin's poster stays.
-            db.log_run_item(run_id, jf_id, name, "skipped",
-                            "Left alone (not identified)" if row["status"] == LEFT_ALONE or row["jf_type"] == "Season"
-                            else "Not identified, and no image of yours pinned: do either on its page")
+            why = ("Left alone (not identified)" if row["status"] == LEFT_ALONE or row["jf_type"] == "Season"
+                   else "Not identified, and no image of yours pinned: do either on its page")
+            db.log_run_item(run_id, jf_id, name, "skipped", why)
+            note("none", why)
             return "skipped"
         if with_quality and row["jf_type"] == "Series" and not row.get("quality"):
             ep = await jf.representative_episode(jf_id)
@@ -452,6 +484,7 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
                 if row["status"] == ERROR:
                     db.execute("UPDATE items SET status = ?, last_error = NULL WHERE jf_id = ?", (NEW, jf_id))
                 db.log_run_item(run_id, jf_id, name, "skipped", str(exc))
+                note("none", str(exc))
                 return "skipped"
         else:
             from . import artwork
@@ -460,25 +493,39 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
                                                          access_key=access_key, extra=params))
         image_hash = hashlib.sha256(image).hexdigest()
         decision = decide(row, image_hash, force=force)
-        if decision.reason == "changed":
+        if decision.reason == "changed" or (verify and decision.action == "unchanged"):
             # Only the bytes may have changed: compare with what Jellyfin holds.
             try:
                 current, _ = await jf.primary_image(jf_id, max_height=None)
             except JellyfinError:
                 current = None
-            if current is not None and looks_the_same(current, image):
+            same = current is not None and (current == image or looks_the_same(current, image))
+            if same and decision.reason == "changed":
                 if not dry_run:
                     db.execute("UPDATE items SET pushed_hash = ?, status = ?, last_error = NULL WHERE jf_id = ?",
                                (image_hash, OK, jf_id))
+                note("same")
                 return "unchanged"
+            if not same and decision.action == "unchanged":
+                # Its tag says ours is still there; the image says otherwise.
+                decision = Decision("upload", "reverted")
         if decision.action == "unchanged":
             if row["status"] != OK:
                 db.execute("UPDATE items SET status = ?, last_error = NULL WHERE jf_id = ?", (OK, jf_id))
+            note("same")
             return "unchanged"
         if dry_run:
             db.log_run_item(run_id, jf_id, name, "would_upload", decision.reason)
+            note("would", decision.reason)
             return "would_upload"
         await jf.upload_primary(jf_id, image, ctype)
+        # Sent is not the same as there: read it back, like the other images.
+        try:
+            stored, _ = await jf.primary_image(jf_id, max_height=None)
+        except JellyfinError:
+            raise JellyfinError(UNREADABLE.format(kind="poster")) from None
+        if stored != image and not looks_the_same(stored, image):
+            raise JellyfinError("Jellyfin holds a different poster than the one it was just sent")
         fresh = await jf.item(jf_id)
         reverts = (row.get("revert_count") or 0) + (1 if decision.reason == "reverted" else 0)
         db.execute(
@@ -491,16 +538,20 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
             detail = (f"reverted ({reverts} times so far) — Jellyfin keeps replacing it; check the "
                       "library's 'Replace existing images' setting")
         db.log_run_item(run_id, jf_id, name, "reverted" if decision.reason == "reverted" else "uploaded", detail)
+        note("sent", detail)
         return "reverted" if decision.reason == "reverted" else "uploaded"
     except Exception as exc:
         msg = str(exc) or type(exc).__name__
         db.execute("UPDATE items SET status = ?, last_error = ? WHERE jf_id = ?", (ERROR, msg[:500], jf_id))
         db.log_run_item(run_id, jf_id, name, "error", msg[:500])
+        note("error", msg[:500])
         return "error"
 
 
-async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -> list[str]:
-    """Backdrop, Logo and Thumb for one item, where Studio manages them.
+async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False,
+                       everything: bool = False, report: dict | None = None) -> list[str]:
+    """Backdrop, Logo and Thumb for one item, where Studio manages them (or,
+    with *everything*, all but those you set to "Jellyfin keeps its own").
     Same rules as the poster: send only what changed (noise ignored), put
     back what Jellyfin replaced.
 
@@ -512,11 +563,16 @@ async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -
     actions = []
     for kind in artwork.KINDS:
         if not artwork.managed(key, kind):
-            continue
+            kept = artwork.choice(key, kind)["mode"] == "keep"
+            if kept or not everything:
+                _note(report, jf_id, kind, "kept" if kept else "off",
+                      "Jellyfin keeps its own" if kept else "Off in Settings, and nothing pinned")
+                continue
         label = artwork.JF_TYPE[kind]
         try:
             res = await artwork.resolve(row, kind, advance=advance)
             if res is None:
+                _note(report, jf_id, kind, "none", "Nothing to send: pin an image for it")
                 continue
             data, ctype = res
             image_hash = hashlib.sha256(data).hexdigest()
@@ -528,6 +584,7 @@ async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -
             if not force and current is not None and (current == data or looks_the_same(current, data)):
                 if not dry_run and st.get("pushed_hash") != image_hash:
                     artwork.record_pushed(jf_id, kind, image_hash, st.get("seen_tag"))
+                _note(report, jf_id, kind, "same")
                 continue
             # The image we sent before and nothing changed on our side: Jellyfin replaced it.
             reverted = not force and st.get("pushed_hash") == image_hash
@@ -535,6 +592,7 @@ async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -
             if dry_run:
                 db.log_run_item(run_id, jf_id, name, "would_upload", f"{label}: {reason}")
                 actions.append("would_upload")
+                _note(report, jf_id, kind, "would", reason)
                 continue
             if kind == "backdrop":
                 await jf.replace_backdrop(jf_id, data, ctype)
@@ -543,16 +601,17 @@ async def _process_art(row, jf, dry_run, force, run_id, advance: bool = False) -
                 try:
                     await jf.image(jf_id, label)
                 except JellyfinError:
-                    raise JellyfinError(f"Jellyfin can't give back the {kind} it was just sent (if the title is on "
-                                        "a drive that was unplugged, restart Jellyfin)") from None
+                    raise JellyfinError(UNREADABLE.format(kind=kind)) from None
             fresh = await jf.item(jf_id)
             artwork.record_pushed(jf_id, kind, image_hash, fresh.tag(kind))
             act = "reverted" if reverted else "uploaded"
             db.log_run_item(run_id, jf_id, name, act, f"{label}: {reason}")
             actions.append(act)
+            _note(report, jf_id, kind, "sent", reason)
         except Exception as exc:
             db.log_run_item(run_id, jf_id, name, "error", f"{label}: {str(exc)[:300] or type(exc).__name__}")
             actions.append("error")
+            _note(report, jf_id, kind, "error", str(exc)[:300] or type(exc).__name__)
     return actions
 
 
