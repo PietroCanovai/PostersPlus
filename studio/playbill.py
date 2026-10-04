@@ -31,12 +31,15 @@ WORD_FONT, VENUE_FONT = "GoblinOne.ttf", "PragatiNarrow-Regular.ttf"
 YELLOW = (254, 227, 0)
 INK = (0, 0, 0)
 SIZE = (1000, 1500)       # what the generator makes: Jellyfin's poster shape, at Studio's usual size
+# A cover is a finished design: the style's fades stay off it unless a title or look style asks for them.
+COVER_STYLE = {"top_gradient": "off", "bottom_gradient": "off"}
 HEADER = 0.3174
 FRAME = 0.003
 WORD_TOP, WORD_H = 0.0547, 0.1165
 # (letter, left edge, width), as on the cover.
 LETTERS = (("P", 0.0478, 0.1017), ("L", 0.1649, 0.0955), ("A", 0.2743, 0.1109), ("Y", 0.3883, 0.1156),
            ("B", 0.5116, 0.1032), ("I", 0.6410, 0.0616), ("L", 0.7304, 0.0971), ("L", 0.8475, 0.0963))
+REG_SIZE, REG_X = 0.0135, 0.9405      # the ® mark: its diameter, its centre (over the last L's foot, level with the tops)
 VENUE_TOP, VENUE_CAP = 0.2280, 0.0247
 VENUE_TRACK, VENUE_SPACE, VENUE_SPACE_MIN, VENUE_MAX_W = 0.02, 0.62, 0.20, 0.75   # in em, and of the width
 
@@ -79,6 +82,23 @@ def _both_sides(glyph: Image.Image) -> Image.Image:
     wide.paste(glyph, (round(half - axis), 0))
     both = ImageChops.lighter(wide, ImageOps.mirror(wide))
     return both.crop(both.getbbox())
+
+
+def _registered(size: int) -> Image.Image:
+    """The ® mark as a mask, *size* across: a ring with a bold R, drawn large
+    and scaled down so it stays a clean ring at any size (a font's own ® is a
+    smudge at twelve pixels)."""
+    big = max(size, 4) * 8
+    layer = Image.new("L", (big, big), 0)
+    draw = ImageDraw.Draw(layer)
+    ring = max(2, round(big * 0.085))
+    draw.ellipse((0, 0, big - 1, big - 1), outline=255, width=ring)
+    font = _font(VENUE_FONT, round(big * 0.86))
+    left, top, right, bottom = font.getbbox("R")
+    bold = max(1, round(big * 0.02))
+    draw.text(((big - (right - left)) / 2 - left + big * 0.01, (big - (bottom - top)) / 2 - top), "R",
+              font=font, fill=255, stroke_width=bold, stroke_fill=255)
+    return layer.resize((max(size, 4),) * 2, Image.Resampling.LANCZOS)
 
 
 def venue_from_name(item_name: str) -> str:
@@ -153,8 +173,8 @@ def header(width: int, venue: str = "") -> Image.Image:
     for ch, left, w in LETTERS:
         mask = _glyph(ch, font, round(width * w), h)
         out.paste(black.crop((0, 0, mask.width, h)), (round(width * left), top), mask)
-    reg = _font(VENUE_FONT, max(8, round(width * 0.017)))
-    draw.text((round(width * 0.9465), top - round(width * 0.003)), "®", font=reg, fill=INK)
+    reg = _registered(round(width * REG_SIZE))
+    out.paste(black.crop((0, 0, reg.width, reg.height)), (round(width * REG_X - reg.width / 2), top), reg)
     _venue_line(draw, width, venue)
     return out
 

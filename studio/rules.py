@@ -411,6 +411,10 @@ def resolve(key: str, *, today: date | None = None, advance: bool = False,
     params = dict(t["style"] if title_style is None else title_style)
     if look is not None:
         params.update(look_params(look))
+        from . import playbill, uploads
+        if uploads.is_playbill(key, look.get("poster") or ""):
+            for k, v in playbill.COVER_STYLE.items():     # under the title's and the look's own style
+                params.setdefault(k, v)
     if nev["poster"] and "art_poster" not in params:
         params["art_exclude"] = ",".join(sorted(nev["poster"]))
     if nev["logo"] and "art_logo" not in params:

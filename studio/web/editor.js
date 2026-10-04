@@ -85,9 +85,15 @@ function CropStage({ src, aspect, crop, setCrop }) {
   }
   return html`<div class="crop-stage" onPointerDown=${drag}>
     <img key=${src} ref=${img} src=${src} alt="" referrerpolicy="no-referrer" draggable="false" onLoad=${measure} />
-    ${geo && html`<div class="crop-win" style=${`left:${geo.left}px;top:${geo.top}px;width:${geo.cw}px;height:${geo.ch}px`}></div>`}
+    ${geo && html`<div class="crop-shade" style=${`clip-path:${hole(geo)}`}></div>
+      <div class="crop-win" style=${`left:${geo.left}px;top:${geo.top}px;width:${geo.cw}px;height:${geo.ch}px`}></div>`}
   </div>`;
 }
+// Everything but the window, as a clip-path: the outer box, then the window, even-odd.
+const hole = g => {
+  const l = g.left, t = g.top, r = g.left + g.cw, b = g.top + g.ch;
+  return `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${l}px ${t}px, ${r}px ${t}px, ${r}px ${b}px, ${l}px ${b}px, ${l}px ${t}px)`;
+};
 
 function CropDialog({ src, aspect, initial, actions, onClose }) {
   const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1, ...(initial || {}) });
@@ -138,9 +144,15 @@ const shapeOf = file => new Promise(done => {
   im.onerror = () => end('poster');
   im.src = url;
 });
-function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
-  const [list, setList] = useState(images);
-  const [path, setPath] = useState(initial && images.some(c => c.path === initial) ? initial : (images[0] ? images[0].path : ''));
+const PB_TABS = [['yours', 'Yours'], ['textless', 'No text'], ['titled', 'With title'], ['backdrops', 'Backdrops'], ['frames', 'Frames']];
+function PlaybillDialog({ id, sets, initial, onUploaded, onSaved, onClose }) {
+  const [added, setAdded] = useState([]);           // uploaded here, shown until the title's own list has them
+  const [frames, setFrames] = useState(sets.frames);
+  const lists = { ...sets, frames: frames || sets.frames || [],
+    yours: [...added.filter(a => !sets.yours.some(c => c.path === a.path)), ...sets.yours] };
+  const tabOf = p => (PB_TABS.find(([k]) => lists[k].some(c => c.path === p)) || [''])[0];
+  const [tab, setTab] = useState(() => (initial && tabOf(initial)) || (PB_TABS.find(([k]) => lists[k].length) || ['yours'])[0]);
+  const [path, setPath] = useState(() => (initial && tabOf(initial) ? initial : ''));
   const [crop, setCrop] = useState({ x: 0.5, y: 0.5, zoom: 1 });
   const [venue, setVenue] = useState(null);         // null until the title's own theatre is known
   const [info, setInfo] = useState({ venues: [], aspect: 1000 / 1183 });
@@ -154,13 +166,19 @@ function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+  const framesKnown = frames !== null || sets.frames !== null;
+  useEffect(() => {
+    if (tab === 'frames' && !framesKnown) api(`/title/${id}/frames`).then(d => setFrames(d.frames)).catch(() => setFrames([]));
+  }, [tab]);
+  const choose = p => { setPath(p); setCrop({ x: 0.5, y: 0.5, zoom: 1 }); };
+  // Nothing chosen yet: the first image of the tab, as soon as it has one.
+  useEffect(() => { if (!path && lists[tab].length) choose(lists[tab][0].path); }, [path, tab, lists[tab].length]);
   const cropStr = `${crop.x.toFixed(4)},${crop.y.toFixed(4)},${crop.zoom.toFixed(3)}`;
   useEffect(() => {
     if (!path || venue === null) { setSrc(''); return undefined; }
     const h = setTimeout(() => setSrc(`/studio/api/title/${id}/playbill?${new URLSearchParams({ path, crop: cropStr, venue })}`), 300);
     return () => clearTimeout(h);
   }, [path, cropStr, venue]);
-  const choose = p => { setPath(p); setCrop({ x: 0.5, y: 0.5, zoom: 1 }); };
   async function upload(files) {
     const f = [...(files || [])].find(x => x && x.type.startsWith('image/'));
     if (!f) return;
@@ -168,8 +186,8 @@ function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
     try {
       const kind = await shapeOf(f);
       const r = await api(`/title/${id}/image?kind=${kind}&name=${encodeURIComponent(f.name.slice(0, 100))}`, { method: 'POST', raw: f });
-      setList(l => [{ path: r.path, provider: 'custom' }, ...l.filter(c => c.path !== r.path)]);
-      choose(r.path);
+      setAdded(l => [{ path: r.path, provider: 'custom' }, ...l.filter(c => c.path !== r.path)]);
+      setTab('yours'); choose(r.path);
       onUploaded();
     } catch (ex) { toast(ex.message, true); }
     setBusy(false);
@@ -182,6 +200,8 @@ function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
     } catch (ex) { toast(ex.message, true); }
     setBusy(false);
   }
+  const wide = tab === 'backdrops' || tab === 'frames';
+  const count = k => (k === 'frames' && !framesKnown ? '' : lists[k].length ? ` ${lists[k].length}` : '');
   return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="dialog wide pb" role="dialog" aria-label="Playbill cover"
       onDragOver=${e => e.preventDefault()} onDrop=${e => { e.preventDefault(); upload(e.dataTransfer.files); }}>
@@ -189,14 +209,17 @@ function PlaybillDialog({ id, images, initial, onUploaded, onSaved, onClose }) {
       <div class="pb-cols">
         <div class="pb-art">
           ${path ? html`<${CropStage} src=${fullImageUrl(path)} aspect=${info.aspect} crop=${crop} setCrop=${setCrop} />`
-            : html`<div class="empty">Upload an image, or drop one here.</div>`}
+            : html`<div class="empty">Choose an image below, upload one with +, or drop one here.</div>`}
           ${path && html`<div class="crop-bar"><label class="zoom">Zoom <input type="range" min="1" max="4" step="0.05" value=${crop.zoom}
             onInput=${e => setCrop(c => ({ ...c, zoom: +e.target.value }))} /><span>${crop.zoom.toFixed(1)}×</span></label></div>`}
-          <div class="strip pb-strip">
-            <label class="btn strip-item pb-add" title="Upload an image">+<input type="file" accept="image/png,image/jpeg,image/webp" hidden
-              disabled=${busy} onChange=${e => { upload(e.target.files); e.target.value = ''; }} /></label>
-            ${list.map(c => html`<button key=${c.path} class="strip-item ${c.path === path ? 'on' : ''}" onClick=${() => choose(c.path)}>
-              <img loading="lazy" referrerpolicy="no-referrer" alt="" src=${c.thumb || thumbUrl(c.path, 'posters')} /></button>`)}
+          <div class="pb-pick"><${Seg} small value=${tab} onChange=${setTab} options=${PB_TABS.map(([k, l]) => [k, l + count(k)])} /></div>
+          <div class="strip pb-strip ${wide ? 'wide' : ''}">
+            ${tab === 'yours' && html`<label class="btn strip-item pb-add" title="Upload an image">+<input type="file" accept="image/png,image/jpeg,image/webp" hidden
+              disabled=${busy} onChange=${e => { upload(e.target.files); e.target.value = ''; }} /></label>`}
+            ${lists[tab].map(c => html`<button key=${c.path} class="strip-item ${c.path === path ? 'on' : ''}" onClick=${() => choose(c.path)}
+              title=${c.name || [PROVIDERS[c.provider] || c.provider, c.width ? `${c.width}×${c.height}` : ''].filter(Boolean).join(' · ')}>
+              <img loading="lazy" referrerpolicy="no-referrer" alt="" src=${c.thumb || thumbUrl(c.path, wide ? 'backdrops' : 'posters')} /></button>`)}
+            ${tab !== 'yours' && !lists[tab].length && html`<span class="hint-sm pb-none">${tab === 'frames' && !framesKnown ? 'Loading…' : 'None found for this title.'}</span>`}
           </div>
         </div>
         <div class="pb-side">
@@ -471,7 +494,8 @@ export function Editor({ id, review, slot: startSlot }) {
   const all = (cands && cands.candidates) || { posters: [], backdrops: [], logos: [] };
   const autoPoster = cands && cands.auto && cands.auto.poster;
   const autoLogo = cands && cands.auto && cands.auto.logo;
-  const mine = k => t.uploads.filter(u => u.kind === k).map(u => ({ path: u.path, provider: 'custom', language: null, own_title: u.own_title, name: u.name }));
+  const mine = k => t.uploads.filter(u => u.kind === k).map(u => ({ path: u.path, provider: 'custom', language: null, own_title: u.own_title, name: u.name, template: u.template }));
+  const isCover = path => !!path && t.uploads.some(u => u.path === path && u.template === 'playbill');
   const libEff = lib ? { ...lib.defaults, ...lib.applied_params } : {};
 
   // ── Poster actions ──
@@ -584,7 +608,9 @@ export function Editor({ id, review, slot: startSlot }) {
   const styleTarget = scope === 'look' && editLook ? 'look' : 'title';
   const savedStyle = styleTarget === 'look' ? lookStyle(editLook) : t.title.style;
   const values = draft && draft.target === styleTarget && (styleTarget === 'title' || draft.look === editLook.look_id) ? draft.values : savedStyle;
-  const inherited = styleTarget === 'look' ? { ...libEff, ...t.title.style } : libEff;
+  // A Playbill cover starts without the style's fades (playbill.COVER_STYLE); the title's style and the look's still decide.
+  const inherited = styleTarget === 'look'
+    ? { ...libEff, ...(editLook && isCover(editLook.poster) ? { top_gradient: 'off', bottom_gradient: 'off' } : {}), ...t.title.style } : libEff;
   const titleValues = draft && draft.target === 'title' ? draft.values : t.title.style;
   function setStyleKey(k, v, target = styleTarget) {
     const next = { ...(target === 'title' ? titleValues : values) };
@@ -700,13 +726,12 @@ export function Editor({ id, review, slot: startSlot }) {
     return b;
   };
   const isFocused = c => !!(focus && ((focus.c && focus.c.path === c.path) || (focus.art && focus.art.path === c.path)));
-  // What a Playbill cover can be made from: yours first (not the covers themselves), then everything on offer.
-  const playbillImages = () => {
-    const seen = new Set();
-    return [...mine('poster').filter(c => !(c.name || '').startsWith('Playbill')), ...mine('backdrop'), ...all.posters.filter(c => !c.language),
-      ...all.backdrops, ...(frames || []), ...all.posters.filter(c => c.language)]
-      .filter(c => !seen.has(c.path) && seen.add(c.path)).slice(0, 150);
-  };
+  // What a Playbill cover can be made from, as the dialog's tabs: yours (not the covers themselves) and everything found.
+  const playbillSets = () => ({
+    yours: [...mine('poster').filter(c => c.template !== 'playbill'), ...mine('backdrop')],
+    textless: all.posters.filter(c => !c.language), titled: all.posters.filter(c => c.language),
+    backdrops: all.backdrops, frames,
+  });
   const uploadKind = art === 'backdrops' || art === 'frames' ? 'backdrop' : 'poster';
 
   const uploadRow = (k, sites = [], onTextLogo = null) => html`<div class="own-row dropzone" ...${drop(k)}>
@@ -942,7 +967,7 @@ export function Editor({ id, review, slot: startSlot }) {
       </section>
     </div>
     ${crop && html`<${CropDialog} ...${crop} onClose=${() => setCrop(null)} />`}
-    ${playbill && html`<${PlaybillDialog} id=${id} images=${playbillImages()} initial=${playbill.initial}
+    ${playbill && html`<${PlaybillDialog} id=${id} sets=${playbillSets()} initial=${playbill.initial}
       onClose=${() => setPlaybill(null)} onUploaded=${refresh}
       onSaved=${async (p, use) => {
         await refresh(); setSub('art'); setArt('yours');

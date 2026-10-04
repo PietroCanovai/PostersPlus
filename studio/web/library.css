@@ -172,15 +172,17 @@ button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }
 }
 
 /* ── Dialogs ─────────────────────────────────────────────────────────── */
-.veil { position: fixed; inset: 0; background: #000a; z-index: 40; display: grid; place-items: center; padding: 12px; }
+.veil { position: fixed; inset: 0; background: #000a; backdrop-filter: blur(4px); z-index: 40; display: grid; place-items: center; padding: 12px; }
 .dialog { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; width: min(560px, 100%);
   max-height: calc(100vh - 24px); overflow: auto; }
 .dialog.wide { width: min(1000px, 100%); }
-/* The window darkens the image outside the frame, and nothing else. */
+/* The image outside the frame is darkened by .crop-shade, a layer over the image with the window cut out of it:
+   it can't reach the rest of the dialog (a box-shadow on the window did, where the stage's overflow didn't clip it). */
 .crop-stage { position: relative; user-select: none; touch-action: none; cursor: crosshair; line-height: 0;
   display: table; margin: 0 auto; overflow: hidden; border-radius: 8px; }
 .crop-stage img { display: block; width: auto; height: auto; max-width: 100%; max-height: 64vh; }
-.crop-win { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px #000a; cursor: move; }
+.crop-shade { position: absolute; inset: 0; background: #000a; pointer-events: none; }
+.crop-win { position: absolute; border: 2px solid var(--accent); cursor: move; }
 .crop-bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }
 .crop-bar .zoom { display: flex; gap: 10px; align-items: center; font-weight: 560; flex: 1; min-width: 200px; }
 .crop-bar .zoom input { flex: 1; accent-color: var(--accent); }
@@ -191,7 +193,9 @@ button.icon { min-height: 32px; min-width: 32px; padding: 2px 8px; }
 .pb-cols { display: grid; grid-template-columns: minmax(0, 1fr) 336px; gap: 18px; align-items: start; }
 .pb-art .crop-stage img { max-height: 52vh; }
 .pb-art .crop-bar { margin-top: 10px; }
-.pb-strip { margin: 12px 0 0; }
+.pb-pick { margin-top: 12px; overflow-x: auto; }
+.pb-strip { margin: 8px 0 0; min-height: 106px; align-items: center; }
+.pb-strip .pb-none { padding: 0 6px; }
 .pb-strip .pb-add { display: grid; place-items: center; font-size: 22px; cursor: pointer; }
 .pb-side { display: grid; gap: 12px; }
 .pb-preview { display: grid; place-items: center; aspect-ratio: 2/3; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; background: #0d0e11; }

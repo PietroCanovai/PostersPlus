@@ -19,14 +19,25 @@ KINDS = ("poster", "backdrop", "logo")
 STORE_KIND = {"poster": "poster", "backdrop": "landscape", "logo": "logo"}
 
 
-def add(title_key: str, kind: str, path: str, name: str = "") -> dict:
+def add(title_key: str, kind: str, path: str, name: str = "", template: str = "") -> dict:
+    """*template* 'playbill' marks a cover the generator made (see is_playbill)."""
     if kind not in KINDS:
         raise ValueError("kind must be poster, backdrop or logo")
-    db.execute("INSERT INTO uploads (title_key, kind, path, name, added_at) VALUES (?, ?, ?, ?, ?) "
+    db.execute("INSERT INTO uploads (title_key, kind, path, name, template, added_at) VALUES (?, ?, ?, ?, ?, ?) "
                "ON CONFLICT(title_key, path) DO UPDATE SET kind = excluded.kind, "
-               "name = CASE WHEN excluded.name != '' THEN excluded.name ELSE uploads.name END",
-               (title_key, kind, path, (name or "")[:120], time.time()))
+               "name = CASE WHEN excluded.name != '' THEN excluded.name ELSE uploads.name END, "
+               "template = CASE WHEN excluded.template != '' THEN excluded.template ELSE uploads.template END",
+               (title_key, kind, path, (name or "")[:120], template, time.time()))
     return get(title_key, path)
+
+
+def is_playbill(title_key: str, path: str) -> bool:
+    """Is this image a Playbill cover the generator made?  Such a poster is
+    drawn without the style's fades by default (playbill.COVER_STYLE)."""
+    if not path or not path.startswith("custom:"):
+        return False
+    return bool(db.query_one("SELECT 1 FROM uploads WHERE title_key = ? AND path = ? AND template = 'playbill'",
+                             (title_key, path)))
 
 
 def get(title_key: str, path: str) -> dict | None:

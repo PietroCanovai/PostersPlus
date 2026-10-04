@@ -448,7 +448,8 @@ async def playbill_save(jf_id: str, request: Request):
     stored = await _store(data, "poster")
     key = rules.title_key(row)
     rules.ensure_title(key, row["name"])
-    uploads.add(key, "poster", stored, f"Playbill · {venue.strip()[:80]}" if venue.strip() else "Playbill")
+    uploads.add(key, "poster", stored, f"Playbill · {venue.strip()[:80]}" if venue.strip() else "Playbill",
+                template="playbill")
     uploads.set_own_title(key, stored, True)
     return _json({"path": stored, "upload": uploads.get(key, stored)})
 

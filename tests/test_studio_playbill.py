@@ -14,9 +14,9 @@ from PIL import Image
 from studio import api_library, artwork, auth, db, engine, playbill, uploads
 
 
-def _ink(img, box):
+def _ink(img, box, below=60):
     """The bounding box of the black pixels inside *box* (left, top, right, bottom)."""
-    part = img.crop(box).convert("L").point(lambda v: 255 if v < 60 else 0)
+    part = img.crop(box).convert("L").point(lambda v: 255 if v < below else 0)
     l, t, r, b = part.getbbox()
     return box[0] + l, box[1] + t, box[0] + r, box[1] + b
 
@@ -38,6 +38,17 @@ class HeaderTests(unittest.TestCase):
         self.assertAlmostEqual(b - t, 25, delta=4)
         self.assertAlmostEqual(l + r, 1000, delta=6)
         self.assertAlmostEqual(r - l, 456, delta=30)      # as wide as it is on Aladdin's cover
+
+    def test_the_registered_mark_is_a_ring_over_the_last_letter(self):
+        for width in (1000, 500, 336):                    # the cover, the preview, the dialog's small preview
+            head = playbill.header(width, "")
+            k = width / 1000
+            l, t, r, b = _ink(head, (round(928 * k), 0, width, round(76 * k)), below=170)   # thin lines: soft at small sizes
+            self.assertAlmostEqual((l + r) / 2, 940.5 * k, delta=2)          # centred over the foot of the last L
+            self.assertAlmostEqual(t, 55 * k, delta=2)                        # level with the letters' tops
+            self.assertAlmostEqual(r - l, 13.5 * k, delta=2)
+            self.assertAlmostEqual(b - t, r - l, delta=1)                     # round
+        self.assertLess(_ink(playbill.header(1000, ""), (0, 0, 1000, 200))[2], 960)   # well inside the cover
 
     def test_a_long_theatre_name_still_fits(self):
         head = playbill.header(1000, "Kit Kat Club at the August Wilson Theatre and a few more words besides")
@@ -159,6 +170,33 @@ class ApiTests(unittest.TestCase):
         mine = uploads.for_title("tmdb:movie:1")
         self.assertEqual([(u["path"], u["kind"], u["name"], u["own_title"]) for u in mine],
                          [(path, "poster", "Playbill · Studio 54", True)])           # it has its own header: no logo on it
+
+    def test_a_cover_is_drawn_without_the_fades_by_default(self):
+        from studio import rules
+        key = "tmdb:movie:1"
+        path = self.c.post("/studio/api/title/film/playbill", json={"path": "custom:mine.jpg", "venue": "Studio 54"}).json()["path"]
+        self.assertTrue(uploads.is_playbill(key, path))
+        self.assertEqual(uploads.get(key, path)["template"], "playbill")
+        look = self.c.post("/studio/api/title/film/looks", json={"poster": path, "own_title": True, "pin": True}).json()["look"]
+        params = rules.resolve(key).params
+        self.assertEqual((params["top_gradient"], params["bottom_gradient"]), ("off", "off"))
+        rules.update_look(look["look_id"], {"style": {"bottom_gradient": "low"}}, lambda p: None)     # yours wins
+        params = rules.resolve(key).params
+        self.assertEqual((params["top_gradient"], params["bottom_gradient"]), ("off", "low"))
+        # Any other image of yours is drawn as before.
+        uploads.add(key, "poster", "custom:plain.jpg", "plain.jpg")
+        self.assertNotIn("bottom_gradient", rules.resolve(key, look_override={"poster": "custom:plain.jpg"}).params)
+        self.assertEqual(rules.resolve(key, look_override={"poster": path}).params["bottom_gradient"], "off")   # a preview too
+
+    def test_covers_made_before_the_marker_are_marked(self):
+        db.execute("ALTER TABLE uploads DROP COLUMN template")
+        now = time.time()
+        for path, name, own in (("custom:a.jpg", "Playbill · Studio 54", 1), ("custom:b.jpg", "Playbill", 1),
+                                ("custom:c.jpg", "Playbill scan.jpg", 0), ("custom:d.jpg", "poster.jpg", 1)):
+            db.execute("INSERT INTO uploads (title_key, kind, path, name, own_title, added_at) VALUES ('k', 'poster', ?, ?, ?, ?)",
+                       (path, name, own, now))
+        db._migrate(db.connect())
+        self.assertEqual([uploads.is_playbill("k", f"custom:{c}.jpg") for c in "abcd"], [True, True, False, False])
 
     def test_the_theatre_is_offered(self):
         class Jf:

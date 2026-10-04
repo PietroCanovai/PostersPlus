@@ -183,6 +183,7 @@ _ADDED_COLUMNS = (
     ("jf_art", "deck_pos", "INTEGER NOT NULL DEFAULT 0"),
     ("jf_art", "current", "TEXT"),
     ("jf_art", "rotated_on", "TEXT"),
+    ("uploads", "template", "TEXT NOT NULL DEFAULT ''"),   # 'playbill': a cover the generator made
 )
 
 
@@ -191,6 +192,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            if (table, column) == ("uploads", "template"):     # the covers made before the column existed
+                conn.execute("UPDATE uploads SET template = 'playbill' WHERE kind = 'poster' AND own_title = 1 "
+                             "AND (name = 'Playbill' OR name LIKE 'Playbill · %')")
     # Backdrops sent before 2026-10-02 were added after Jellyfin's own instead of
     # replacing it (Client.replace_backdrop): forget them once, so the next run
     # sends each again, properly.
