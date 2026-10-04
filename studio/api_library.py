@@ -134,7 +134,19 @@ def _title_payload(row: dict) -> dict:
         "parent": row.get("parent_jf_id"),
         "parent_item": _parent_brief(row.get("parent_jf_id")),
         "art": _art_payload(key),
+        "jf_images": _jf_images(row),
     }
+
+
+def _jf_images(row: dict) -> dict:
+    """What Studio last knew of Jellyfin's images of this item: the tag, and
+    when Studio last sent one.  The editor builds the "In Jellyfin" picture's
+    address from it, so the picture is asked of Jellyfin again only when it
+    changed, not at every edit."""
+    out = {"poster": {"tag": row.get("jf_image_tag"), "at": row.get("pushed_at")}}
+    for r in db.query("SELECT kind, seen_tag, pushed_at FROM item_images WHERE jf_id = ?", (row["jf_id"],)):
+        out[r["kind"]] = {"tag": r["seen_tag"], "at": r["pushed_at"]}
+    return out
 
 
 def _art_payload(key: str) -> dict:

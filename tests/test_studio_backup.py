@@ -115,6 +115,20 @@ class BulkTests(unittest.TestCase):
         self.c.post("/studio/api/bulk", json={"jf_ids": ["a"], "action": "reset"})
         self.assertFalse(rules.get_title("tmdb:movie:1")["hands_off"])
 
+    def test_the_editor_is_told_what_jellyfin_has(self):
+        """The "In Jellyfin" picture's address is built from this: it changes when a push does, not at every edit."""
+        from studio import artwork
+        db.execute("UPDATE items SET jf_image_tag = 'p1', pushed_at = 100.5 WHERE jf_id = 'a'")
+        artwork.record_seen("a", "logo", "l1")
+        artwork.record_pushed("a", "backdrop", "hash", "b1")
+        got = self.c.get("/studio/api/title/a").json()["jf_images"]
+        self.assertEqual(got["poster"], {"tag": "p1", "at": 100.5})
+        self.assertEqual(got["logo"], {"tag": "l1", "at": None})
+        self.assertEqual(got["backdrop"]["tag"], "b1")
+        self.assertGreater(got["backdrop"]["at"], 1e9)
+        self.assertNotIn("thumb", got)                                  # never seen: the editor shows "None"
+        self.assertEqual(self.c.get("/studio/api/title/c").json()["jf_images"], {"poster": {"tag": None, "at": None}})
+
     def test_push_needs_uploads(self):
         r = self.c.post("/studio/api/bulk", json={"jf_ids": ["a"], "action": "push"})
         self.assertEqual(r.status_code, 400)

@@ -31,7 +31,7 @@ Every title Jellyfin has no **poster**, **backdrop**, **logo** or **thumb** for 
 
 ## Editing a title
 
-The preview on the left is what Jellyfin will get. **Clicking any image previews it** without saving; everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**. **Hands off** makes Studio leave the title alone; **Reset title** forgets every choice. ← → move to the previous or next title.
+The preview on the left is what Jellyfin will get. **Clicking any image previews it** without saving; everything else saves by itself and reaches Jellyfin in the nightly run, or right away with **Push now**. **Hands off** makes Studio leave the title alone; **Reset title** forgets every choice. ← → move to the previous or next title. Under the buttons, **In Jellyfin** is the image Jellyfin has now for the open tab (*None* when it has none): it is read when you open the title and again after a push, and spins while a push is on its way. A push is slow only when Jellyfin is, for instance during a library scan.
 
 One tab per Jellyfin image: **Poster**, **Backdrop**, **Logo**, **Thumb**.
 

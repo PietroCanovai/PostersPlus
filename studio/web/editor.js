@@ -42,6 +42,25 @@ function Preview({ src, shape, onPick, picking }) {
   </div>`;
 }
 
+// What Jellyfin has now.  *stamp* changes only when Studio knows the image did (a push, a scan that saw another
+// tag, opening the title), so nothing is asked of Jellyfin again while you edit: the browser keeps the picture.
+// The old one stays, dimmed, until the new one is there; none at all says so instead of leaving a blank.
+function JfNow({ id, type, shape, stamp, sending }) {
+  const src = `/studio/api/thumb/${id}?h=240&type=${type}&tag=${encodeURIComponent(stamp)}`;
+  const [st, setSt] = useState({ shown: null, next: src, none: false });
+  // Read the state as it is now, not as it was when the address changed: a picture the browser already had
+  // is there before this runs.
+  useEffect(() => setSt(s => (s.shown === src || s.next === src ? s : { ...s, next: src, none: false })), [src]);
+  const busy = !!st.next || sending;
+  return html`<div class="jf-now ${shape} ${busy ? 'busy' : ''}">
+    ${st.shown && html`<img src=${st.shown} alt="" />`}
+    ${st.next && html`<img class="loading" src=${st.next} alt="" onLoad=${() => setSt(s => ({ shown: s.next || s.shown, next: null, none: false }))}
+      onError=${() => setSt({ shown: null, next: null, none: true })} />`}
+    ${busy && html`<span class="spin" aria-label=${sending ? 'Sending' : 'Loading'}></span>`}
+    ${st.none && !busy && html`<span class="hint-sm">None</span>`}
+  </div>`;
+}
+
 // ── Framing: a window of *aspect* on an image; darkens only the image ───────
 // The image and the window dragged over it; the frame itself is the caller's.
 function CropStage({ src, aspect, crop, setCrop }) {
@@ -419,6 +438,8 @@ export function Editor({ id, review, slot: startSlot }) {
   const [draft, setDraft] = useState(null);         // unsaved style: {target, values}
   const [ts, setTs] = useState(Date.now());
   const [busy, setBusy] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const opened = useRef(Date.now());                // one look at Jellyfin's images per visit to a title
   const [crop, setCrop] = useState(null);           // {src, aspect, initial, actions}
   const [pick, setPick] = useState(null);           // colour param being eyedropped
   const [link, setLink] = useState('');
@@ -647,16 +668,16 @@ export function Editor({ id, review, slot: startSlot }) {
     setNotch({ ...notch, off: [...off] });
   }
   async function push() {
-    setBusy(true);
+    setBusy(true); setPushing(true);
     try {
       const r = await api(`/title/${id}/push`, { method: 'POST', body: {} });
       const c = r.counts || {};
       toast(r.status !== 'done' ? (r.message || 'Push failed') : c.error ? `Failed: ${(r.items.find(i => i.action === 'error') || {}).detail || 'error'}`
         : c.uploaded || c.reverted ? 'Sent to Jellyfin' : c.skipped ? `Skipped: ${(r.items.find(i => i.action === 'skipped') || {}).detail || 'nothing to send'}`
         : 'Jellyfin already has it', !!(c.error || r.status !== 'done' || (c.skipped && !c.uploaded && !c.reverted)));
-      await refresh();
+      await load();          // the looks are as they were: only "In Jellyfin" has something new to show
     } catch (ex) { toast(ex.message, true); }
-    setBusy(false);
+    setBusy(false); setPushing(false);
   }
   async function markReviewed() {
     await api(`/title/${id}`, { method: 'PUT', body: { reviewed: true } }).catch(() => {});
@@ -931,7 +952,8 @@ export function Editor({ id, review, slot: startSlot }) {
             title="Studio leaves this title's images alone">Hands off</button>
         </div>
         <div class="now-in-jf">
-          <img class=${shape} src=${`/studio/api/thumb/${t.item.jf_id}?h=240&type=${JF_TYPE[slot]}&_=${ts}`} alt="" onError=${e => { e.target.style.visibility = 'hidden'; }} />
+          <${JfNow} key=${slot} id=${t.item.jf_id} type=${JF_TYPE[slot]} shape=${shape} sending=${pushing}
+            stamp=${(j => `${j.tag || ''}.${Math.round(j.at || 0)}.${opened.current}`)((t.jf_images || {})[slot] || {})} />
           <div><div class="hint-sm" style="margin:0">In Jellyfin</div>
             ${(looks.length || t.never.poster.length || t.never.logo.length || Object.keys(t.title.style).length) ? html`<button class="link danger"
               onClick=${() => confirm('Forget every choice for this title?') && call(`/title/${id}/reset`, { method: 'POST', body: {} })}>Reset title</button>` : ''}</div>
