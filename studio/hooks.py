@@ -28,6 +28,12 @@ logger = logging.getLogger("studio")
 
 MAX_EXCLUDE = 60
 
+# Studio's own /poster params (RequestConfig fork fields).  Studio writes them
+# spelled out, so they have no short name in param_aliases (its test skips them).
+PARAMS = frozenset({"art_poster", "art_crop", "art_original", "art_logo", "art_exclude", "art_logo_exclude",
+                    "tint_color", "fade_color", "logo_color", "logo_color_mode", "notch_text_color",
+                    "notch_label"})
+
 
 def _valid_path(path: str) -> bool:
     try:

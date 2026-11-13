@@ -24,7 +24,8 @@ def _settings() -> set:
     names = set(main._render_param_defaults()) | set(main._render_param_defaults("landscape"))
     names |= {f"landscape_{k}" for k in (*main._LANDSCAPE_SPLIT_PARAMS, *main._LANDSCAPE_OWN_PARAMS)}
     names |= set(main._NEVER_OMITTED_PARAMS)
-    return names - IDENTITY
+    import studio.hooks  # fork hook: Studio's params are always spelled out
+    return names - IDENTITY - studio.hooks.PARAMS
 
 
 class TableTests(unittest.TestCase):

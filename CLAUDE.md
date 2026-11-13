@@ -67,7 +67,7 @@ Remote: `https://postersplus.biscuitgalaxy.lol` through the host's cloudflared (
 
 ## Tests
 
-`python3 -m pytest tests/ -q` runs on Linux only (cairo, skia, fcntl). This PC has no Docker/WSL, so rely on the Tests workflow, or a throwaway container on the server. The Studio tests alone run on Windows too (`python -m pytest tests/test_studio_engine.py`, needs httpx + fastapi + pillow; this PC's global pydantic is broken, so use a venv): they use a fake Jellyfin and renderer via `httpx.MockTransport`. JS: `node --check` on a `.mjs` copy of `app.js`.
+`python3 -m pytest tests/ -q` runs on Linux only (cairo, skia, fcntl). This PC has no Docker/WSL, so rely on the Tests workflow, or a throwaway container on the server. The Studio tests alone run on Windows too (`python -m pytest tests/test_studio_engine.py`, needs httpx + fastapi + pillow; this PC's global pydantic is broken, so use a venv): they use a fake Jellyfin and renderer via `httpx.MockTransport`. JS: `node --check` on a `.mjs` copy of `app.js`. Known red: `test_custom_fonts.py::test_what_isnt_a_usable_font_is_refused` (the `OTTO` subtest) fails on upstream's own `dev` too since its Python 3.14 / Pillow 13 bump (Nov 2026); leave it to upstream, don't patch their test.
 
 ## Upstream hooks
 
@@ -78,9 +78,10 @@ Every fork change to an upstream file:
 - `.github/workflows/pr-base-guard.yml`: deleted (upstream's release-branch guard).
 - `dockerfile`: `GIT_COMMIT`/`BUILD_DATE` args → `STUDIO_*` env.
 - `art_overrides.py` `_drop_unused_custom`: also keeps every custom image `studio.uploads.studio_custom_paths()` names.
+- `tests/test_param_aliases.py`: `_settings()` leaves out `studio.hooks.PARAMS` (upstream wants a short URL name for every render setting; Studio writes its params spelled out, so they have none).
 - `tests/test_mdblist_backoff.py`: GC paused during the pacing timing test (a GC pause from extra test modules shrank a gap below tolerance).
 - `main.py`: after `app.include_router(_admin.router)`: `import studio as _studio; _studio.install(app)`. In `lifespan`: `_studio.start()` before `yield`, `await _studio.stop()` right after.
-- `main.py` render hooks (all marked `fork hook`): `import studio.hooks as _studio_hooks` (next to `import art_overrides`); `RequestConfig` fork fields (art_*, tint/fade/logo colours) + their defaults in `_SIGNATURE_OMIT_AT_DEFAULT`; `_studio_hooks.apply_params` at the end of `build_request_config`; `skip_excluded` before `_use_backdrop` in `get_poster`; `poster_override` at the operator-art block; the logo override/exclude at the top of `_resolve_logo`; `tint_color` after the `_frost_tint` sample in `_build_poster` (and `_frost_ref = "match"` so a chosen colour isn't pastelled); `notch_text_color` at the notch/sash calls (`force_text=`, a new `awards.draw_award_badge` kwarg that makes the frosted style honour `text_color`); `fade_color` at the top/bottom gradient branches; `recolor_logo` at the top of `_build_poster`; `landscape_override` after the operator landscape-art pick (`_ls_override`) in `get_poster`.
+- `main.py` render hooks (all marked `fork hook`): `import studio.hooks as _studio_hooks` (next to `import art_overrides`); `RequestConfig` fork fields (art_*, tint/fade/logo colours) + their defaults in `_SIGNATURE_OMIT_AT_DEFAULT`; `_studio_hooks.apply_params` at the end of `build_request_config`; `skip_excluded` before `_use_backdrop` in `get_poster`; `poster_override` right after the operator-art block (after upstream's Cinemeta / Artwork-tab picks); the logo override/exclude at the top of `_resolve_logo(logo_priority)`; `tint_color` after the `_frost_tint` sample in `_build_poster` (and `_frost_ref = "match"` so a chosen colour isn't pastelled); `notch_text_color` at the notch/sash calls (`force_text=`, a new `awards.draw_award_badge` kwarg that makes the frosted style honour `text_color`); `fade_color` at the top/bottom gradient branches; `recolor_logo` at the top of `_build_poster`; `landscape_override` after the operator landscape-art pick (`_ls_override`) in `get_poster`.
 
 ## Upstream merge
 
