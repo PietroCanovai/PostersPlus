@@ -474,9 +474,15 @@ async def _process(row, jf, http, style, resolution, with_quality, access_key, d
             row["quality"] = ",".join(quality_tokens(ep)) if ep else ""
         params = res.params
         if row["jf_type"] == "Season":
+            # The image alone, drawn by Studio: no notch, title or shading.
             from . import seasons
-            params = await seasons.params_for(row, params)
-        if in_process(row):
+            try:
+                image, ctype = await seasons.render(await seasons.params_for(row, params), resolution)
+            except seasons.NoArt as exc:
+                db.log_run_item(run_id, jf_id, name, "skipped", str(exc))
+                note("none", str(exc))
+                return "skipped"
+        elif in_process(row):
             from . import stage
             try:
                 image, ctype = await stage.render(row, style, params, resolution)

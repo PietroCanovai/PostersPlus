@@ -118,7 +118,7 @@ Without a StageMedia key, theatre recordings are left alone. A recording the plu
 
 ## Seasons
 
-Turn on **Season posters** in Settings. Each season gets TMDB's season art (or the show's) with "Season 2" in the notch, using the show's colours and layout. Seasons are edited like a title: the strip at the top of a show (and of each season) has the show and every season; on a season, **← Show** goes back and ← → step through the seasons. In *Review one by one*, seasons stay in the review: **Looks good** on a season returns to its show.
+Turn on **Season posters** in Settings. Each season's poster is the image alone: no notch, title, logo or shading, since a season poster usually has the show's name and season number on it already. Studio takes TMDB's best season poster (a titled one first, English first, then a textless one), or the one you pick (and frame) in the season's editor; a season with no TMDB poster keeps Jellyfin's. Seasons are edited like a title: the strip at the top of a show (and of each season) has the show and every season; on a season, **← Show** goes back and ← → step through the seasons. In *Review one by one*, seasons stay in the review: **Looks good** on a season returns to its show.
 
 ## Activity and the nightly run
 

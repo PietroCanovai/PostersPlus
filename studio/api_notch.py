@@ -82,11 +82,10 @@ async def title_notch(jf_id: str):
         raise HTTPException(status_code=404, detail="Unknown title")
     if engine.in_process(row):
         return _json({"available": False, "reason": "No award or release data for this title: use Notch text."})
+    if row["jf_type"] == "Season":
+        return _json({"available": False, "reason": "A season's poster is the image alone: no notch."})
     key = rules.title_key(row)
     params = rules.resolve(key, look_override={}).params
-    if row["jf_type"] == "Season":
-        from . import seasons
-        params = await seasons.params_for(row, params)
     import config as _cfg
 
     from . import artwork

@@ -997,12 +997,13 @@ export function Editor({ id, review, slot: startSlot }) {
               ${mode === 'rotation' && html`<button class="strip-x" title="Remove from rotation" aria-label="Remove from rotation" disabled=${busy}
                 onClick=${() => { if (focus && focus.look === l.look_id) setFocus(null); call(`/looks/${l.look_id}`, { method: 'DELETE' }); }}>✕</button>`}
             </div>`)}</div>`}
-          <${Seg} value=${sub} onChange=${setSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />
+          ${t.parent ? html`<p class="hint-sm">A season's poster is the image alone: no title, notch or shading. Pick one that has them.</p>`
+            : html`<${Seg} value=${sub} onChange=${setSub} options=${[['art', 'Art'], ['logo', 'Logo'], ['style', 'Style']]} />`}
           ${cands && cands.error && html`<div class="notice warn"><p>${cands.error}</p></div>`}
           ${cands && cands.note && html`<div class="notice info"><p>${cands.note}</p></div>`}
           ${ownKind && !t.parent && html`<div class="notice info"><p>${unidentified ? 'Not identified yet, which is fine: ' : ''}Pin an image of yours
             (upload, link or a frame) and Studio makes the poster from it. <strong>Push now</strong> works as soon as one is pinned.</p></div>`}
-          ${sub === 'art' ? artPane : sub === 'logo' ? logoPane : stylePane}`}
+          ${sub === 'art' || t.parent ? artPane : sub === 'logo' ? logoPane : stylePane}`}
         ${slot !== 'poster' && otherPane(slot)}
       </section>
     </div>

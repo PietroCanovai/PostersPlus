@@ -427,12 +427,23 @@ class SeasonTests(EngineTests):
 
         async def fake_posters(tmdb_id, number):
             if number == 1:
-                return [{"path": "/season1.jpg", "language": None}, {"path": "/season1-en.jpg", "language": "en"}]
+                return sorted([{"path": "/season1.jpg", "language": None}, {"path": "/season1-en.jpg", "language": "en"}],
+                              key=seasons._rank)
             return []
         seasons.season_posters = fake_posters
+        self._orig_render = seasons.render
+        self.drawn = []
+
+        async def fake_render(params, resolution):
+            if not params.get("art_poster"):
+                raise seasons.NoArt("none")
+            self.drawn.append(params)
+            return b"season:" + params["art_poster"].encode(), "image/jpeg"
+        seasons.render = fake_render
 
     def tearDown(self):
         self.seasons.season_posters = self._orig
+        self.seasons.render = self._orig_render
         super().tearDown()
 
     def test_seasons_off_by_default(self):
@@ -447,17 +458,19 @@ class SeasonTests(EngineTests):
                          [(0, "s1", "70523"), (1, "s1", "70523")])
         from studio import rules
         self.assertEqual(rules.title_key(seasons_rows[1]), "tmdb:tv:70523:s1")
-        season_reqs = [q for q in self.pp.requests if q.get("notch_label")]
-        by_label = {q["notch_label"]: q for q in season_reqs}
-        self.assertEqual(set(by_label), {"Specials", "Season 1"})
-        self.assertEqual(by_label["Season 1"]["type"], "tv")
-        self.assertEqual(by_label["Season 1"]["art_poster"], "/season1.jpg")       # textless first
-        self.assertNotIn("art_poster", by_label["Specials"])                         # no season art: the show's
-        # Never on the textless one moves to the titled one, served as it is.
-        rules.set_never("tmdb:tv:70523:s1", "poster", "/season1.jpg", True)
+        # Seasons never go through /poster: no notch, title or shading drawn on them.
+        self.assertFalse([q for q in self.pp.requests if q.get("notch_label")])
+        self.assertEqual(self.drawn, [{"art_poster": "/season1-en.jpg"}])          # titled first
+        # Never on the titled one moves to the textless one.
+        rules.set_never("tmdb:tv:70523:s1", "poster", "/season1-en.jpg", True)
         row = dict(seasons_rows[1])
         params = asyncio.run(self.seasons.params_for(row, rules.resolve("tmdb:tv:70523:s1").params))
-        self.assertEqual((params["art_poster"], params["art_original"]), ("/season1-en.jpg", "1"))
+        self.assertEqual(params, {"art_poster": "/season1.jpg"})
+
+    def test_season_ranking_titled_english_first(self):
+        cands = [{"path": "a", "language": None, "score": 9}, {"path": "b", "language": "ja", "score": 8},
+                 {"path": "c", "language": "en", "score": 1}, {"path": "d", "language": "en", "score": 5}]
+        self.assertEqual([c["path"] for c in sorted(cands, key=self.seasons._rank)], ["d", "c", "b", "a"])
 
     def test_unmatched_show_seasons_are_left_alone_until_the_show_is_matched(self):
         prefs.set("seasons_enabled", True)
@@ -471,15 +484,24 @@ class SeasonTests(EngineTests):
         row = db.query_one("SELECT * FROM items WHERE jf_id = 's1-1'")
         self.assertEqual((row["manual_tmdb_id"], row["status"]), ("70523", engine.NEW))   # managed now
 
-    def test_season_inherits_show_style_but_can_override(self):
+    def test_season_ignores_styles_and_keeps_its_own_image(self):
         from studio import rules
         rules.set_title_style("tmdb:tv:70523", {"tint_color": "112233", "bottom_gradient": "low"})
         rules.set_title_style("tmdb:tv:70523:s1", {"bottom_gradient": "off", "notch_label": "Book One"})
         row = {"jf_id": "s1-1", "jf_type": "Season", "tmdb_id": "70523", "season_number": 1}
-        params = asyncio.run(self.seasons.params_for(row, rules.resolve("tmdb:tv:70523:s1").params))
-        self.assertEqual(params["tint_color"], "112233")      # from the show
-        self.assertEqual(params["bottom_gradient"], "off")    # the season's own
-        self.assertEqual(params["notch_label"], "Book One")
+        own = {**rules.resolve("tmdb:tv:70523:s1").params, "art_poster": "custom:x.png", "art_crop": "0.5,0.5,1.000"}
+        params = asyncio.run(self.seasons.params_for(row, own))
+        self.assertEqual(params, {"art_poster": "custom:x.png", "art_crop": "0.5,0.5,1.000"})
+
+    def test_compose_frames_the_image_alone(self):
+        import io
+
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (1920, 1080), (200, 10, 10)).save(buf, "PNG")
+        out = self.seasons.compose(buf.getvalue(), "", 500)
+        self.assertEqual(out.size, (500, 750))
+        self.assertEqual(out.getpixel((250, 700)), (200, 10, 10))   # no fade, no notch
 
 
 class LooksTheSameTests(unittest.TestCase):

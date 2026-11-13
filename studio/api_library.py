@@ -549,7 +549,14 @@ async def preview(jf_id: str, look: str | None = None, look_id: int | None = Non
     params = res.params
     if row["jf_type"] == "Season":
         from . import seasons
-        params = await seasons.params_for(row, params)
+        try:
+            data, ctype = await seasons.render(await seasons.params_for(row, params),
+                                               w if w in PREVIEW_WIDTHS else 500)
+        except seasons.NoArt as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc) or type(exc).__name__)
+        return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=600"})
     draft = db.get_setting("style_draft") if style == "draft" else None
     style = draft or prefs.get("style_applied")
     import config as _cfg
