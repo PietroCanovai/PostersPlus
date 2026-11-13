@@ -137,6 +137,7 @@ class CinemetaNormaliseTests(unittest.TestCase):
         import anime
         anime_keys = set(anime._blank_tmdb_data()) - {
             "anime_source", "anime_score", "anime_age_rating", "anime_media_type",
+            "anime_banner", "anime_mal_id", "anime_lookup",
         }
         self.assertTrue(anime_keys <= set(cinemeta._blank_tmdb_data()))
 
@@ -591,6 +592,33 @@ class TitleIdentityTests(unittest.IsolatedAsyncioTestCase):
         exc = await self._refusal(imdb_id="tt0111161")
         self.assertEqual(exc.status_code, 502)
 
+    def _rejected(self) -> tmdb.IdResolveError:
+        request = httpx.Request("GET", "https://api.themoviedb.org/3/find/tt0111161")
+        cause = httpx.HTTPStatusError(
+            "401", request=request, response=httpx.Response(401, request=request))
+        err = tmdb.IdResolveError("TMDB find failed")
+        err.__cause__ = cause
+        return err
+
+    async def test_a_rejected_client_key_is_401_not_cinemeta(self):
+        # Issue #47: the fallback hid the bad key behind poorer posters.
+        self._stub(self._rejected())
+        exc = await self._refusal(imdb_id="tt0111161", key="client-key")
+        self.assertEqual(exc.status_code, 401)
+        self.assertIn("tmdb_key", exc.detail)
+
+    async def test_a_rejected_server_key_still_falls_to_cinemeta(self):
+        saved = main._cfg.SERVER_TMDB_KEY
+        main._cfg.SERVER_TMDB_KEY = "server-key"
+        try:
+            self._stub(self._rejected())
+            self.assertEqual(
+                await self._identity(imdb_id="tt0111161", key="server-key"),
+                ("tt0111161", "movie", True),
+            )
+        finally:
+            main._cfg.SERVER_TMDB_KEY = saved
+
     # -- imdb_id only, no key --
 
     async def test_keyless_imdb_only_keeps_a_cinemeta_supplied_tmdb_id(self):
@@ -773,6 +801,7 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         self._retry_delay = tmdb._TRENDING_RETRY_DELAY_SECS
         tmdb._TRENDING_RETRY_DELAY_SECS = 0
         tmdb._trending_source_failed_at.clear()
+        tmdb._trending_payloads.clear()
         self.addCleanup(tmdb._trending_source_failed_at.clear)
         self.addCleanup(setattr, tmdb, "_TRENDING_RETRY_DELAY_SECS", self._retry_delay)
         main._cfg.ACCESS_KEY = ""

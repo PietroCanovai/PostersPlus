@@ -26,7 +26,9 @@ Design notes
   with no art.
 """
 import asyncio
+import time
 import hashlib
+from urllib.parse import urlsplit
 import logging
 
 import httpx
@@ -34,6 +36,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from cache import (
+    delete_cached_tvdb_json,
     get_cached_tvdb_json,
     set_cached_tvdb_json,
 )
@@ -44,12 +47,16 @@ from config import (
     ANIME_NEG_CACHE_DURATION,
     ANILIST_API_URL,
     KITSU_API_BASE,
+    JIKAN_API_URL,
 )
 
 # Namespaces accepted on the wire, in the order they're probed by the request
 # handler.  Kept as a tuple so the id-parsing helper and the query-param list in
 # main.py can't drift apart.
 NAMESPACES = ("anilist", "kitsu")
+# Also parsed, though never fetched from: MAL needs auth, so a MAL id is
+# translated to a provider id through anime_ids before anything is fetched.
+ID_NAMESPACES = NAMESPACES + ("mal",)
 
 _SENTINEL_MISS = {"__miss__": True}
 
@@ -67,8 +74,29 @@ class _TransientError(Exception):
 # Lazily-created asyncio primitives (bind to the running loop on first use).
 # One per provider: sharing a semaphore would make Kitsu queue behind AniList's
 # much tighter budget for no reason.
-_CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY}
+_CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY, "jikan": 2}
 _semaphores: "dict[str, asyncio.Semaphore]" = {}
+
+
+# AniList's Retry-After, honoured across every caller: once it throttles,
+# further calls until then only earn more 429s (and, in a catalog burst, keep
+# the limit from resetting).  Per worker, which is where the budget is spent.
+_anilist_quiet_until = 0.0
+
+
+def anilist_cooling() -> bool:
+    """Whether AniList asked us to wait and the wait isn't over."""
+    return time.monotonic() < _anilist_quiet_until
+
+
+def note_anilist_throttle(retry_after: "str | None") -> None:
+    """Start the wait an AniList 429 asked for (60 s when it named none)."""
+    global _anilist_quiet_until
+    try:
+        wait = min(max(float(retry_after), 1.0), 300.0)
+    except (TypeError, ValueError):
+        wait = 60.0
+    _anilist_quiet_until = max(_anilist_quiet_until, time.monotonic() + wait)
 
 
 def _get_semaphore(namespace: str) -> "asyncio.Semaphore":
@@ -86,7 +114,7 @@ def _get_semaphore(namespace: str) -> "asyncio.Semaphore":
 def parse_anime_id(namespace: str, raw: str) -> int | None:
     """Validate a caller-supplied anime id.  Both providers use plain positive
     integers; anything else is rejected rather than passed upstream."""
-    if namespace not in NAMESPACES:
+    if namespace not in ID_NAMESPACES:
         return None
     raw = (raw or "").strip()
     # Tolerate the Stremio-style prefixed form ("kitsu:12345") as well as a bare
@@ -114,16 +142,17 @@ def parse_stremio_id(raw: str) -> "tuple[str | None, int | None]":
 
     Stremio ids look like ``tt0903747``, ``tmdb:1396``, ``kitsu:7442`` or
     ``kitsu:7442:1:2`` (with season/episode). Only the anime namespaces we
-    actually support are recognised; everything else returns (None, None) so
-    the caller takes the ordinary TMDB path.
+    support are recognised — ``mal:`` included, which the caller translates to
+    a provider id; everything else returns (None, None) so the caller takes the
+    ordinary TMDB path.
     """
     raw = (raw or "").strip()
     if ":" not in raw:
         return None, None
     namespace, _, rest = raw.partition(":")
     namespace = namespace.strip().lower()
-    if namespace not in NAMESPACES:
-        # tt…, tmdb:, tvdb:, and the mal:/anidb: namespaces we don't source from.
+    if namespace not in ID_NAMESPACES:
+        # tt…, tmdb:, tvdb:, and anidb:, which we don't source from.
         return None, None
     # Drop any season/episode suffix.
     parsed = parse_anime_id(namespace, rest.split(":", 1)[0])
@@ -243,6 +272,7 @@ _ANILIST_QUERY = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
     id
+    idMal
     title { romaji english native }
     startDate { year month day }
     seasonYear
@@ -255,6 +285,9 @@ query ($id: Int) {
     duration
     isAdult
     coverImage { extraLarge large }
+    bannerImage
+    synonyms
+    relations { edges { relationType node { id type format } } }
     studios(isMain: true) { nodes { name } }
   }
 }
@@ -263,6 +296,8 @@ query ($id: Int) {
 
 async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | None:
     """One GraphQL call returning art, titles, genres, status and score."""
+    if anilist_cooling():
+        raise _TransientError("AniList asked us to wait (Retry-After)")
     logger.info(f"External API Call: AniList metadata fetch for {anime_id}")
     resp = await client.post(
         ANILIST_API_URL,
@@ -274,6 +309,7 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
     if resp.status_code == 404:
         return None
     if resp.status_code == 429:
+        note_anilist_throttle(resp.headers.get("retry-after"))
         raise _TransientError(
             f"AniList rate-limited (retry-after={resp.headers.get('retry-after')})"
         )
@@ -289,39 +325,53 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
 
 
 _ANILIST_TRENDING_QUERY = """
-query ($page: Int, $perPage: Int) {
+query ($page: Int, $perPage: Int, $statusNot: MediaStatus, $formats: [MediaFormat]) {
   Page(page: $page, perPage: $perPage) {
     pageInfo { hasNextPage }
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: false, format_in: [TV, TV_SHORT, ONA]) {
+    media(type: ANIME, sort: TRENDING_DESC, isAdult: false, format_in: $formats,
+          status_not: $statusNot) {
       id
       title { romaji english }
       seasonYear
+      startDate { year }
       coverImage { extraLarge large }
+      bannerImage
+      genres
     }
   }
 }
 """
 
-# Series formats only: the catalog is a series catalog, and an anime film typed
+# Series and films are ranked apart, one list per catalog: an anime film typed
 # as a series would open as one.  Ranks are numbered after this filter, so a
-# rank is always the title's position in the catalog.
+# rank is always the title's position in its catalog.
+_ANILIST_SERIES_FORMATS = ["TV", "TV_SHORT", "ONA"]
+_ANILIST_FILM_FORMATS = ["MOVIE"]
 _ANILIST_TRENDING_PAGE = 50
 
 
 async def fetch_anilist_trending(
-    client: httpx.AsyncClient, details_out: dict | None = None,
+    client: httpx.AsyncClient, details_out: dict | None = None, films: bool = False,
+    limit: int | None = None, hide_unreleased: bool | None = None,
 ) -> "list[str] | None":
-    """AniList's trending anime series as ``anilist:<id>`` keys, in rank order,
-    up to the broad trending count.  None when AniList could not be read.
+    """AniList's trending anime series (or with *films*, anime films) as
+    ``anilist:<id>`` keys, in rank order, up to *limit* (the broad trending
+    count by default), without what hasn't started airing when
+    *hide_unreleased* (TRENDING_HIDE_UNRELEASED by default).
+    None when AniList could not be read.
 
-    For the trending catalogs addon: the anime catalog and the rank printed on
-    a poster requested with an AniList id both come from this list.
+    For the trending catalogs addon: the anime catalogs and the rank printed
+    on any anime poster both come from these lists.
     """
-    from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT
-    limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+    from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT, TRENDING_HIDE_UNRELEASED
+    limit = limit or max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+    # AniList drops what hasn't started airing itself; null filters nothing.
+    if hide_unreleased is None:
+        hide_unreleased = TRENDING_HIDE_UNRELEASED
+    status_not = "NOT_YET_RELEASED" if hide_unreleased else None
     ids: list[str] = []
     page = 1
-    logger.info("External API Call: AniList trending anime")
+    logger.info(f"External API Call: AniList trending anime {'films' if films else 'series'}")
     try:
         while len(ids) < limit:
             async with _get_semaphore("anilist"):
@@ -329,7 +379,10 @@ async def fetch_anilist_trending(
                     ANILIST_API_URL,
                     json={
                         "query": _ANILIST_TRENDING_QUERY,
-                        "variables": {"page": page, "perPage": _ANILIST_TRENDING_PAGE},
+                        "variables": {"page": page, "perPage": _ANILIST_TRENDING_PAGE,
+                                      "statusNot": status_not,
+                                      "formats": _ANILIST_FILM_FORMATS if films
+                                      else _ANILIST_SERIES_FORMATS},
                     },
                     timeout=15.0,
                 )
@@ -344,10 +397,16 @@ async def fetch_anilist_trending(
                 if details_out is not None:
                     title = media.get("title") or {}
                     cover = media.get("coverImage") or {}
+                    # Films have no season; their start year stands in.
+                    year = media.get("seasonYear") or (media.get("startDate") or {}).get("year")
                     details_out[key] = {k: v for k, v in {
                         "name": title.get("english") or title.get("romaji"),
-                        "year": str(media["seasonYear"]) if media.get("seasonYear") else None,
+                        "year": str(year) if year else None,
                         "poster": cover.get("extraLarge") or cover.get("large"),
+                        # A landscape row's art (the "sh-" segment).
+                        "backdrop": media.get("bannerImage"),
+                        # TMDB ids, for the catalogs' genre filter.
+                        "genres": _map_genres(media.get("genres") or []),
                     }.items() if v}
                 if len(ids) >= limit:
                     break
@@ -453,6 +512,13 @@ def _blank_tmdb_data() -> dict:
         "anime_score":          None,
         "anime_age_rating":     None,
         "anime_media_type":     None,
+        # The provider's wide art (AniList's banner, Kitsu's cover image):
+        # landscape's last art before a crop of the cover or the canvas.
+        "anime_banner":         None,
+        # AniList's MyAnimeList id for the same entry (Kitsu doesn't say).
+        "anime_mal_id":         None,
+        # AniList's titles, year, format and prequel, for anime_resolve.
+        "anime_lookup":         None,
     }
 
 
@@ -496,6 +562,21 @@ def _normalise_anilist(media: dict) -> tuple:
     tmdb_data["anime_media_type"]  = (
         "movie" if (media.get("format") or "") in _MOVIE_FORMATS else "series"
     )
+    tmdb_data["anime_banner"]      = media.get("bannerImage")
+    tmdb_data["anime_mal_id"]      = media.get("idMal")
+    # What anime_resolve needs to find a TMDB id the id mapping lacks, so it
+    # doesn't ask AniList again: titles, start year, format and the prequel.
+    tmdb_data["anime_lookup"] = {
+        "id": media.get("id"),
+        "format": media.get("format"),
+        "title": {"english": titles.get("english"), "romaji": titles.get("romaji")},
+        "synonyms": (media.get("synonyms") or [])[:5],
+        "startDate": {"year": start.get("year")},
+        "relations": {"edges": [
+            e for e in ((media.get("relations") or {}).get("edges") or [])
+            if e.get("relationType") == "PREQUEL"
+        ]},
+    }
 
     studios = ((media.get("studios") or {}).get("nodes")) or []
     tmdb_data["production_companies"] = [
@@ -526,7 +607,7 @@ def _normalise_kitsu(data: dict) -> tuple:
     poster = attrs.get("posterImage") or {}
     # Kitsu's `original` is typically 550x780, the only source across these
     # providers that doesn't need upscaling to the 500x750 canvas.
-    poster_url = poster.get("original") or poster.get("large")
+    poster_url = kitsu_image_url(poster.get("original") or poster.get("large"))
 
     tmdb_data = _blank_tmdb_data()
     tmdb_data["original_title"]     = original_title
@@ -540,6 +621,7 @@ def _normalise_kitsu(data: dict) -> tuple:
     tmdb_data["anime_media_type"]   = (
         "movie" if (attrs.get("subtype") or "") in _MOVIE_FORMATS else "series"
     )
+    tmdb_data["anime_banner"]       = kitsu_image_url((attrs.get("coverImage") or {}).get("original"))
 
     # averageRating is a percentage delivered as a string ("82.53").
     raw_score = attrs.get("averageRating")
@@ -568,6 +650,28 @@ def _cache_key(namespace: str, anime_id: int) -> str:
     return f"anime:{_METADATA_VERSION}:{namespace}:{anime_id}"
 
 
+def kitsu_image_url(url: str | None) -> str | None:
+    """*url* without the presigned-request query Kitsu now puts on its image
+    urls.  The signature lasts 15 minutes (X-Amz-Expires=900), so a url
+    cached with it 401s soon after; the bucket is public, and the bare url
+    serves the same file for as long as the image is Kitsu's."""
+    if url and "X-Amz-" in url:
+        return url.split("?", 1)[0]
+    return url
+
+
+def is_provider_image(url: str) -> bool:
+    """Whether *url* is Kitsu's or AniList's own image hosting."""
+    host = urlsplit(url).hostname or ""
+    return "kitsu" in host or host.endswith("anilist.co")
+
+
+def forget_metadata(namespace: str, anime_id: int) -> None:
+    """Drop the cached row, so the next request asks the provider again —
+    for when the art it names stops being served."""
+    delete_cached_tvdb_json(_cache_key(namespace, anime_id))
+
+
 def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
     """Filesystem-safe blob cache key for the fetched cover art.
 
@@ -577,6 +681,22 @@ def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
     """
     digest = hashlib.sha256(url.encode()).hexdigest()[:16]
     return f"anime_{namespace}_{anime_id}_{digest}"
+
+
+# How often an entry the provider hasn't scored yet is asked for its score.
+_UNSCORED_RECHECK = 86400
+
+
+def _score_check_key(namespace: str, anime_id: int) -> str:
+    return f"anime_scorecheck:{namespace}:{anime_id}"
+
+
+def known_miss(namespace: str, anime_id: int) -> bool:
+    """True when the provider is known to have no entry for *anime_id* (the
+    negative cache), as against a ``fetch_anime_metadata`` None that was a
+    throttle or an outage and is worth asking again soon."""
+    cached = get_cached_tvdb_json(_cache_key(namespace, anime_id))
+    return bool(cached and cached.get("__miss__"))
 
 
 def empty_metadata(namespace: str) -> tuple:
@@ -615,18 +735,40 @@ async def fetch_anime_metadata(
         if cached.get("__miss__"):
             logger.info(f"{namespace} negative cache hit for {anime_id}")
             return None
-        logger.info(f"{namespace} metadata cache hit for {anime_id}")
-        return (
+        # Rows cached before kitsu_image_url carry signed urls that have
+        # long expired: cleaned here rather than every row fetched again.
+        tmdb_data = cached["tmdb_data"]
+        if tmdb_data and "anime_banner" in tmdb_data:
+            tmdb_data = {**tmdb_data, "anime_banner": kitsu_image_url(tmdb_data["anime_banner"])}
+        hit = (
             cached["genre_ids"],
             False,
             [],
             cached["release_year"],
             cached["title"],
-            cached["poster_path"],
+            kitsu_image_url(cached["poster_path"]),
             None,
-            cached["tmdb_data"],
+            tmdb_data,
         )
+        # A new show has no score for its first days (Kitsu waits for enough
+        # ratings, AniList for its first episodes), and the metadata is kept
+        # a week; an unscored entry is asked again once a day instead.
+        score_check = _score_check_key(namespace, anime_id)
+        if (cached["tmdb_data"] or {}).get("anime_score") is not None or get_cached_tvdb_json(score_check):
+            logger.info(f"{namespace} metadata cache hit for {anime_id}")
+            return hit
+        set_cached_tvdb_json(score_check, {"checked": True}, _UNSCORED_RECHECK)
+        logger.info(f"{namespace} metadata for {anime_id} has no score yet; asking again")
+        return await _fetch_and_cache(client, namespace, anime_id, key) or hit
 
+    fresh = await _fetch_and_cache(client, namespace, anime_id, key)
+    if fresh is not None and fresh[7].get("anime_score") is None:
+        set_cached_tvdb_json(_score_check_key(namespace, anime_id), {"checked": True}, _UNSCORED_RECHECK)
+    return fresh
+
+
+async def _fetch_and_cache(client: httpx.AsyncClient, namespace: str, anime_id: int,
+                           key: str) -> tuple | None:
     try:
         async with _get_semaphore(namespace):
             if namespace == "anilist":
@@ -671,3 +813,68 @@ async def fetch_anime_metadata(
     )
 
     return genre_ids, False, [], release_year, title, poster_url, None, tmdb_data
+
+
+# ---------------------------------------------------------------------------
+# MyAnimeList scores through Jikan
+# ---------------------------------------------------------------------------
+
+_MAL_SCORE_TTL = 86400
+_MAL_UNSCORED_TTL = 12 * 3600
+# After Jikan fails, it isn't asked again for this long, so an instance that
+# can't reach it doesn't wait out a timeout on every render.
+_JIKAN_COOLDOWN = 300
+_jikan_quiet_until = 0.0
+
+
+def jikan_enabled() -> bool:
+    return bool(JIKAN_API_URL)
+
+
+def _mal_score_key(mal_id: int) -> str:
+    return f"jikan_score:v1:{mal_id}"
+
+
+async def fetch_mal_score(client: httpx.AsyncClient, mal_id: int) -> "tuple[float | None, bool]":
+    """MyAnimeList's score (0-10) for *mal_id* as Jikan reports it.
+
+    MDBList keeps one MyAnimeList score per IMDb title, the first season's,
+    so this is what gives a later season its own.  Returns (score, answered):
+    answered is False when Jikan couldn't be asked (unset, throttled, down),
+    which the caller treats like any other provider blip.  A score of None
+    with answered True is an entry MAL hasn't scored yet (or doesn't have).
+    """
+    global _jikan_quiet_until
+    if not JIKAN_API_URL:
+        return None, False
+    key = _mal_score_key(mal_id)
+    cached = get_cached_tvdb_json(key)
+    if cached is not None:
+        return cached.get("score"), True
+    if time.monotonic() < _jikan_quiet_until:
+        return None, False
+    try:
+        async with _get_semaphore("jikan"):
+            logger.info(f"External API Call: Jikan score for mal:{mal_id}")
+            resp = await client.get(f"{JIKAN_API_URL}/anime/{int(mal_id)}", timeout=6.0,
+                                    follow_redirects=True)
+    except httpx.HTTPError as exc:
+        logger.warning(f"Jikan unavailable for mal:{mal_id}: {type(exc).__name__}: {exc}")
+        _jikan_quiet_until = time.monotonic() + _JIKAN_COOLDOWN
+        return None, False
+    if resp.status_code == 404:
+        set_cached_tvdb_json(key, {"score": None}, ANIME_NEG_CACHE_DURATION * 86400)
+        return None, True
+    if resp.status_code != 200:
+        # Jikan answers 429 for its own per-second limit and passes MAL's
+        # outages on as 5xx; a short pause covers both.
+        logger.warning(f"Jikan error {resp.status_code} for mal:{mal_id}")
+        _jikan_quiet_until = time.monotonic() + (10 if resp.status_code == 429 else _JIKAN_COOLDOWN)
+        return None, False
+    try:
+        score = (resp.json().get("data") or {}).get("score")
+        score = float(score) if score is not None else None
+    except (ValueError, TypeError, AttributeError):
+        return None, False
+    set_cached_tvdb_json(key, {"score": score}, _MAL_SCORE_TTL if score is not None else _MAL_UNSCORED_TTL)
+    return score, True

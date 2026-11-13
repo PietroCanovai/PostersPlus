@@ -38,6 +38,7 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import config as _cfg
+import param_aliases
 from cache import _db_lock, get_app_state, get_db, set_app_state
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,8 @@ def clean_params(url_or_query: str) -> str:
     """The reported poster's query string with every key taken out."""
     text = (url_or_query or "").strip()
     query = urlsplit(text).query if "?" in text or "://" in text else text
-    pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
+    # Spelled out, so the dashboard shows the settings by name.
+    pairs = [(k, v) for k, v in param_aliases.expand(parse_qsl(query, keep_blank_values=True))
              if k.lower() not in _SECRET_PARAMS and not k.lower().endswith("_key")]
     return urlencode(pairs)[:MAX_PARAMS]
 

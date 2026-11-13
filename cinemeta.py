@@ -52,7 +52,7 @@ _SENTINEL_MISS = {"__miss__": True}
 
 # Bumped whenever the normaliser or the genre vocabulary changes, so cached rows
 # built by the old logic are re-fetched rather than served.
-_METADATA_VERSION = "v2"   # v2: dvdRelease and the episode summary joined the slim row
+_METADATA_VERSION = "v3"   # v2: dvdRelease and the episode summary joined the slim row; v3: country
 
 _IMDB_ID_RE = re.compile(r"^tt[0-9]{1,10}\Z")
 
@@ -356,14 +356,20 @@ async def fetch_cinemeta_meta(
     client: httpx.AsyncClient,
     imdb_id: str,
     media_type: str,
+    want_country: bool = False,
 ) -> dict | None:
     """The raw Cinemeta ``meta`` document, cached. None when Cinemeta has no
-    entry or is unavailable."""
+    entry or is unavailable.
+
+    ``country`` joined the cached document after v2 rows were written; a
+    caller that reads it (*want_country*) has a row from before refetched,
+    rather than every title paying for a version bump."""
     if not _IMDB_ID_RE.match(imdb_id or ""):
         return None
     key = _cache_key(imdb_id, media_type)
     cached = get_cached_tvdb_json(key)
-    if cached is not None:
+    if cached is not None and not (want_country and not cached.get("__miss__")
+                                   and "country" not in cached):
         if cached.get("__miss__"):
             logger.info(f"Cinemeta negative cache hit for {imdb_id}")
             return None
@@ -395,6 +401,8 @@ async def fetch_cinemeta_meta(
         )
         if meta.get(k) is not None
     }
+    # Always present, so a row without it is one from before it was kept.
+    slim["country"] = meta.get("country")
     episodes = summarise_episodes(meta.get("videos"))
     if episodes:
         slim["episodes"] = episodes

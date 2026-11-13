@@ -478,9 +478,22 @@ def score_text(provider: str, value: float, scale: str, out_of_10: bool) -> str:
     return str(score)
 
 
-# Which titles a badge shows on: m(ovies), t(v), a(nime).  Written after the
-# provider ("imdb:mt") only when it is narrowed; a bare provider shows on all.
-KINDS = "mta"
+# Which titles a badge shows on: m(ovies), t(v), and anime split the same way,
+# f(ilms) and s(eries).  Written after the provider ("imdb:mts") only when it
+# is narrowed; a bare provider shows on all.  "a", from before anime was
+# split, is both anime kinds, and is how both are still written.
+KINDS = "mtfs"
+
+
+def _kind_set(kinds: str) -> str:
+    """*kinds* as written ("mta", "ts", ...) in KINDS' letters and order."""
+    kinds = kinds.replace("a", "fs")
+    return "".join(k for k in KINDS if k in kinds)
+
+
+def _spell(kinds: str) -> str:
+    """A KINDS-ordered set as written: both anime kinds as "a"."""
+    return kinds.replace("fs", "a")
 
 
 def _tokens(raw: str | None) -> list[tuple[str, str]]:
@@ -490,7 +503,7 @@ def _tokens(raw: str | None) -> list[tuple[str, str]]:
     for token in (raw or "").lower().replace(" ", "").split(","):
         provider, sep, kinds = token.partition(":")
         if provider in PROVIDERS and provider not in (p for p, _ in seen):
-            seen.append((provider, "".join(k for k in KINDS if k in kinds) if sep else KINDS))
+            seen.append((provider, _kind_set(kinds) if sep else KINDS))
     return seen[:_MAX_BADGES]
 
 
@@ -501,17 +514,17 @@ def parse_providers(raw: str | None) -> str:
 
 
 def parse_kinds(raw: str | None) -> str:
-    """The narrowed providers of rating_badges, canonically ("imdb:mt,kitsu:a");
-    "" when every badge shows on every kind of title."""
-    return ",".join(f"{p}:{k}" for p, k in _tokens(raw) if k != KINDS)
+    """The narrowed providers of rating_badges, canonically ("imdb:mt,kitsu:a",
+    "letterboxd:mf"); "" when every badge shows on every kind of title."""
+    return ",".join(f"{p}:{_spell(k)}" for p, k in _tokens(raw) if k != KINDS)
 
 
 def for_kind(providers: str, kinds: str, kind: str) -> str:
     """``providers`` less those whose kinds (see parse_kinds) leave out
-    ``kind`` — "m", "t" or "a"."""
+    ``kind`` — "m", "t", "f" (anime film) or "s" (anime series)."""
     if not kinds or not providers:
         return providers
-    narrowed = dict(entry.split(":") for entry in kinds.split(","))
+    narrowed = {p: _kind_set(k) for p, k in (entry.split(":") for entry in kinds.split(","))}
     return ",".join(p for p in providers.split(",") if kind in narrowed.get(p, KINDS))
 
 
@@ -592,3 +605,36 @@ def draw_run(image: Image.Image, draw: ImageDraw.ImageDraw, run: list[tuple], x:
         else:
             x += v
     return x
+
+
+def bar_center_run(items: list[tuple[str, float]], lead_text: str, rating_first: bool,
+                   scale: str, out_of_10: bool, style: str):
+    """The Bar mode's center_run (ratings.draw_frosted_bar) for rating badges
+    in the "★ score" part's place.  After the rest of the label (*lead_text*,
+    drawn as given), or before it when the rating comes first: no "·" between,
+    as the badge itself reads as the break.  Short of room, sites drop off the
+    end.  With no other text, one run per badge, as many as fit with at
+    least the usual gap, for the bar to spread across itself."""
+    def fit(font_size, measure, budget, lead_w):
+        n = len(items)
+        while True:
+            run = rating_run(items[:n], font_size, scale, out_of_10, style)
+            if n <= 1 or lead_w + run_width(run, measure) <= budget:
+                return run
+            n -= 1
+
+    def center_run(font_size, measure, budget):
+        if not lead_text:
+            runs = [rating_run([item], font_size, scale, out_of_10, style) for item in items]
+            gap = font_size * _ENTRY_GAP
+            n = len(runs)
+            while n > 1 and sum(run_width(r, measure) for r in runs[:n]) + (n - 1) * gap > budget:
+                n -= 1
+            return runs[:n]
+        if rating_first:
+            tail = [("gap", font_size * 0.62), ("text", lead_text)]
+            return [fit(font_size, measure, budget, run_width(tail, measure)) + tail]
+        lead = [("text", lead_text), ("gap", font_size * 0.62)]
+        return [lead + fit(font_size, measure, budget, run_width(lead, measure))]
+
+    return center_run

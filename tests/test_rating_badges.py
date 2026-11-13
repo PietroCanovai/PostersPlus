@@ -88,6 +88,24 @@ class ParseTests(unittest.TestCase):
         cfg = main.build_request_config({"rating_badge_scale": "weird"})
         self.assertEqual((cfg.rating_badges, cfg.rating_badge_scale), ("", "native"))
 
+    def test_landscape_can_have_its_own_sites(self):
+        both = {"rating_badges": "imdb,tomatoes:m", "rating_badge_max": "2",
+                "landscape_rating_badges": "true", "landscape_rating_badge_list": "letterboxd:mt,trakt,kitsu"}
+        portrait = main.build_request_config(both)
+        self.assertEqual((portrait.rating_badges, portrait.rating_badge_kinds, portrait.rating_badge_max),
+                         ("imdb,tomatoes", "tomatoes:m", 0))
+        landscape = main.build_request_config({**both, "shape": "landscape"})
+        self.assertEqual((landscape.rating_badges, landscape.rating_badge_kinds, landscape.rating_badge_max),
+                         ("letterboxd,trakt,kitsu", "letterboxd:mt", 2))
+        self.assertNotEqual(main._render_config_signature(landscape), main._render_config_signature(
+            main.build_request_config({**both, "shape": "landscape", "landscape_rating_badge_list": "imdb"})))
+        # Absent, landscape shows the portrait's; present but empty, none.
+        del both["landscape_rating_badge_list"]
+        self.assertEqual(main.build_request_config({**both, "shape": "landscape"}).rating_badges, "imdb,tomatoes")
+        cfg = main.build_request_config({**both, "shape": "landscape", "landscape_rating_badge_list": ""})
+        self.assertEqual(cfg.rating_badges, "")
+        self.assertFalse(main._shows_rating_badges(cfg))
+
     def test_defaults_leave_the_composite_signature_alone(self):
         # Every poster cached before badges existed keeps its key.
         sig = main._render_config_signature(main.build_request_config({}))
@@ -317,8 +335,21 @@ class RatingBadgeKindsTests(unittest.TestCase):
         kinds = rb.parse_kinds("imdb:m,tomatoes,kitsu:a")
         self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "m"), "imdb,tomatoes")
         self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "t"), "tomatoes")
-        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "a"), "tomatoes,kitsu")
+        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "s"), "tomatoes,kitsu")
         self.assertEqual(rb.for_kind("imdb", "", "t"), "imdb")
+
+    def test_anime_films_and_series_apart(self):
+        # "a" is both anime kinds, and both are still written "a".
+        self.assertEqual(rb.parse_kinds("imdb:tm,kitsu:a,anilist:sf"), "imdb:mt,kitsu:a,anilist:a")
+        self.assertEqual(rb.parse_kinds("imdb:mta"), "")
+        self.assertEqual(rb.parse_kinds("imdb:mts,letterboxd:fm"), "imdb:mts,letterboxd:mf")
+        kinds = rb.parse_kinds("letterboxd:mf,imdb:ts")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "f"), "letterboxd")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "s"), "imdb")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "m"), "letterboxd")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", "kitsu:a", "s"), "letterboxd,imdb")
+        self.assertEqual(rb.for_kind("kitsu", "kitsu:a", "f"), "kitsu")
+        self.assertEqual(rb.for_kind("kitsu", "kitsu:a", "t"), "")
 
     def test_config_and_cache_key(self):
         cfg = main.build_request_config({"rating_badges": "imdb:m,tomatoes"})

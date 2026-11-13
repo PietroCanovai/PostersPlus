@@ -63,7 +63,7 @@ class HideUnreleasedRatingPipelineTests(unittest.TestCase):
         cls.src = Path("main.py").read_text(encoding="utf-8")
 
     def test_status_is_resolved_for_the_setting_alone(self):
-        self.assertIn("if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:", self.src)
+        self.assertIn("if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating or _quality_gate:", self.src)
 
     def test_status_asked_for_only_by_the_setting_stays_off_the_sash(self):
         # The status also drives the sash and the greyscale art; neither was
@@ -73,8 +73,8 @@ class HideUnreleasedRatingPipelineTests(unittest.TestCase):
                         self.src.index("if not _status_sash:"))
 
     def test_render_uses_hide_rating_and_the_composite_expires_with_the_status(self):
-        self.assertIn("dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg",
-                      self.src)
+        self.assertIn("dataclasses.replace(rcfg, hide_rating=True, landscape_rating_mode=", self.src)
+        self.assertIn("if _hide_unreleased else rcfg)", self.src)
         self.assertIn("release_status_ttl_seconds(_status_for_ttl)", self.src)
 
 
@@ -100,3 +100,23 @@ class HideUnreleasedRatingConfiguratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QualityAfterDigitalPipelineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path("main.py").read_text(encoding="utf-8")
+
+    def test_the_gate_covers_series_too(self):
+        # A series is judged on whether an episode has aired, not on the status
+        # word alone: "In Production" between seasons is out already.
+        self.assertIn("_quality_gate = rcfg.quality_after_digital and bool(quality_tokens)\n", self.src)
+        self.assertIn("if _quality_gate and (_unreleased_for_rating(_release_status, type, tmdb_data)\n"
+                      '                              if type in ("tv", "series")\n'
+                      '                              else _release_status in ("Cinema", "Production")):',
+                      self.src)
+
+    def test_series_between_seasons_keeps_its_quality(self):
+        aired = {"last_episode": {"air_date": _day(-200)}, "next_episode": None}
+        self.assertFalse(_unreleased_for_rating("Production", "series", aired))
+        self.assertTrue(_unreleased_for_rating("Production", "series", {}))

@@ -40,7 +40,7 @@ class CustomScorePaletteTests(unittest.TestCase):
 
         self.assertIn('<option value="3">Custom</option>', html)
         self.assertIn('<option value="palette_custom">Custom</option>', html)
-        self.assertIn("params.set('score_custom_palette', _customPalette)", html)
+        self.assertIn("if (custom && palette) set('score_custom_palette', palette);", html)
         self.assertIn("p.has('score_custom_palette')", html)
 
 

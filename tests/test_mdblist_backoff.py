@@ -292,6 +292,49 @@ class MDBListQuotaTrackingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("key-a", ratings.MDBLIST_QUOTA)
         self.assertIsNone(ratings.mdblist_quota_remaining("key-a"))
 
+    async def test_account_endpoint_fills_quota_for_an_unused_key(self):
+        """A key no rating call has used yet (standby key, fresh restart) still
+        gets its real daily usage from /user, valid until the next UTC midnight."""
+        seen = []
+
+        async def handler(request):
+            seen.append(request.url.path)
+            return httpx.Response(200, json={"api_requests": 1000, "api_requests_count": 461})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await ratings.refresh_mdblist_quota_from_account(client, "key-b")
+
+        self.assertEqual(seen, ["/user"])
+        self.assertEqual(ratings.mdblist_quota_remaining("key-b"), 539)
+        quota = ratings.MDBLIST_QUOTA["key-b"]
+        self.assertEqual(quota.limit, 1000)
+        self.assertEqual(quota.reset_at % 86400, 0)
+        self.assertTrue(0 < quota.reset_at - time.time() <= 86400)
+
+    async def test_account_endpoint_does_not_overwrite_a_newer_header_snapshot(self):
+        """A quota 429 recorded while the /user read was in flight wins."""
+        async def handler(request):
+            ratings.MDBLIST_QUOTA["key-b"] = ratings.MDBListQuota(1000, 0, time.time() + 600, time.time())
+            return httpx.Response(200, json={"api_requests": 1000, "api_requests_count": 900})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await ratings.refresh_mdblist_quota_from_account(client, "key-b")
+        self.assertEqual(ratings.mdblist_quota_remaining("key-b"), 0)
+
+    async def test_account_endpoint_keeps_the_header_reset_time(self):
+        reset = time.time() + 600
+        ratings.MDBLIST_QUOTA["key-b"] = ratings.MDBListQuota(1000, 950, reset, time.time() - 30)
+        async with self._client(200, {}, {"api_requests": 1000, "api_requests_count": 80}) as client:
+            await ratings.refresh_mdblist_quota_from_account(client, "key-b")
+        self.assertEqual(ratings.mdblist_quota_remaining("key-b"), 920)
+        self.assertEqual(ratings.MDBLIST_QUOTA["key-b"].reset_at, reset)
+
+    async def test_account_endpoint_failure_keeps_existing_snapshot(self):
+        ratings.MDBLIST_QUOTA["key-b"] = ratings.MDBListQuota(1000, 700, time.time() + 3600, time.time())
+        async with self._client(401, {}, {"error": "Invalid API key"}) as client:
+            self.assertIsNone(await ratings.refresh_mdblist_quota_from_account(client, "key-b"))
+        self.assertEqual(ratings.mdblist_quota_remaining("key-b"), 700)
+
 
 class CacheWarmKeyFallbackTests(unittest.TestCase):
     """The warmer moves to key #2 when key #1 is limited or at its reserve."""

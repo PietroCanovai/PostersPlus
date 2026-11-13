@@ -14,8 +14,10 @@ from tmdb import (
     image_language_order,
     logo_language_steps,
     logo_priority_draws_text,
+    logo_priority_falls_back_to_art,
     logo_priority_uses_custom,
     parse_logo_priority,
+    split_logo_priority_at_art,
 )
 
 
@@ -83,6 +85,39 @@ class LogoPriorityListTests(unittest.TestCase):
             logo_language_steps("fr", "ja", "native_if_original,english"),
             ["en", "metahub"],
         )
+
+    def test_art_is_a_source_anywhere_above_text(self):
+        self.assertEqual(parse_logo_priority("native,art,english,text"),
+                         "native,art,english,text")
+        self.assertEqual(parse_logo_priority("native,english,art"), "native,english,art")
+        # Nothing follows text, art included.
+        self.assertEqual(parse_logo_priority("native,text,art"), "native,text")
+
+    def test_art_contributes_no_logo_step(self):
+        self.assertEqual(
+            logo_language_steps("fr", "ja", "native,art,english,text"),
+            ["fr", "en", "metahub"],
+        )
+        self.assertEqual(
+            image_language_order("fr", "ja", "native,art,original,text"),
+            ["fr", "ja"],
+        )
+
+    def test_art_flag_and_split(self):
+        self.assertTrue(logo_priority_falls_back_to_art("native,art,text"))
+        self.assertFalse(logo_priority_falls_back_to_art("native_original"))
+        self.assertEqual(split_logo_priority_at_art("native,english,art,text"),
+                         ("native,english", "text"))
+        # A side that matches a preset comes back under its name.
+        self.assertEqual(
+            split_logo_priority_at_art("native,english,neutral,art,text"),
+            ("native,english,neutral", "text"),
+        )
+        self.assertEqual(split_logo_priority_at_art("art,native,english,neutral,text"),
+                         (None, "native_text"))
+        self.assertEqual(split_logo_priority_at_art("native,art"), ("native", None))
+        self.assertEqual(split_logo_priority_at_art("native_original"),
+                         ("native_original", None))
 
     def test_text_and_custom_flags(self):
         self.assertTrue(logo_priority_draws_text("native_original"))
@@ -341,6 +376,16 @@ class ImageLanguageOrderTests(unittest.TestCase):
         order = image_language_order("pt-br", "en", "native_original")
         self.assertEqual(order, ["pt-br", "en"])
         self.assertNotIn("pt", order)
+
+    def test_european_portuguese_takes_portugals_art_only(self):
+        # Brazil's art usually out-votes Portugal's, so a bare "pt" (any
+        # region) lands on it; pt-pt must never fall back to that.
+        portugal = {"iso_639_1": "pt", "iso_3166_1": "PT"}
+        brazil = {"iso_639_1": "pt", "iso_3166_1": "BR"}
+        self.assertEqual(_image_language_keys(portugal), ["pt-pt", "pt"])
+        self.assertTrue(_image_matches_language(portugal, "pt-pt"))
+        self.assertFalse(_image_matches_language(brazil, "pt-pt"))
+        self.assertEqual(image_language_order("pt-pt", "en", "native_original"), ["pt-pt", "en"])
 
     def test_brazilian_portuguese_fetch_includes_base_language_for_tmdb(self):
         self.assertEqual(

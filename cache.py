@@ -7,6 +7,7 @@ import threading
 import tempfile
 import time
 import json
+from urllib.parse import parse_qsl
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -412,6 +413,23 @@ def init_db() -> None:
     """)
     # A textless pick's manual crop, "x,y,zoom" (see art_overrides.parse_crop).
     _add_column_if_missing(conn, "art_overrides", "crop", "TEXT")
+    # Another instance's overrides, followed (ART_OVERRIDES_REMOTE_URL): the
+    # same rows, replaced wholesale at each sync.  Local rows win.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS art_overrides_remote (
+            media_type TEXT NOT NULL,
+            tmdb_id    TEXT NOT NULL,
+            slot       TEXT NOT NULL,
+            language   TEXT NOT NULL DEFAULT '',
+            path       TEXT NOT NULL,
+            provider   TEXT NOT NULL,
+            sources    TEXT NOT NULL DEFAULT '',
+            title      TEXT NOT NULL DEFAULT '',
+            updated_at REAL NOT NULL,
+            crop       TEXT,
+            PRIMARY KEY (media_type, tmdb_id, slot, language)
+        )
+    """)
 
     for statement in REPORT_SCHEMA:
         conn.execute(statement)
@@ -443,6 +461,7 @@ def init_db() -> None:
         ("metadata_version",    "INTEGER"),
         ("alt_poster_path",     "TEXT"),
         ("poster_pools_json",   "TEXT"),
+        ("true_story",          "INTEGER"),
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
@@ -486,8 +505,12 @@ def init_db() -> None:
     # Name, year and art for each ranked title, for the trending catalogs
     # addon, which serves the snapshot as a Stremio catalog.
     _add_column_if_missing(conn, "trending_cache", "details_json", "TEXT")
+    # When a visitor's list was last asked for, so the trending loop keeps
+    # the ones in use warm (requested_trending_lists).
+    _add_column_if_missing(conn, "trending_cache", "requested_at", "INTEGER")
 
     _clear_mdblist_wrong_type_misses(conn)
+    _clear_bulk_letterboxd_rows(conn)
 
     conn.commit()
 
@@ -525,6 +548,53 @@ def _clear_mdblist_wrong_type_misses(conn: sqlite3.Connection) -> None:
     if ids:
         logger.info(f"Cleared {len(ids)} empty MDBList rating rows (and their posters) "
                     "to re-ask with the type fallback")
+
+
+_BULK_LETTERBOXD_DONE = "cleanup:mdblist-bulk-letterboxd:v1"
+# 2026-10-18 00:00 UTC, the day MDBList bulk ratings shipped.
+_BULK_SHIPPED_AT = 1792281600
+
+
+def _clear_bulk_letterboxd_rows(conn: sqlite3.Connection) -> None:
+    """Once: forget the rating rows that may hold a Letterboxd rating out of
+    10, and the posters drawn from them.
+
+    MDBList's bulk answer gives Letterboxd out of 10 where the single call
+    gives it out of 5, and until ratings._parse_mdblist_title read the score
+    instead, the bulk value was stored as it came and scored double (Marty
+    Supreme's 4.0 as 8.0, over 100 on its own).  A bulk row can't be told from
+    a single-call one, so every row with a Letterboxd rating written since bulk
+    shipped is asked again, mostly in bulk again (200 titles to a request).
+    """
+    if conn.execute("SELECT 1 FROM app_state WHERE key = ?",
+                    (_BULK_LETTERBOXD_DONE,)).fetchone():
+        return
+    ids = [r[0] for r in conn.execute(
+        "SELECT imdb_id FROM rating_cache WHERE cached_at >= ? "
+        "AND ratings_json LIKE '%\"letterboxd\"%'",
+        (_BULK_SHIPPED_AT,),
+    )]
+    conn.executemany("DELETE FROM rating_cache WHERE imdb_id = ?", [(i,) for i in ids])
+    # A poster key starts with the IMDb id, or with an anime or TMDB id and
+    # holds the IMDb id later ("anilist:101922:tt9335498:…"); a TMDB-routed
+    # row ("tmdb:123") is the key's first two segments.  Ranges on the key's
+    # index: the IMDb-first keys by their prefix, and only the rest read.
+    conn.executemany(
+        "DELETE FROM final_poster_cache WHERE cache_key >= ? AND cache_key < ?",
+        [(f"{i}:", f"{i};") for i in ids if i.startswith("tt")],
+    )
+    wanted = set(ids)
+    stale = [
+        (key,) for (key,) in conn.execute(
+            "SELECT cache_key FROM final_poster_cache WHERE cache_key < 'tt' OR cache_key >= 'tu'")
+        if wanted.intersection(key.split(":")) or ":".join(key.split(":", 2)[:2]) in wanted
+    ]
+    conn.executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", stale)
+    conn.execute("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)",
+                 (_BULK_LETTERBOXD_DONE, str(len(ids))))
+    if ids:
+        logger.info(f"Cleared {len(ids)} rating rows (and their posters) that may hold "
+                    "a bulk Letterboxd rating out of 10")
 
 
 # ---------------------------------------------------------------------------
@@ -907,23 +977,39 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
     them in Python the way the per-title calls did, and deletes the matches in
     one transaction.  Returns the number of rows deleted.
 
-    *media_type* is the snapshot's: "anime" ids are "anilist:<id>", the anime
-    namespace a composite key leads with; anything else is a TMDB id matched
-    against the key's tail, with "tv" and "series" treated as one.
+    *media_type* is the snapshot's storage key: the endpoint, or
+    "<endpoint>@<parts>" for a list visitors chose (trending_lists).  Only the
+    composites that rank on that list are dropped, read off the trending_list
+    each was requested with, once any chosen list is stored; until then every
+    composite ranks on the operator's lists.  A TMDB id is matched against the key's
+    tail, with "tv" and "series" treated as one.  The anime lists' ids are
+    "anilist:<id>" (or TMDB ids, from a custom source), and any anime poster
+    carries their rank, whatever id it was asked for by: each AniList id is
+    matched as the anime namespace a composite key leads with, and through
+    the id mapping as its Kitsu entry and its TMDB title too.
     """
     if not changed_ids:
         return 0
-    if media_type == "anime":
-        prefixes = tuple(f"{anime_key}:" for anime_key in changed_ids)
+    list_key = media_type
+    media_type = list_key.partition("@")[0]
+    prefixes: tuple[str, ...] = ()
+    tail_ids = set(changed_ids)
+    tv_like = media_type in ("tv", "series", "anime")
+    if media_type in ("anime", "anime_movie"):
+        import anime_ids
+        anilist = {int(k.split(":", 1)[1]) for k in changed_ids
+                   if k.startswith("anilist:") and k.split(":", 1)[1].isdigit()}
+        tail_ids -= {k for k in changed_ids if k.startswith("anilist:")}
+        kitsu, tmdb_tv, tmdb_movie = anime_ids.ids_for_anilist(anilist)
+        prefixes = tuple([f"anilist:{a}:" for a in anilist] + [f"kitsu:{k}:" for k in kitsu])
+        tail_ids |= {str(t) for t in (tmdb_tv if tv_like else tmdb_movie)}
+    types = ("tv", "series") if tv_like else ("movie",)
 
-        def _match(key: str) -> bool:
-            return key.startswith(prefixes)
-    else:
-        types = ("tv", "series") if media_type in ("tv", "series") else (media_type,)
-
-        def _match(key: str) -> bool:
-            parts = key.split(":")
-            return len(parts) >= 4 and parts[-3] in changed_ids and parts[-2] in types
+    def _match(key: str) -> bool:
+        if prefixes and key.startswith(prefixes):
+            return True
+        parts = key.split(":")
+        return len(parts) >= 4 and parts[-3] in tail_ids and parts[-2] in types
 
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
@@ -934,24 +1020,46 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
             (k,) for (k,) in get_db().execute("SELECT cache_key FROM final_poster_cache")
             if _match(k)
         ]
+        params_of: dict[str, str] = {}
+        if "@" in list_key or any("@" in k for k in trending_list_keys()):
+            import trending_lists
+
+            def _ranks_here(params: str) -> bool:
+                raw = dict(parse_qsl(params or "", keep_blank_values=True)).get(trending_lists.PARAM)
+                return trending_lists.parse(raw).key(media_type) == list_key
+
+            kept = []
+            for (k,) in keys:
+                row = get_db().execute(
+                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                ).fetchone()
+                params = row[0] if row and row[0] else ""
+                if _ranks_here(params):
+                    kept.append((k,))
+                    params_of[k] = params
+            keys = kept
         # Kept for the trending loop to render again warm: once deleted, these
         # are no longer there for its scan to find.
         with _turnover_replay_lock:
             for (k,) in keys:
                 if len(_turnover_replay) >= _TURNOVER_REPLAY_MAX:
                     break
-                row = get_db().execute(
-                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
-                ).fetchone()
-                if row and row[0]:
-                    _turnover_replay[k] = row[0]
+                if k in params_of:
+                    params = params_of[k]
+                else:
+                    row = get_db().execute(
+                        "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                    ).fetchone()
+                    params = row[0] if row and row[0] else ""
+                if params:
+                    _turnover_replay[k] = params
         if keys:
             with _db_lock:
                 get_db().executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", keys)
                 get_db().commit()
         logger.info(
             f"Invalidated {len(keys)} cached posters for {len(changed_ids)} "
-            f"{media_type} trending changes"
+            f"{list_key} trending changes"
         )
         return len(keys)
     except Exception as exc:
@@ -1523,6 +1631,76 @@ def get_cached_trending_details(media_type: str) -> dict[str, dict]:
         return {}
 
 
+def expire_trending_snapshot(media_type: str) -> None:
+    """Mark *media_type*'s snapshot expired, so the next request rebuilds it.
+    Kept, not deleted: the rebuild diffs against it to invalidate what moved.
+    Aged by a full TTL rather than zeroed, so it is past its expiry while
+    prune_trending_choices still sees when it was built."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                "UPDATE trending_cache SET cached_at = MIN(cached_at, ?) - ? WHERE media_type = ?",
+                (int(time.time()), TRENDING_CACHE_DURATION * 86400 + 1, media_type),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Trending snapshot expire error: {exc}")
+
+
+def trending_list_keys() -> list[str]:
+    """Every stored trending list's key (see trending_lists)."""
+    try:
+        return [k for (k,) in get_db().execute("SELECT media_type FROM trending_cache")]
+    except Exception as exc:
+        logger.error(f"Trending list keys read error: {exc}")
+        return []
+
+
+def note_trending_list_requested(media_type: str) -> None:
+    """Record that a visitor's list was just asked for (see
+    requested_trending_lists)."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                "UPDATE trending_cache SET requested_at = ? WHERE media_type = ?",
+                (int(time.time()), media_type),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Trending list request note error: {exc}")
+
+
+def requested_trending_lists(since: float) -> list[str]:
+    """The visitor-chosen lists ("<endpoint>@...") asked for since *since*."""
+    try:
+        return [k for (k,) in get_db().execute(
+            "SELECT media_type FROM trending_cache WHERE media_type LIKE '%@%' AND requested_at >= ?",
+            (int(since),),
+        )]
+    except Exception as exc:
+        logger.error(f"Requested trending lists read error: {exc}")
+        return []
+
+
+def prune_trending_choices(max_age_secs: int) -> int:
+    """Delete the visitor-chosen lists ("<endpoint>@...") not rebuilt for
+    *max_age_secs*: nobody has asked for them since.  One asked for again is
+    simply built again.  The operator's lists are never pruned."""
+    try:
+        with _db_lock:
+            cur = get_db().execute(
+                "DELETE FROM trending_cache WHERE media_type LIKE '%@%' AND cached_at < ?",
+                (int(time.time()) - max_age_secs,),
+            )
+            get_db().commit()
+        if cur.rowcount:
+            logger.info(f"Pruned {cur.rowcount} chosen trending list(s) nobody asked for lately")
+        return cur.rowcount
+    except Exception as exc:
+        logger.error(f"Trending list prune error: {exc}")
+        return 0
+
+
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
@@ -1541,8 +1719,9 @@ def set_cached_trending_snapshot(
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO trending_cache
-                (media_type, rankings_json, cached_at, source_sig, details_json)
-                VALUES (?, ?, ?, ?, ?)
+                (media_type, rankings_json, cached_at, source_sig, details_json, requested_at)
+                VALUES (?, ?, ?, ?, ?,
+                        (SELECT requested_at FROM trending_cache WHERE media_type = ?))
                 """,
                 (
                     media_type,
@@ -1553,6 +1732,7 @@ def set_cached_trending_snapshot(
                     # from thousands of rows.
                     json.dumps({k: v for k, v in details.items() if k in rankings})
                     if details else None,
+                    media_type,
                 ),
             )
             get_db().commit()
@@ -1736,6 +1916,11 @@ def _safe_cache_path(base_dir: str, filename: str) -> str:
 # TMDB metadata cache
 # ---------------------------------------------------------------------------
 
+# How long a series row TMDB sent with an already-aired "next" episode is kept
+# before asking again (see get_cached_tmdb_metadata).
+STALE_NEXT_EPISODE_RETRY = 6 * 3600
+
+
 def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
     try:
         row = get_db().execute(
@@ -1750,7 +1935,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    poster_langs_json, imdb_id,
                    tmdb_release_date, last_air_date, next_episode_json,
                    last_episode_json, seasons_json, metadata_version,
-                   alt_poster_path, poster_pools_json
+                   alt_poster_path, poster_pools_json, true_story
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -1770,7 +1955,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             poster_langs_json, imdb_id,
             tmdb_release_date, last_air_date, next_episode_json,
             last_episode_json, seasons_json, metadata_version,
-            alt_poster_path, poster_pools_json,
+            alt_poster_path, poster_pools_json, true_story,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -1787,6 +1972,28 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                     age_days = 9999  # Force expiration
                 # If it's unreleased or released within the last 14 days, use a 1-day TTL
                 elif (now_ts < rel_ts or (now_ts - rel_ts) < 14 * 86400) and age_days > 1.0:
+                    age_days = 9999
+            except Exception:
+                pass
+
+        # A series' scheduled episode is the same kind of moment: once it has
+        # aired, the row's next/last episodes are a week behind the show.
+        # Kept, a season that premiered the day after caching read as an
+        # undated "Renewed" until the weekly refresh instead of "Airing", and
+        # the episode after it (the next date to show) was never seen.
+        next_air = (json.loads(next_episode_json or "null") or {}).get("air_date")
+        if next_air and age_days != 9999:
+            try:
+                from datetime import timezone
+                # Whole days: a row cached on the air day itself (TMDB still
+                # calls that episode "next" until it has gone out) expires once
+                # the day is over, without refetching on every request that day.
+                # TMDB is also slow to move "next" on: Slow Horses was fetched
+                # the morning after an episode with that episode still next.
+                # Such a row is retried every few hours rather than kept a week.
+                day_end = datetime.strptime(next_air, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() + 86400
+                if day_end <= time.time() and (
+                        cached_at < day_end or age_days * 86400 >= STALE_NEXT_EPISODE_RETRY):
                     age_days = 9999
             except Exception:
                 pass
@@ -1811,16 +2018,23 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
         #
-        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765).  A v4 row is
-        # otherwise identical, so only a TV row still carrying 10765 is
-        # refetched, and its composites with it: they drew the old label.
+        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765), and v6 gives
+        # TV shows Horror, which TMDB's TV genres lack.  Film rows are
+        # otherwise identical, so only TV rows from before are refetched.  A v4
+        # TV row still carrying 10765 takes its composites with it (they drew
+        # the old label); the Horror change re-renders through the genre-order
+        # signature, which Rom-Com's arrival in the order changed as well.
+        _tv_row = cache_key.startswith("tv_")
         _v4_split = (
             metadata_version == 4
-            and cache_key.startswith("tv_")
+            and _tv_row
             and 10765 in json.loads(genre_ids_raw or "[]")
         )
-        if (vote_count is None or original_title is None
-                or metadata_version not in (4, 5) or _v4_split):
+        # true_story arrived with the bulk MDBList ratings, whose answer has
+        # no keywords to say it: a row from before refreshes once to learn it.
+        if (vote_count is None or original_title is None or true_story is None
+                or metadata_version not in (4, 5, 6)
+                or (_tv_row and metadata_version != 6)):
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1863,6 +2077,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "last_episode":         json.loads(last_episode_json or "null"),
             "seasons":              json.loads(seasons_json or "[]"),
             "metadata_version":     metadata_version,
+            "true_story":           bool(true_story),
         }
     except Exception as exc:
         logger.error(f"TMDB metadata cache read error: {exc}")
@@ -1900,7 +2115,8 @@ def set_cached_tmdb_metadata(
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 5,
+    true_story: bool = False,
+    metadata_version: int = 6,
 ) -> None:
     try:
         with _db_lock:
@@ -1917,8 +2133,8 @@ def set_cached_tmdb_metadata(
                      poster_langs_json, imdb_id,
                      tmdb_release_date, last_air_date, next_episode_json,
                      last_episode_json, seasons_json, metadata_version,
-                     alt_poster_path, poster_pools_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     alt_poster_path, poster_pools_json, true_story)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -1952,6 +2168,7 @@ def set_cached_tmdb_metadata(
                     metadata_version,
                     alt_poster_path,
                     json.dumps(poster_pools or {}),
+                    int(bool(true_story)),
                 ),
             )
             get_db().commit()
@@ -2225,7 +2442,8 @@ def get_cached_badge_facts(cache_key: str) -> dict | None:
         if not row:
             return None
         facts = json.loads(row[0])
-        ttl = _BADGE_FACTS_TTL if facts.get("cert") or facts.get("logo_path") else _BADGE_FACTS_PARTIAL_TTL
+        ttl = (_BADGE_FACTS_TTL if facts.get("cert") or facts.get("certs") or facts.get("logo_path")
+               else _BADGE_FACTS_PARTIAL_TTL)
         if time.time() - row[1] > ttl:
             return None
         return facts

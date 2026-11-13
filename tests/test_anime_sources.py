@@ -55,7 +55,10 @@ class ParseAnimeIdTests(unittest.TestCase):
                 self.assertIsNone(anime.parse_anime_id("anilist", bad))
 
     def test_rejects_unknown_namespace(self):
-        self.assertIsNone(anime.parse_anime_id("mal", "1"))
+        self.assertIsNone(anime.parse_anime_id("anidb", "1"))
+
+    def test_mal_is_parsed_for_translation(self):
+        self.assertEqual(anime.parse_anime_id("mal", "mal:1535"), 1535)
 
     def test_namespaced_id_cannot_collide_with_tmdb_or_imdb(self):
         canonical = anime.namespaced_id("kitsu", 7442)
@@ -253,6 +256,104 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client.url)   # no request made
 
 
+class UnscoredRecheckTests(unittest.IsolatedAsyncioTestCase):
+    """A new show has no score for its first days; its cached metadata is
+    asked again once a day rather than keeping "no score" for a week."""
+
+    def setUp(self):
+        self._real_get = anime.get_cached_tvdb_json
+        self._real_set = anime.set_cached_tvdb_json
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+        anime.set_cached_tvdb_json = lambda k, v, t: self.store.__setitem__(k, v)
+        self._quiet = anime._anilist_quiet_until
+        anime._anilist_quiet_until = 0.0
+
+    def tearDown(self):
+        anime.get_cached_tvdb_json = self._real_get
+        anime.set_cached_tvdb_json = self._real_set
+        anime._anilist_quiet_until = self._quiet
+
+    def _row(self, score):
+        td = anime._blank_tmdb_data()
+        td["anime_score"] = score
+        return {"genre_ids": [16], "release_year": "2026", "title": "T",
+                "poster_path": "u", "tmdb_data": td}
+
+    def _media(self, score):
+        return _FakeResponse(200, {"data": {"Media": {
+            "id": 1, "idMal": 5, "title": {"english": "T"}, "coverImage": {"extraLarge": "u"},
+            "genres": [], "averageScore": score, "format": "TV", "startDate": {}}}})
+
+    async def test_a_cached_unscored_entry_is_asked_again_once(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        client = _FakeClient(self._media(87))
+        result = await anime.fetch_anime_metadata(client, "anilist", 1)
+        self.assertEqual(result[7]["anime_score"], 87)
+        self.assertEqual(result[7]["anime_mal_id"], 5)
+        # Still unscored after asking: the cached row is used until tomorrow.
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        client = _FakeClient(self._media(None))
+        self.store.pop(anime._score_check_key("anilist", 1), None)
+        await anime.fetch_anime_metadata(client, "anilist", 1)
+        client = _FakeClient(self._media(90))
+        result = await anime.fetch_anime_metadata(client, "anilist", 1)
+        self.assertIsNone(client.url)
+        self.assertIsNone(result[7]["anime_score"])
+
+    async def test_a_failed_recheck_keeps_the_cached_row(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        result = await anime.fetch_anime_metadata(_FakeClient(RuntimeError("down")), "anilist", 1)
+        self.assertEqual(result[4], "T")
+
+    async def test_a_scored_entry_is_not_asked_again(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(70)
+        client = _FakeClient(self._media(87))
+        self.assertEqual((await anime.fetch_anime_metadata(client, "anilist", 1))[7]["anime_score"], 70)
+        self.assertIsNone(client.url)
+
+
+class JikanTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._saved = (anime.get_cached_tvdb_json, anime.set_cached_tvdb_json,
+                       anime.JIKAN_API_URL, anime._jikan_quiet_until)
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+        anime.set_cached_tvdb_json = lambda k, v, t: self.store.__setitem__(k, v)
+        anime.JIKAN_API_URL = "https://jikan.example/v4"
+        anime._jikan_quiet_until = 0.0
+
+    def tearDown(self):
+        (anime.get_cached_tvdb_json, anime.set_cached_tvdb_json,
+         anime.JIKAN_API_URL, anime._jikan_quiet_until) = self._saved
+
+    async def test_score_is_read_and_cached(self):
+        client = _FakeClient(_FakeResponse(200, {"data": {"mal_id": 61967, "score": 8.83}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 61967), (8.83, True))
+        self.assertEqual(client.url, "https://jikan.example/v4/anime/61967")
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 1.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 61967), (8.83, True))
+        self.assertIsNone(client.url)
+
+    async def test_unscored_and_missing_are_answers(self):
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": None}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 1), (None, True))
+        self.assertEqual(await anime.fetch_mal_score(_FakeClient(_FakeResponse(404)), 2), (None, True))
+
+    async def test_an_outage_pauses_jikan(self):
+        import httpx
+        self.assertEqual(await anime.fetch_mal_score(_FakeClient(httpx.ConnectError("x")), 3), (None, False))
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 7.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 3), (None, False))
+        self.assertIsNone(client.url)
+
+    async def test_unset_url_asks_nothing(self):
+        anime.JIKAN_API_URL = ""
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 7.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 4), (None, False))
+        self.assertIsNone(client.url)
+
+
 class RatingIntegrationTests(unittest.TestCase):
     """The provider score has to behave like any other weighted source."""
 
@@ -320,19 +421,18 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         )
 
     def test_the_clients_that_reject_optional_syntax_send_no_anime_ids(self):
-        # Bingecat and Discover+ won't save a URL containing "{name?}" at all,
-        # so their template is tmdb_id alone — no anime ids, no optional
+        # Discover+ serves nothing for a URL containing "{name?}", so its
+        # template is tmdb_id alone — no anime ids, no optional
         # imdb_id.
-        for client in ("bingecat", "discoverplus"):
+        for client in ("discoverplus",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
         self.assertIn("const COPY_SHAPE_REQUIRED = { tmdbOptional: false, "
                       "imdbOptional: false, animeIds: false };", self.html)
 
     def test_the_clients_that_resolve_them_send_them(self):
-        # Xperience builds Nuvio configurations, so its patterns reach the same
-        # resolver and it takes the same shape.
-        for client in ("aiometadata", "nuvio", "xperience"):
+        # AIOMetadata, Nuvio, Bingecat and Xperience share one URL.
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
         self.assertIn("const COPY_SHAPE_OPTIMAL  = { tmdbOptional: true,  "
@@ -357,10 +457,10 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         # malformed one — which is what made the required form load-bearing
         # before. A client that rejects "{name?}" still gets the required form.
         self.assertIn("template.tmdbOptional ? '{tmdb_id?}' : '{tmdb_id}'", self.html)
-        for client in ("bingecat", "discoverplus"):
+        for client in ("discoverplus",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
-        for client in ("aiometadata", "nuvio", "xperience"):
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
 
@@ -642,10 +742,11 @@ class StremioIdTests(unittest.TestCase):
                 self.assertEqual(anime.parse_stremio_id(raw), (None, None))
 
     def test_unsupported_anime_namespaces_yield_the_tmdb_path(self):
-        # MAL needs auth and AniDB's API is restricted, so neither is a source.
-        for raw in ("mal:1535", "anidb:99"):
-            with self.subTest(raw=raw):
-                self.assertEqual(anime.parse_stremio_id(raw), (None, None))
+        # AniDB's API is restricted, so it is not a source.
+        self.assertEqual(anime.parse_stremio_id("anidb:99"), (None, None))
+
+    def test_mal_is_recognised_for_the_caller_to_translate(self):
+        self.assertEqual(anime.parse_stremio_id("mal:1535:1:2"), ("mal", 1535))
 
     def test_malformed_id_in_a_known_namespace_is_not_fatal(self):
         self.assertEqual(anime.parse_stremio_id("kitsu:notanid"), (None, None))
@@ -670,3 +771,103 @@ class StremioIdDispatchTests(unittest.TestCase):
 
     def test_stremio_id_wins_over_the_legacy_params(self):
         self.assertEqual(self.resolve("", "1", "kitsu:7442"), ("kitsu", 7442))
+
+
+class MalIdDispatchTests(unittest.TestCase):
+    """A MAL id renders as the Kitsu/AniList id the community mapping gives it."""
+
+    @classmethod
+    def setUpClass(cls):
+        import main
+        cls.main = main
+        cls.HTTPException = __import__("fastapi").HTTPException
+
+    def setUp(self):
+        from unittest import mock
+        table = {1535: ("kitsu", 1376), 16498: ("anilist", 16498)}
+        patcher = mock.patch.object(self.main.anime_ids, "mal_to_provider",
+                                    side_effect=lambda mal_id: table.get(mal_id))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def resolve(self, *args):
+        return self.main._resolve_anime_request(*args)
+
+    def test_mal_stremio_id_renders_as_its_provider_id(self):
+        self.assertEqual(self.resolve("", "", "mal:1535"), ("kitsu", 1376))
+        self.assertEqual(self.resolve("", "", "mal:16498:1:1"), ("anilist", 16498))
+
+    def test_mal_id_param_renders_as_its_provider_id(self):
+        self.assertEqual(self.resolve("", "", "", "1535"), ("kitsu", 1376))
+        self.assertEqual(self.resolve("", "", "", "mal:1535"), ("kitsu", 1376))
+
+    def test_an_unmapped_mal_id_takes_the_tmdb_path(self):
+        self.assertEqual(self.resolve("", "", "mal:999"), (None, None))
+        self.assertEqual(self.resolve("", "", "", "999"), (None, None))
+
+    def test_a_provider_id_sent_alongside_wins(self):
+        self.assertEqual(self.resolve("", "7442", "", "1535"), ("kitsu", 7442))
+        self.assertEqual(self.resolve("", "7442", "mal:1535"), ("kitsu", 7442))
+
+    def test_an_unmapped_mal_stremio_id_still_lets_the_params_through(self):
+        # As before MAL support, when "mal:" was an unknown namespace.
+        self.assertEqual(self.resolve("", "7442", "mal:999"), ("kitsu", 7442))
+        self.assertEqual(self.resolve("", "", "mal:999", "1535"), ("kitsu", 1376))
+
+    def test_the_stremio_mal_id_is_tried_ahead_of_mal_id(self):
+        self.assertEqual(self.resolve("", "", "mal:16498", "1535"), ("anilist", 16498))
+
+    def test_placeholder_is_absent_and_malformed_is_rejected(self):
+        self.assertEqual(self.resolve("", "", "", "{mal_id}"), (None, None))
+        with self.assertRaises(self.HTTPException) as ctx:
+            self.resolve("", "", "", "abc")
+        self.assertEqual(ctx.exception.detail, "Invalid mal_id")
+
+
+class KitsuSignedUrlTests(unittest.IsolatedAsyncioTestCase):
+    """Kitsu's image urls are presigned for 15 minutes; the bucket is public,
+    so the bare url is the one kept (Apothecary Diaries 502'd on a cached
+    signed url four days old)."""
+
+    SIGNED = ("https://kitsu-production-media.s3.us-west-002.backblazeb2.com/anime/50021/"
+              "poster_image/abc.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=900"
+              "&X-Amz-Signature=f00")
+    BARE = "https://kitsu-production-media.s3.us-west-002.backblazeb2.com/anime/50021/poster_image/abc.jpg"
+
+    def setUp(self):
+        self._real_get = anime.get_cached_tvdb_json
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+
+    def tearDown(self):
+        anime.get_cached_tvdb_json = self._real_get
+
+    def test_url(self):
+        self.assertEqual(anime.kitsu_image_url(self.SIGNED), self.BARE)
+        unsigned = "https://media.kitsu.app/anime/poster_images/1/original.jpg"
+        self.assertEqual(anime.kitsu_image_url(unsigned), unsigned)
+        self.assertIsNone(anime.kitsu_image_url(None))
+
+    def test_provider_image_hosts(self):
+        self.assertTrue(anime.is_provider_image(self.SIGNED))
+        self.assertTrue(anime.is_provider_image("https://media.kitsu.app/anime/poster_images/1/original.jpg"))
+        self.assertTrue(anime.is_provider_image("https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/x.jpg"))
+        self.assertFalse(anime.is_provider_image("https://assets.fanart.tv/fanart/tv/1/x.jpg"))
+        self.assertFalse(anime.is_provider_image("https://image.tmdb.org/t/p/original/x.jpg"))
+
+    def test_normalised_poster_and_cover_are_bare(self):
+        _, _, _, poster, td = anime._normalise_kitsu({"attributes": {
+            "titles": {}, "posterImage": {"original": self.SIGNED},
+            "coverImage": {"original": self.SIGNED}}})
+        self.assertEqual(poster, self.BARE)
+        self.assertEqual(td["anime_banner"], self.BARE)
+
+    async def test_a_row_cached_signed_reads_bare(self):
+        td = anime._blank_tmdb_data()
+        td.update(anime_score=80.0, anime_banner=self.SIGNED)
+        self.store[anime._cache_key("kitsu", 50021)] = {
+            "genre_ids": [16], "release_year": "2023", "title": "T",
+            "poster_path": self.SIGNED, "tmdb_data": td}
+        result = await anime.fetch_anime_metadata(_FakeClient(AssertionError("no fetch")), "kitsu", 50021)
+        self.assertEqual(result[5], self.BARE)
+        self.assertEqual(result[7]["anime_banner"], self.BARE)

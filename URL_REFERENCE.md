@@ -18,7 +18,7 @@ Posters are served at `/poster` with parameters controlling every aspect of rend
 https://yourdomain.com/poster?tmdb_id={tmdb_id}&type={type}
 ```
 
-Either id identifies the title — `tmdb_id`, `imdb_id`, or a `tt…` value in `stremio_id` — and sending both is best. `tmdb_id` selects the artwork and the metadata directly. An `imdb_id` on its own is resolved to a TMDB id first (TMDB's `/find`, persisted so it costs one call per title ever), and the request then renders exactly as if the client had sent both; if TMDB says the IMDb id is a series rather than a movie, TMDB's type wins. `imdb_id` alongside `tmdb_id` is optional enrichment — send it if your client has one reliably (the Plex and Jellyfin sync scripts do) and it keys the rating cache by IMDb id, sharing that row with every other client. Neither id should be *required* in a template. A required placeholder with no value makes the resolver discard the entire URL, so the title gets no poster at all — and both ids hit that: TMDB has no IMDb link for some titles, and a client's catalogue often has no TMDB id for one (Nuvio's frequently doesn't). Since either id renders on its own, the optional `{name?}` form is the right one for both on the clients that implement it: an id that resolves to empty is simply not sent. The configurator emits exactly that for those clients.
+Either id identifies the title — `tmdb_id`, `imdb_id`, or a `tt…` or `tmdb:…` value in `stremio_id` — and sending both is best. AIOMetadata's Up Next, Resume and Unwatched row ids (`upnext_tt0121955_trakt123`, `mdblist_upnext_tmdb:2190_S1E1`, `unwatched_tt0121955`…) are unwrapped to the show's id first. Any other id that isn't recognised but carries exactly one IMDb id as a whole segment — another addon's own scheme like `had:episode:tt13491734:6:6`, or a Stremio episode id like `tt0121955:1:2` — renders that title. `tmdb_id` selects the artwork and the metadata directly. An `imdb_id` on its own is resolved to a TMDB id first (TMDB's `/find`, persisted so it costs one call per title ever), and the request then renders exactly as if the client had sent both; if TMDB says the IMDb id is a series rather than a movie, TMDB's type wins. `imdb_id` alongside `tmdb_id` is optional enrichment — send it if your client has one reliably (the Plex and Jellyfin sync scripts do) and it keys the rating cache by IMDb id, sharing that row with every other client. Neither id should be *required* in a template. A required placeholder with no value makes the resolver discard the entire URL, so the title gets no poster at all — and both ids hit that: TMDB has no IMDb link for some titles, and a client's catalogue often has no TMDB id for one (Nuvio's frequently doesn't). Since either id renders on its own, the optional `{name?}` form is the right one for both on the clients that implement it: an id that resolves to empty is simply not sent. The configurator emits exactly that for those clients.
 
 ### Client templates
 
@@ -28,14 +28,16 @@ There are only two shapes of identity behind the list:
 
 | Client | Identity parameters |
 |---|---|
-| AIOMetadata, Nuvio, Xperience | `tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&stremio_id={id}&type={type}` |
-| Bingecat, Discover+ | `tmdb_id={tmdb_id}&type={type}` |
+| AIOMetadata, Nuvio, Bingecat, Xperience | `tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&stremio_id={id}&type={type}&shape={shape}` |
+| Discover+ | `tmdb_id={tmdb_id}&type={type}` |
 
-Nuvio's pattern resolver takes AIOMetadata's placeholder set, optional `{name?}` form included, and Xperience builds Nuvio configurations, so all three end up in front of the same resolver and share the optimal URL. Bingecat and Discover+ reject `{name?}` at config time and won't save a URL containing one; as each gains the form it moves onto the optimal URL, and once neither is left every client shares a single one.
+AIOMetadata, Nuvio, Bingecat and Xperience all resolve Nuvio's placeholder set, optional `{name?}` form and `{shape}` included, so they share one URL, which carries the TMDB and MDBList keys typed into the configurator as literals. Discover+ accepts a `{name?}` URL but then serves nothing for it, so it gets the short form; once it gains the form every client shares a single URL.
 
-Nuvio adds one parameter the others have no equivalent for: `shape={shape}`, which its resolver fills with the shape the catalogue asked for. One URL then covers the portrait slot, the 16:9 slot and the Continue Watching backdrop, where every other client needs the landscape URL copied separately from the landscape view. The placeholder's presence is the switch — without it Nuvio replaces only portrait posters and leaves the other shapes with their own art — so **Copy config** emits it for Nuvio and the landscape choices ride along whichever way the preview is pointing. The settings the configurator keeps per shape travel twice on it — the portrait value under the plain name, the landscape one as `landscape_<name>` — so each layout renders with its own; the URL is the same whichever view you copy it from, and any value a render would pick anyway is left out.
+`shape={shape}` is filled with the shape the catalogue asked for. One URL then covers the portrait slot, the 16:9 slot and the Continue Watching backdrop, where Discover+ needs the landscape URL copied separately from the landscape view. The placeholder's presence is the switch — without it Nuvio replaces only portrait posters and leaves the other shapes with their own art — so **Copy config** emits it and the landscape choices ride along whichever way the preview is pointing. The settings the configurator keeps per shape travel twice on it — the portrait value under the plain name, the landscape one as `landscape_<name>` — so each layout renders with its own; the URL is the same whichever view you copy it from, and any value a render would pick anyway is left out.
 
-Left-click copies for the client you last chose (the first press opens the menu, since there is nothing to repeat yet); right-click always opens the menu, as does a press-and-hold on touch. The choice is remembered per browser and is not part of the saved configuration, so an imported or shared config URL never carries someone else's client with it.
+Left-click copies the shared URL, or the Discover+ one if that is what you last picked from the menu; right-click opens the menu (Default, Discover+ and Share settings), as does a press-and-hold on touch. The choice is remembered per browser and is not part of the saved configuration, so an imported or shared config URL never carries someone else's client with it.
+
+**Share settings** emits the Default client's identity and shape placeholders, with no API keys, access key or selected title. It uses the operator's explicit `PUBLIC_SHARE_ORIGIN`, or `https://postersplus.cc` when unset or invalid. Direct use in a supported client sends requests to that public server and uses its configuration and resources. Discover+ users should import the settings and copy the Discover+ template instead. The `share=1` marker requests settings-only import; it does not affect rendering or composite cache keys and is removed from saved presets. Unmarked poster URLs retain normal import behavior, and old `https://share.postersplus.invalid` links still import. Import always keeps the local instance's domain, regardless of the source URL.
 
 Required is the right form for the short template: `tmdb_id` is the only id those clients can send, so a title they have no TMDB id for has nothing to render from, and nulling the URL leaves the client's own poster in place. Nothing visible is lost by its missing `imdb_id` — `tmdb_id` identifies the title and the server reads the IMDb id back out of TMDB's metadata for the enrichment that needs one, though sending a concrete `imdb_id` does key the rating cache by IMDb id, sharing that row with every other client.
 
@@ -71,19 +73,35 @@ Optional parameters control the landscape-specific choices:
 - `badge_pos=top_left|top_right|bottom_left|bottom_right|logo` places the info badge in a corner or with the composited logo (above it in the bottom row, below it at the top). A badge that would land on the logo or the info line moves off it, away from its edge.
 - Landscape defaults differ from portrait for the shared vignette settings: a bare `shape=landscape` URL renders with `vignette_poster_color_bottom=true`, two-tone on, local blending off, saturation 2.0, lightness 1.3, blur 1.0 and `landscape_color_link=badge_follows_vignette`. Pass any of them explicitly to override.
 - `landscape_badge_scale=0.5–2.5` scales the info badge (type and padding together); `1.0` is the tuned size.
+- The info badge's other Badge Settings, after a portrait's Notch Settings, each left at its default when absent: `landscape_badge_width=0.5–2.0` (padding either side of the label), `landscape_badge_height=0.5–2.0` (the badge's height around the label), `landscape_badge_font=0.5–1.5` (the label's size inside it), `landscape_badge_glass_opacity=0–1` (default `0.86`) and `landscape_badge_saturation=0–2` for the Frosted Glass style, `landscape_badge_opacity=0–1` (default `0.90`) for the dark styles' body, and `landscape_badge_x` / `landscape_badge_y` (default `0`), which move the badge in from the side it sits on and away from its top or bottom edge as a share of the width / height (below zero pulls it towards the edge). Top graphic badge rows follow the badge's vertical position, and frosted graphic badges (quality chips, cinema disc) take the glass opacity and saturation. Landscape's own: the portrait `sash_badge_*` settings never apply to it.
 - `landscape_info_scale=0.5–2.0` scales the `Genre • Year • Score` line in the bottom-right corner; `1.0` is the tuned size. It grows up and to the left, and drops the genre first if it would reach the logo.
 - `landscape_logo_pos` (default `left`) moves the logo, or the title standing in for one. `left`, `center` and `right` keep it in the bottom row: the `Genre • Year • Score` line takes the other side, or sits centred under a centred logo, which stands on it. `top_left`, `top_center` and `top_right` hang it from the top, a little smaller, and leave the bottom row to the `Genre • Year • Score` line on the logo's side. A corner badge (`badge_pos=top_left` / `top_right`) that the top logo is in the way of moves down under it. `badge_pos=logo` follows the logo: above it in the bottom row, below it at the top.
 - `landscape_info_pos` places the `Genre • Year • Score` line: `auto` (the default) puts it against the logo as described above, and `bottom_left`, `bottom_center`, `bottom_right`, `top_left`, `top_center` and `top_right` give it a spot of its own. In the logo's own spot the two stack: the logo stands on the line in the bottom row, and the line hangs under the logo at the top. Beside a logo in the same row, the line drops its genre, then its year, rather than run into it.
-- `landscape_vignette_top=true` adds a band across the top in the same poster colour as the bottom band, using the same colour settings, to back a top logo or the top-corner badge. Off by default. There is no plain black top band on landscape.
+- `landscape_top_gradient` and `landscape_bottom_gradient` (`off|low|medium|high|custom`) set the two bands' strength as `top_gradient` / `bottom_gradient` do on a portrait, at depths tuned for 16:9; `custom` takes `landscape_top_gradient_height` / `_opacity` (and the `bottom` pair) as the portrait does. The bottom defaults to `high`, the band the layout was designed with, and the top to `off`. `landscape_vignette_poster_color_top` (default `true`) tints the top band from the poster, like `vignette_poster_color_bottom` for the bottom one; off, it is black. `landscape_top_vignette_sash_only=true` draws the top band only when the sash badge is shown. Unlike the settings below, these are read from the `landscape_` names alone: a portrait `top_gradient` on a `shape={shape}` URL never reaches the landscape. The older `landscape_vignette_top=true` still works and means `landscape_top_gradient=high`, tinted.
 - `landscape_badge_display_mode=7` turns on Graphic Badges for landscape, with its own groups `landscape_badge_group1`–`4` (each falls back to the plain `badge_group1`–`4`, then the default). Off by default, and the portrait's `badge_display_mode` never turns it on, so one `shape={shape}` URL can have badges on one layout and not the other. The top rows sit on the info badge's line, and `chip` takes the top corner that badge leaves free. Every row moves away from its corner until it clears what is already drawn. No other badge mode draws on landscape.
 - `landscape_score_out_of_10=true` prints that line's score out of 10 with one decimal (`8.7`, `8.0`), and `10` for a perfect score. Off by default (`87`).
-- `landscape_score_star=true` puts a star beside that line's score, as Clean mode does on a portrait: `Genre • Year ★ 87` in place of `Genre • Year • 87`. Off by default.
-- `landscape_color_link=off|badge_follows_vignette|vignette_follows_badge` links the colour of the info badge and a tinted band (`vignette_poster_color_bottom=true`): the badge takes the band's colour, or the band takes the whole-frame colour the badge uses. Only the hue is shared — the band still darkens it, the badge still lifts it for legibility.
-- `landscape_<name>` sets a landscape-only value for a setting both shapes read: `vignette_poster_color_bottom`, `vignette_color_ramp`, `vignette_color_local`, `vignette_color_style`, `vignette_color_saturation`, `vignette_color_lightness`, `vignette_color_blur`, `hide_genre`, `hide_year`, `hide_rating`, `textless` and `sash_mode`. A landscape render reads `landscape_<name>`, then `<name>`, then its own default, and a portrait render never reads it — which is what lets one `shape={shape}` URL give each layout different values.
+- `landscape_rating_separator=bullet|pip|star|bullet_star` (default `bullet`) is the separator in front of that line's score, as `minimalist_rating_separator` (which takes the same values, default `star`) is on a portrait: `pip` draws the portrait's bar (`Genre • Year | 87`), `star` labels the score as Clean mode does (`Genre • Year ★ 87`), and `bullet_star` does both, a bullet dividing it off and a star labelling it (`Genre • Year • ★ 87`). With rating badges the star gives way to a bullet. The older `landscape_score_star=true` still works and means `star`.
+- `landscape_separator=bullet|pip` (default `bullet`) is the separator between the line's other fields, genre and year, as `minimalist_separator` is on a portrait: `pip` draws the bar (`Genre | Year • 87`). The one in front of the score stays `landscape_rating_separator`'s.
+- `landscape_info_center=true` centres the whole `Genre • Year • Score` line, rating badges included, on the poster in its row (the row `landscape_info_pos` gives it, the bottom one under `auto`), as a portrait's Minimalist `minimalist_center` centres it under the logo. A side logo in the bottom row that would meet it stands above the line's row instead (a narrower one stays on the baseline), where `landscape_info_pos=bottom_center` moves the line into the middle of the room beside the logo; a top-row line pushes aside from a top logo only as far as it must. Off by default.
+- `landscape_rating_mode=line|rating_bar|bar` (default `line`) is the landscape Display Mode. `line` is the `Genre • Year • Score` line. `rating_bar` keeps the line, score included, and also draws the score as a bar along the bottom edge, flush left and as long as the score, as the portrait Rating Bar does; `hide_rating` takes only the line's score, the bar staying (pick `line` to drop the bar), while a score `hide_unreleased_rating` withholds takes the bar too. `bar` draws the portrait's Bar mode (`rating_display_mode=4`) across the bottom in place of the line (its height scaled up for the shorter canvas), with rating badges from `landscape_rating_badges`; the logo and a bottom badge stand on it. Their settings are landscape's own, read only from the `landscape_`-prefixed names so a portrait's Rating Bar or Bar doesn't restyle them: the Rating Bar's palette and glow (`landscape_score_color_mode`, `landscape_score_custom_palette`, `landscape_score_glow_threshold`, `_blur`, `_alpha`, `_color`; the blur counts in half bar heights here) and the Bar's (`landscape_bar_style`, `_accent`, `_append`, `_score_out_of_10`, `_height_ratio`, `_font_size_ratio`, `_frost_opacity`, `_frost_saturation`). `landscape_frost_reference` falls back to `frost_reference`.
+- `landscape_art_source_movie`, `landscape_art_source_tv` and `landscape_art_source_anime` (each `tmdb|tvdb|fanart|cinemeta`, default `tmdb`) pick the backdrop source for films, series and anime (Japanese animation, or a title requested by an anime id) separately; the older `landscape_art_source` sets all three, and a per-type value beats it. `cinemeta` is Metahub's background, which never carries the title, so it is read with `landscape_art=textless` only (as `tmdb` with `original`) and needs `CINEMETA_ENABLED`. `tvdb` takes the backdrop from TVDB: with `landscape_art=textless` its best background with no language (TVDB's clean art), with `original` its best background in the request's language order, passing over ones TVDB marks as carrying no text. `fanart` takes fanart.tv's most-liked background (clean art) for textless, and for original its most-liked thumb (16:9 key art with the title on) in the request's language order; `fanart_anime` (on the older single parameter) does that for anime only and keeps TMDB's backdrop for everything else. Titles the source has nothing for keep TMDB's backdrop. `tvdb` is offered when the operator turns on `TVDB_POSTER_SOURCE`, the fanart values with `FANART_POSTERS`, and each is read as `tmdb` otherwise.
+- `landscape_anime_provider_art` (`provider|kitsu`, default `provider`) is landscape's Anime Provider Source, for a title requested by an AniList, Kitsu or MAL id that has a TMDB counterpart: `provider` keeps the TMDB backdrop (by `landscape_art_source_anime`), `kitsu` uses the entry's own Kitsu cover (an AniList entry's through the id mapping) when a 16:9 cut of it needs little upscaling and it carries no lettering, with the logo on top, and otherwise keeps the backdrop. The portrait `anime_provider_art` isn't read for landscape.
+- `landscape_poster_pick` (`top|random`, default `top`) is landscape's pick: `random` takes one of the source's top five backdrops (TMDB's, TVDB's or fanart.tv's), fixed until the poster re-renders. Needs the operator's `RANDOM_POSTERS`; the portrait `poster_pick` isn't read for landscape.
+- `landscape_poster_crop=true` cuts the poster to 16:9 for a title with no backdrop from any source, with the logo on top, instead of drawing the genre canvas. The cut takes the poster's full width and is centred on its faces where it has any, else on its upper part, where the title usually isn't. For an anime title it is preferred to the provider's banner, a 16:9 cut of which is a close-up. Off by default.
+- `landscape_greyscale=true` greyscales the art while a film is still in cinemas or not out yet, as `cinema_greyscale` does on a portrait, but without needing the release-status sash. The bands go black, the colour they keep on a greyscaled portrait. `cinema_greyscale_skip_if_available` applies, and so does `greyscale_no_quality` on a landscape that shows quality.
+- `greyscale_logo=true` (portrait) and `landscape_greyscale_logo=true` (landscape) grey the title logo along with the art whenever the art is greyscaled (`cinema_greyscale` / `landscape_greyscale`, or `greyscale_no_quality`). Off by default: the logo keeps its colour over the grey art.
+- `landscape_badge_style=glass|black|silver|gold` (default `glass`, the frosted pill) draws the info badge in one of the portrait notch's dark styles: a near-black pill, or a dark one with a silver or gold rim. `landscape_badge_text_color=RRGGBB` sets the dark pills' label colour.
+- `landscape_badge_shape=pill|chip` (default `pill`) sets the info badge's outline: `chip` is the portrait side chip's rounded rectangle in place of the pill's round ends. `landscape_badge_case=auto|upper|mixed` (default `auto`) sets its label in capitals or in the label's own case (`Oscar Winner`); `auto` gives the pill capitals and the chip mixed case, as the portrait chip has it.
+- `landscape_trending_style=sash|number|ribbon` (default `sash`, the `#N Today` badge) draws a trending rank as the portrait's numeral or ribbon, and the badge moves on to the next label. The mark has its own settings, read from these names alone and never from the portrait's: `landscape_trending_side=left|right`, `landscape_trending_scale`, `landscape_trending_sash=keep|hide|opposite` (`keep` moves the badge clear of the mark, `opposite` moves a top-corner badge to the other top corner), and for the ribbon `landscape_trending_ribbon_style`, `landscape_trending_frost_opacity`, `landscape_trending_frost_saturation`, `landscape_trending_label`, `landscape_trending_corner` and `landscape_sash_text_color=RRGGBB` (the ribbon's text, which the portrait's `sash_text_color` never colours here). The numeral stands in the badge's column, on its top line; the ribbon hangs from the top edge. A top-row logo or info line on the mark's side hangs below it.
+- `landscape_winner_star=true` puts a ★ in front of an award winner's badge label, as `sash_winner_star` does on a portrait.
+- `landscape_logo_scale=0.5–1.5` (default `1.0`) scales the box the logo, or the title standing in for one, is fitted to.
+- `landscape_rating_badges=true` shows the `rating_badges` sites' own scores, each behind its logo, in place of the score on the info line, with `landscape_rating_badge_max`, `landscape_rating_badge_scale`, `landscape_rating_badge_style` (each falling back to the portrait's plain name) and the per-kind sites as on a portrait (`landscape_score_out_of_10` sets the P+ scale's form). Short of room the genre drops first, then the year, then badges from the end. `landscape_rating_badge_list=` gives landscape its own sites, spelled as `rating_badges` is (kinds included), in place of the portrait's: a `{shape}` URL can then show different sites on each layout. Absent, landscape uses `rating_badges`; present but empty, it shows none.
+- `landscape_color_link=off|badge_follows_vignette|vignette_follows_badge` links the colour of the info badge and a tinted band: the badge takes the band's colour, or the band takes the whole-frame colour the badge uses. Only the hue is shared — the band still darkens it, the badge still lifts it for legibility.
+- `landscape_<name>` sets a landscape-only value for a setting both shapes read: `vignette_poster_color_bottom`, `vignette_color_ramp`, `vignette_color_local`, `vignette_color_style`, `vignette_color_saturation`, `vignette_color_lightness`, `vignette_color_blur`, `hide_genre`, `hide_year`, `hide_rating`, `textless`, `sash_mode`, `sash_priority`, `meta_order`, `rating_badge_max`, `rating_badge_scale`, `rating_badge_style`, and the graphic badges' `badge_quality_style`, `badge_cert_style`, `badge_logo_style`, `badge_cinema_style` and `badge_logo_scale`. A landscape render reads `landscape_<name>`, then `<name>`, then its own default, and a portrait render never reads it — which is what lets one `shape={shape}` URL give each layout different values.
 
-The configurator previews both shapes: the landscape button in the preview header switches the live preview to the 16:9 render, shows the landscape choices in the tabs the portrait ones live in: Logo (art, textless, logo position), Rating (the info line's size, score out of 10, star, and the Hide switches), Sash → Badge (position, size, colour link) and Quality (Graphic Badges), and makes **Copy config** copy the landscape URL, so a client with a landscape slot can be given the same settings as the portrait one. (Nuvio is the exception — its URL carries `shape={shape}` and is already both, so there is no separate landscape copy to take.) The landscape URL carries only the settings the landscape renderer reads (identity, language, sash priority and release-status filters, weights, Hide Genre, Hide Year, Hide Rating, Textless, and the bottom vignette colour with its sliders). Portrait-only controls are hidden while it is showing, and the Quality tab offers just Hidden or Graphic Badges, with its own groups for landscape. Your portrait settings are kept — switching back restores them.
+The configurator previews both shapes: the landscape button in the preview header switches the live preview to the 16:9 render, shows the landscape choices in the tabs the portrait ones live in: Logo (art and its source, textless, logo position and size), Rating (the info line's size, score out of 10, star, rating badges, and the Hide switches), Sash → Badge (position, size, colour link, style, winner star, greyscale) and Extras (Graphic Badges), and makes **Copy config** copy the landscape URL, so a client with a landscape slot can be given the same settings as the portrait one. (Only Discover+ needs it — the shared URL carries `shape={shape}` and is already both, so there is no separate landscape copy to take.) The landscape URL carries only the settings the landscape renderer reads (identity, language, sash priority and release-status filters, weights, Hide Genre, Hide Year, Hide Rating, Textless, and the bottom vignette colour with its sliders). Portrait-only controls are hidden while it is showing, and the Extras tab offers just Graphic Badges (on or off), with its own groups for landscape. Your portrait settings are kept — switching back restores them.
 
-Landscape renders deliberately skip stream-quality fetching because this layout does not display quality tokens.
+Landscape renders skip stream-quality fetching unless their Graphic Badges show a quality badge.
 
 ### Poster resolution
 
@@ -92,6 +110,304 @@ Landscape renders deliberately skip stream-quality fetching because this layout 
 Measured against 500, a render costs about 2× the CPU and file size at 780, 3× at 1000, 7× at 1500 and 12× at 2000, and a 2000 render needs well over a gigabyte of memory at its peak — the larger sizes are for trying out.
 
 The first request for each title at a new size fetches its larger art once. A larger size only shows where a client draws the poster more than ~500 physical pixels wide — a detail or hero view, a tablet, a large poster on a high-density phone; a TV grid tile is usually far smaller, so the extra detail is scaled away. Each size is cached separately, and URLs without the parameter keep their existing cached composites.
+
+### Trending lists
+
+`trending_list` picks the trending lists a poster's rank comes from, as the Trending Catalogs Addon's **Configure** dialog writes it. It is comma-separated parts, one per list: `m` (movies), `t` (series), `a` (anime) and `f` (anime films), each `letter:source[.source…]`, `h:1` / `h:0` to leave titles not out at home yet off every list, or keep them, and `l:<language>[.<language>…]` to keep only titles of those original languages on the movie and series lists: `en`, `non-en` (every language but English), `ja`, `ko`, `es`, `fr`, `de`, `hi`. Ranks are numbered 1, 2, 3 after the cut. The first source of a part is the list the poster ranks on; the rest only add catalogs to the trending addon. `none` picks no catalog for that list, and its posters rank on the instance's own list. A part left out, or a source the instance doesn't offer, is the instance's choice, so `trending_list=m:imdb.tmdb,a:none,h:1` ranks movies on IMDb's list and leaves everything else as the instance has it.
+
+Sources, where the instance offers them (`TRENDING_LIST_SOURCES`, and `/server-caps` lists them): `tmdb`, `tmdb_week`, `imdb`, `trakt`, `trakt_digital` (movies), `simkl`, `simkl_week`, `justwatch`, `rotten_tomatoes`, `tv_stats`, the US Top 10s `netflix`, `prime`, `apple_tv`, `disney`, `paramount` and `hbo_max`, and `shudder` (popular on Shudder in the US, by TMDB popularity) and `shudder_new` (the same, released or aired in the last two years); for anime `anilist`, `simkl`, `simkl_week` and `trakt`, and for anime films `anilist` and `trakt`. `server` is the instance's own `TRENDING_SOURCE_*` list, and `TRENDING_SOURCE_CHOICES` adds its own by name. Streaming Top 10 charts (the `flixpatrol` family) are `fp_<service>_<country>`, a FlixPatrol service slug and an ISO country code (`ww` for worldwide): `fp_hulu_us`, `fp_netflix_gb`, `fp_shudder_ca`. Movies and series take a service's own chart, or its titles of that kind from its overall chart; anime and anime films take Crunchyroll's. `/trending-top10` lists the ones there are.
+
+The trending addon takes the same value as a path segment, `/trending/[<access key>/]tl-<trending_list>/[cfg-…/]manifest.json`. Each source picked is a catalog: the instance's own source has the list's plain id (`pp.trending.movie`, `pp.trending.series`, `pp.trending.anime`, `pp.trending.anime.movie`), any other the plain id and its source (`pp.trending.movie.imdb`). A catalog's own posters rank on that catalog's list.
+
+An `sh-` segment makes catalogs' rows landscape, written like `trending_list` (`m` movies, `t` series, `a` anime, `f` anime movies): `sh-m:tmdb.imdb,t:tmdb` is the Movies catalogs from TMDB and IMDb and the Series one from TMDB, and a bare letter is every catalog of that list (`sh-m,t`): `/trending/[<access key>/][tl-…/]sh-m:tmdb/[cfg-…/]manifest.json`. Their items' `poster` is then 16:9 art with `posterShape: "landscape"`: the landscape render when the URL carries `cfg-` settings, otherwise the title's TMDB backdrop (AniList's banner for AniList rows), also sent as `background`. A title with no backdrop keeps its portrait poster.
+
+### Short names
+
+Every setting has a short name, and the configurator writes those: `vpcb=e0b84f` is `vignette_poster_color_bottom=e0b84f`, `_gs=1` is `landscape_greyscale=true` (a `landscape_` setting is `_` and its portrait twin's short name), and on/off settings are written `1`/`0`. It keeps a much-customised URL well inside the ~2000 characters some metadata clients cut URLs at, about 60% shorter than spelled out. The server reads either spelling, in any mix, as the same poster and the same cached copy, so URLs written before short names keep working. Where a URL has both spellings of one setting, the long one wins. Ids, keys and client placeholders (`tmdb_id`, `imdb_id`, `type`, `stremio_id`, `access_key`, `shape`...) keep their names.
+
+<details><summary>Every short name</summary>
+
+<!-- param-aliases:start (generated from param_aliases.py; tests/test_param_aliases.py checks it) -->
+| Setting | Short name |
+|---|---|
+| `accent_bar_append_mode` | `abam` |
+| `accent_bar_bottom_ratio` | `abbr` |
+| `accent_bar_font_size_ratio` | `abfsr` |
+| `accent_bar_y_offset` | `abyo` |
+| `airing_dates` | `ard` |
+| `anime_movie_weights` | `amw` |
+| `anime_provider_art` | `apa` |
+| `anime_tv_weights` | `atw` |
+| `badge_anchor_x` | `bax` |
+| `badge_anchor_y` | `bay` |
+| `badge_cert_country` | `bcc` |
+| `badge_cert_style` | `bcts` |
+| `badge_cinema_style` | `bcs` |
+| `badge_display_mode` | `bdm` |
+| `badge_gap` | `bg` |
+| `badge_group1` | `bg1` |
+| `badge_group2` | `bg2` |
+| `badge_group3` | `bg3` |
+| `badge_group4` | `bg4` |
+| `badge_height` | `bh` |
+| `badge_legacy_style` | `blst` |
+| `badge_logo_scale` | `bls` |
+| `badge_overflow` | `bof` |
+| `badge_logo_style` | `blgs` |
+| `badge_min_score` | `bms` |
+| `badge_pos` | `bp` |
+| `badge_quality_style` | `bqs` |
+| `bar_accent` | `ba` |
+| `bar_append` | `bap` |
+| `bar_bottom_inset` | `bbi` |
+| `bar_font_size_ratio` | `bfsr` |
+| `bar_frost_opacity` | `bfo` |
+| `bar_frost_saturation` | `bfs` |
+| `bar_height_ratio` | `bhr` |
+| `bar_score_out_of_10` | `bsoo10` |
+| `bar_style` | `bs` |
+| `bottom_gradient` | `bgr` |
+| `bottom_gradient_height` | `bgh` |
+| `bottom_gradient_opacity` | `bgo` |
+| `cinema_greyscale` | `cg` |
+| `cinema_greyscale_skip_if_available` | `cgsia` |
+| `cinema_greyscale_without_sash` | `cgws` |
+| `combined_badge_stacked` | `cbs` |
+| `fallback_bg_style` | `fbs` |
+| `fallback_to_imdb` | `fti` |
+| `frost_reference` | `fr` |
+| `greyscale_logo` | `gl` |
+| `greyscale_no_quality` | `gnq` |
+| `hide_genre` | `hg` |
+| `hide_rating` | `hr` |
+| `hide_unreleased_rating` | `hur` |
+| `hide_year` | `hy` |
+| `imdb_rating_source` | `irs` |
+| `label_font` | `lf` |
+| `label_language` | `lla` |
+| `landscape_art` | `_art` |
+| `landscape_art_source_anime` | `_asa` |
+| `landscape_art_source_movie` | `_asm` |
+| `landscape_art_source_tv` | `_ast` |
+| `landscape_badge_case` | `_bc` |
+| `landscape_badge_cert_style` | `_bcts` |
+| `landscape_badge_cinema_style` | `_bcs` |
+| `landscape_badge_display_mode` | `_bdm` |
+| `landscape_badge_font` | `_bf` |
+| `landscape_badge_glass_opacity` | `_bgop` |
+| `landscape_badge_group1` | `_bg1` |
+| `landscape_badge_group2` | `_bg2` |
+| `landscape_badge_group3` | `_bg3` |
+| `landscape_badge_group4` | `_bg4` |
+| `landscape_badge_height` | `_bh` |
+| `landscape_badge_logo_scale` | `_bls` |
+| `landscape_badge_overflow` | `_bof` |
+| `landscape_badge_logo_style` | `_blgs` |
+| `landscape_badge_opacity` | `_bo` |
+| `landscape_badge_pos` | `_bp` |
+| `landscape_badge_quality_style` | `_bqs` |
+| `landscape_badge_saturation` | `_bsa` |
+| `landscape_badge_scale` | `_bs` |
+| `landscape_badge_shape` | `_bsh` |
+| `landscape_badge_style` | `_bst` |
+| `landscape_badge_text_color` | `_btc` |
+| `landscape_badge_width` | `_bw` |
+| `landscape_badge_x` | `_bx` |
+| `landscape_badge_y` | `_by` |
+| `landscape_bar_accent` | `_ba` |
+| `landscape_bar_append` | `_bap` |
+| `landscape_bar_font_size_ratio` | `_bfsr` |
+| `landscape_bar_frost_opacity` | `_bfo` |
+| `landscape_bar_frost_saturation` | `_bfs` |
+| `landscape_bar_height_ratio` | `_bhr` |
+| `landscape_bar_score_out_of_10` | `_bsoo10` |
+| `landscape_bar_style` | `_bars` |
+| `landscape_bottom_gradient` | `_bgr` |
+| `landscape_bottom_gradient_height` | `_bgh` |
+| `landscape_bottom_gradient_opacity` | `_bgo` |
+| `landscape_color_link` | `_cl` |
+| `landscape_frost_reference` | `_fr` |
+| `landscape_graphic_badges` | `_gb` |
+| `landscape_greyscale` | `_gs` |
+| `landscape_greyscale_logo` | `_gl` |
+| `landscape_hide_genre` | `_hg` |
+| `landscape_hide_rating` | `_hr` |
+| `landscape_hide_year` | `_hy` |
+| `landscape_info_center` | `_ic` |
+| `landscape_info_pos` | `_ip` |
+| `landscape_info_scale` | `_is` |
+| `landscape_logo_pos` | `_lp` |
+| `landscape_logo_scale` | `_ls` |
+| `landscape_meta_order` | `_mo` |
+| `landscape_poster_crop` | `_pc` |
+| `landscape_rating_badge_max` | `_rbm` |
+| `landscape_rating_badge_scale` | `_rbs` |
+| `landscape_rating_badge_style` | `_rbst` |
+| `landscape_rating_badges` | `_rb` |
+| `landscape_rating_badge_list` | `_rbl` |
+| `landscape_rating_mode` | `_rmo` |
+| `landscape_rating_separator` | `_rs` |
+| `landscape_sash_mode` | `_sm` |
+| `landscape_sash_priority` | `_sp` |
+| `landscape_sash_text_color` | `_stc` |
+| `landscape_score_color_mode` | `_scm` |
+| `landscape_score_custom_palette` | `_scp` |
+| `landscape_score_glow_alpha` | `_sga` |
+| `landscape_score_glow_blur` | `_sgb` |
+| `landscape_score_glow_color` | `_sgc` |
+| `landscape_score_glow_threshold` | `_sgt` |
+| `landscape_score_out_of_10` | `_soo10` |
+| `landscape_separator` | `_sep` |
+| `landscape_textless` | `_tx` |
+| `landscape_top_gradient` | `_tg` |
+| `landscape_top_gradient_height` | `_tgh` |
+| `landscape_top_gradient_opacity` | `_tgo` |
+| `landscape_top_vignette_sash_only` | `_tvso` |
+| `landscape_trending_corner` | `_tc` |
+| `landscape_trending_frost_opacity` | `_tfo` |
+| `landscape_trending_frost_saturation` | `_tfs` |
+| `landscape_trending_label` | `_tla` |
+| `landscape_trending_ribbon_style` | `_trst` |
+| `landscape_trending_sash` | `_ts` |
+| `landscape_trending_scale` | `_tsc` |
+| `landscape_trending_side` | `_tsi` |
+| `landscape_trending_style` | `_tst` |
+| `landscape_vignette_color_blur` | `_vcb` |
+| `landscape_vignette_color_lightness` | `_vcli` |
+| `landscape_vignette_color_local` | `_vcl` |
+| `landscape_vignette_color_ramp` | `_vcr` |
+| `landscape_vignette_color_saturation` | `_vcsa` |
+| `landscape_vignette_color_style` | `_vcs` |
+| `landscape_vignette_poster_color_bottom` | `_vpcb` |
+| `landscape_vignette_poster_color_top` | `_vpct` |
+| `landscape_winner_star` | `_ws` |
+| `logo_bottom_anchor` | `lba` |
+| `logo_bottom_ratio` | `lbr` |
+| `logo_language` | `ll` |
+| `logo_language_secondary` | `lls` |
+| `logo_max_h_ratio` | `lmhr` |
+| `logo_max_w_ratio` | `lmwr` |
+| `logo_priority` | `lp` |
+| `meta_order` | `mo` |
+| `minimalist_append_mode` | `mam` |
+| `minimalist_center` | `mc` |
+| `minimalist_mode_font_size_ratio` | `mmfsr` |
+| `minimalist_mode_font_x_offset` | `mmfxo` |
+| `minimalist_mode_font_y_offset` | `mmfyo` |
+| `minimalist_rating_separator` | `mrs` |
+| `minimalist_score_out_of_10` | `msoo10` |
+| `minimalist_separator` | `ms` |
+| `movie_weights` | `mw` |
+| `muted` | `mu` |
+| `notch_vignette_color` | `nvc` |
+| `numeric_score_font_size_ratio` | `nsfsr` |
+| `numeric_score_y_offset` | `nsyo` |
+| `original_art_source` | `oas` |
+| `original_labels` | `ol` |
+| `poster_pick` | `pp` |
+| `poster_source_anime` | `psa` |
+| `poster_source_movie` | `psm` |
+| `poster_source_tv` | `pst` |
+| `poster_width` | `pw` |
+| `primary_client` | `pc` |
+| `quality_after_digital` | `qad` |
+| `rating_badge_kinds` | `rbk` |
+| `rating_badge_max` | `rbm` |
+| `rating_badge_scale` | `rbs` |
+| `rating_badge_style` | `rbst` |
+| `rating_badges` | `rb` |
+| `rating_display_mode` | `rdm` |
+| `rating_text_color` | `rtc` |
+| `release_status_cinema_only` | `rsco` |
+| `release_status_dates` | `rsd` |
+| `resolution` | `res` |
+| `sash_badge` | `sb` |
+| `sash_badge_font_ratio` | `sbfr` |
+| `sash_badge_frost_opacity` | `sbfo` |
+| `sash_badge_frost_saturation` | `sbfs` |
+| `sash_badge_inset` | `sbi` |
+| `sash_badge_opacity` | `sbo` |
+| `sash_badge_pad` | `sbp` |
+| `sash_badge_pos` | `sbpo` |
+| `sash_badge_size_h` | `sbsh` |
+| `sash_badge_size_w` | `sbsw` |
+| `sash_badge_style` | `sbs` |
+| `sash_chip_x` | `scx` |
+| `sash_chip_y` | `scy` |
+| `sash_edge_y` | `sey` |
+| `sash_height_ratio` | `shr` |
+| `sash_length_ratio` | `slr` |
+| `sash_mode` | `sm` |
+| `sash_poster_color` | `spc` |
+| `sash_priority` | `sp` |
+| `sash_side` | `ss` |
+| `sash_text_color` | `stc` |
+| `sash_winner_star` | `sws` |
+| `score_color_mode` | `scm` |
+| `score_custom_palette` | `scp` |
+| `score_glow_alpha` | `sga` |
+| `score_glow_blur` | `sgb` |
+| `score_glow_color` | `sgc` |
+| `score_glow_threshold` | `sgt` |
+| `score_out_of_10` | `soo10` |
+| `show_award_sash` | `sas` |
+| `show_quality_badges` | `sqb` |
+| `textless` | `tx` |
+| `tmdb_rating_source` | `trs` |
+| `top_gradient` | `tg` |
+| `top_gradient_height` | `tgh` |
+| `top_gradient_opacity` | `tgo` |
+| `top_vignette_sash_only` | `tvso` |
+| `trending_align` | `ta` |
+| `trending_corner` | `tc` |
+| `trending_frost_opacity` | `tfo` |
+| `trending_frost_saturation` | `tfs` |
+| `trending_label` | `tla` |
+| `trending_list` | `tl` |
+| `trending_ribbon_style` | `trst` |
+| `trending_sash` | `ts` |
+| `trending_scale` | `tsc` |
+| `trending_side` | `tsi` |
+| `trending_style` | `tst` |
+| `tv_weights` | `tw` |
+| `use_original_art` | `uoa` |
+| `vignette_color_blur` | `vcb` |
+| `vignette_color_lightness` | `vcli` |
+| `vignette_color_local` | `vcl` |
+| `vignette_color_ramp` | `vcr` |
+| `vignette_color_saturation` | `vcsa` |
+| `vignette_color_style` | `vcs` |
+| `vignette_poster_color_bottom` | `vpcb` |
+| `vignette_poster_color_top` | `vpct` |
+| `wait_for_quality` | `wfq` |
+| `landscape_anime_provider_art` | `_apa` |
+| `landscape_poster_pick` | `_pp` |
+<!-- param-aliases:end -->
+
+</details>
+
+Inside the four rating-weight lists (`mw`, `tw`, `amw`, `atw`) each source has a short code too, and a weight may drop its leading zero: `mw=lb:.8,rt:.2` is `movie_weights=letterboxd:0.80,tomatoes:0.20`. Generated URLs also leave `:` and `,` unescaped, which is legal in a query. The full spelling still works.
+
+<details><summary>Every rating source code</summary>
+
+<!-- weight-sources:start (generated from param_aliases.py; tests/test_param_aliases.py checks it) -->
+| Source | Code |
+|---|---|
+| `letterboxd` | `lb` |
+| `trakt` | `tk` |
+| `tomatoes` | `rt` |
+| `popcorn` | `pc` |
+| `imdb` | `im` |
+| `metacritic` | `mc` |
+| `metacriticuser` | `mu` |
+| `tmdb` | `tm` |
+| `rogerebert` | `re` |
+| `myanimelist` | `mal` |
+| `anilist` | `al` |
+| `kitsu` | `ki` |
+<!-- weight-sources:end -->
+
+</details>
 
 ### Logo endpoint
 
@@ -103,7 +419,7 @@ https://yourdomain.com/logo?tmdb_id={tmdb_id}&type={type}&lang=en
 
 Either id identifies the title, as on `/poster`. With both, `imdb_id` enables the Metahub fallback when TMDB metadata cannot supply one; without a TMDB key, Metahub is the only logo source. `access_key` and `tmdb_key` follow the same rules as `/poster`.
 
-### Anime IDs (AniList / Kitsu)
+### Anime IDs (AniList / Kitsu / MyAnimeList)
 
 Advanced metadata providers such as AIOMetadata can pass an anime-native id instead of `tmdb_id`/`imdb_id`, in which case the cover art, title, genres, air dates, status and community score all come from that provider:
 
@@ -112,7 +428,9 @@ https://yourdomain.com/poster?anilist_id={anilist_id}&type=series
 https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 ```
 
-No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
+A **MyAnimeList** id works too — `mal_id={mal_id}`, or `mal:1535` in `stremio_id` — but MAL's API needs auth, so it is never the art source: PostersPlus looks it up in the community mapping ([Fribb's anime-lists](https://github.com/Fribb/anime-lists), the same one AIOMetadata uses) and renders the Kitsu entry it maps to, or the AniList one when there's no Kitsu id. A MAL id the list doesn't know renders like any non-anime id. This needs `ANIME_ID_MAP_ENABLED` (on by default). When a Kitsu or AniList id is sent too, that one wins.
+
+If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
 There is nothing to switch on: the configurator's [client templates](#client-templates) append the placeholder for the clients that can resolve an anime id and leave it off for the ones that can't.
 
@@ -120,9 +438,9 @@ There is nothing to switch on: the configurator's [client templates](#client-tem
 ?tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&stremio_id={id}&type={type}
 ```
 
-`{id}` is the raw Stremio / Nuvio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library. When it holds an IMDb id, that is also used as the title's identity, which shares its rating cache row with clients that send `imdb_id` directly.
+`{id}` is the raw Stremio / Nuvio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `mal:1535` for a MyAnimeList one, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library. When it holds an IMDb id, that is also used as the title's identity, which shares its rating cache row with clients that send `imdb_id` directly.
 
-Why `{id}` rather than `{kitsu_id}`: the per-namespace placeholder is empty for every live-action title, and an empty *required* placeholder makes the resolver abandon the whole URL — so it would have to be the optional `{kitsu_id?}` form, which Bingecat and Discover+ reject at config time. `{id}` is a plain placeholder, present in every build, and always populated, so it can never null the URL.
+Why `{id}` rather than `{kitsu_id}`: the per-namespace placeholder is empty for every live-action title, and an empty *required* placeholder makes the resolver abandon the whole URL — so it would have to be the optional `{kitsu_id?}` form, which Discover+ can't serve. `{id}` is a plain placeholder, present in every build, and always populated, so it can never null the URL.
 
 `anilist_id=` and `kitsu_id=` are still accepted for URLs generated before this, and both bare (`12345`) and prefixed (`kitsu:12345`) forms work.
 
@@ -132,6 +450,7 @@ What changes on this path:
 - **Ratings** include the provider score from the same response as the art, at no extra request. When an IMDb id is also supplied, that score joins the normal MDBList provider set instead of replacing it. Give the `anilist` or `kitsu` source a non-zero weight to use it. Note both score high and compressed (anime clusters ~65–80, and a poor show still scores mid-50s), so blend deliberately rather than matching your Letterboxd weight.
 - **Quality badges** keep working — Torrentio, Comet, AIOStreams, and compatible QualiCache sources accept anime-native stream ids, so the id passes straight through when no IMDb id exists.
 - **Sashes and enrichment** use any accompanying IMDb/TMDB ids for awards, trending, age ratings, logos, and release data. Without those ids, provider-only requests are limited to lifecycle status such as airing, ended, or cancelled.
+- **Ids filled in.** A request with only the anime id takes its TMDB and IMDb ids from the community mapping. The mapping reaches new releases weeks late, so for an id it doesn't know yet PostersPlus follows AniList's prequel links (a later season takes its first season's ids, as the mapping itself would give it) and otherwise searches TMDB for a show whose name is exactly the anime's, in Animation, starting within a year of it. Found ids are kept for two weeks, a miss for a day. Without a TMDB id at all, a landscape poster uses the provider's own wide art (AniList's banner, Kitsu's cover image) before the genre canvas.
 
 If you only want MyAnimeList *scores* on anime that already has an IMDb id, you don't need any of this — MDBList already returns a `myanimelist` rating, so just give that source a non-zero weight.
 
@@ -164,9 +483,10 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Trending | Rank 1–`TRENDING_FETCH_COUNT` (default top 40) in TMDB's list or the configured movie/TV trending source; AniList's list for an AniList id when the [trending catalogs addon](CONFIGURATION.md#trending-catalogs-addon) is on |
 | New Season | TV show with a recent or upcoming S2+ season premiere |
 | Returning | TV show with a recent or upcoming non-premiere episode |
-| Premiere | Show initial release within the last two weeks |
+| Premiere | Show initial release within the last two weeks, dated when Show Date is on: `Premiered Oct 2`. Below Airing in the default order, so a new show that is on air reads `Airing Oct 15` |
 | Just Added | Movie with a recent TMDB digital/TV release date |
 | Season Finale | Recently completed final TV season |
+| Blockbuster | Movie among the `BLOCKBUSTER_TOP_N` (default 10) highest-grossing films of its release year by TMDB worldwide revenue, with at least `BLOCKBUSTER_MIN_REVENUE` (default $100M, in today's dollars, inflation-adjusted to the release year) gross. One cached TMDB lookup per release year |
 | Cult Classic | Curated list of cult classics |
 | Foreign Language | Non-English language title |
 | Newly Streaming | Legacy combined recency signal |
@@ -174,11 +494,11 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | True Story | Based on a true story |
 | Short / Mini / Binge | Short film, miniseries, or bingeable series |
 | Trending (Broad) | Lower-ranked trending titles, rank `TRENDING_FETCH_COUNT`+1–`TRENDING_BROAD_FETCH_COUNT` (default 41–100) |
-| Release Status | Title's current release state: Cinema / Streaming / Physical / Production for movies, Airing / Renewed / Ended / Cancelled / Production for TV. Airing means episodes are actually going out (one aired in the last fortnight, or the next is due within one); a show between seasons is Renewed when TMDB lists its next season, and shows no status when nothing is announced. With dates on, a series is dated the same way a movie is: `Dec 25 Premiere` for an unaired show, `Mar 4 Season 3` for a dated next season, `Jan 8 Returns` after a mid-season break. Lowest default priority; movies require an extra TMDB API call the first time. When TMDB has dated an unreleased movie, the sash shows the date and what it opens instead — `Oct 16 Cinema`, `Oct 23 Streaming`, or `Dec 2027 Cinema` a year or more out (in cinemas: the next digital/disc date; in production: the first release anywhere). `release_status_dates=false` keeps the bare status |
+| Release Status | Title's current release state: Cinema / Streaming / Physical / Production for movies, Airing / Renewed / Ended / Cancelled / Production for TV. Airing means episodes are actually going out (one aired in the last fortnight, or the next is due within one); a show between seasons is Renewed when TMDB lists its next season, and shows no status when nothing is announced. With dates on, a series is dated the same way a movie is: `Premieres Dec 25` for an unaired show, `Season 3 Mar 4` for a dated next season, `Returns Jan 8` after a mid-season break. Lowest default priority; movies require an extra TMDB API call the first time. When TMDB has dated an unreleased movie, the sash shows the date and what it opens instead — `Cinema Oct 16`, `Streams Oct 23`, or `Cinema Dec 2027` a year or more out (in cinemas: the next digital/disc date; in production: the first release anywhere). A show TMDB calls Ended or Cancelled is checked against TVDB (with a TVDB key): when TVDB lists a season past TMDB's last and has a future or recent episode, it reads Renewed (`Season 2 Oct 20`) or Airing instead, as Cyberpunk: Edgerunners did while TMDB still had it as a one-season miniseries. `release_status_dates=false` keeps the bare status. A show that is on air is dated with its next episode, `Airing Oct 15`, when TMDB has one scheduled; `airing_dates=false` keeps it plain `Airing` |
 
 Sash priority order is configurable in the web configurator via drag-and-drop. The Primary Client selector sets the edge insets for everything drawn on the poster's top or bottom edge: Stremio TV, Nuvio, Plex, and Jellyfin use `0` for both; Stremio Desktop/Web use `0.007` at the bottom (the rating bar) and `0.004` at the top (the notch, and the trending ribbon, which grows upwards by that much). The configurator has no sliders for them, but a URL can still override the top with `sash_badge_inset` and the bottom with `bar_bottom_inset`, and the configurator keeps either when it imports a URL carrying one. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
 
-`sash_priority` also accepts a shorter *diff* form, written against the default order and marked by a leading `default` token: `-slot` removes a sash and `slot@N` moves one to position N (0-based). `&sash_priority=default,-cult,festival@0` promotes the festival sash and drops the cult one, in place of naming all thirty slots. The configurator emits whichever form is shorter, and the full list keeps working exactly as before - including an all-exclusions value, which still means every sash off rather than the default order minus those.
+`sash_priority` also accepts a shorter *diff* form, written against the default order and marked by a leading `default2` token: `-slot` removes a sash and `slot@N` moves one to position N (0-based). `&sash_priority=default2,-cult,festival@0` promotes the festival sash and drops the cult one, in place of naming all thirty slots. A diff that opens with the older `default` counts positions in the order before Premiere moved under Airing, so saved URLs keep their order. The configurator emits whichever form is shorter, and the full list keeps working exactly as before - including an all-exclusions value, which still means every sash off rather than the default order minus those.
 
 In Notch mode, the label is sized from the notch height, so `sash_badge_size_h` (Height) scales the text along with the badge. To tighten the empty space above and below the label *without* resizing it, use `sash_badge_pad` (Padding, default `1.0`, range `0.5`–`1.5`) — it trims only the vertical padding and leaves both the font and the badge width untouched. `sash_badge_inset` is a different control again: it shifts the whole notch up or down rather than reshaping it. Padding stops shrinking once the label's line height is reached, so low values crop the gap, never the glyphs.
 
@@ -186,7 +506,11 @@ The frosted notch can also sit to one side with `sash_badge_pos` (default `cente
 
 `sash_badge_opacity=0.0–1.0` sets how solid the black, silver and gold notch bodies are (the label and trim are unchanged). `0.90` is how they have always drawn and is the default; `1.0` is solid. The frosted notch has its own `sash_badge_frost_opacity`.
 
-`badge_display_mode=7` (**Graphic Badges**) draws Dolby Vision, Dolby Atmos (one combined *Dolby / VISION • ATMOS* mark when both are in the same group), DTS:X (drawn as the "dts" letters alone, so it holds the row's height without outweighing it; plain DTS is never shown), HDR10/HDR10+, resolution (`4K` / `HD`) and the US certificate (`PG-13`, `TV-MA`, ...) in up to four groups, `badge_group1` to `badge_group4`. Each is `anchor:max:badges[:size[:spacing]]`. The anchor is `chip` (the top corner the notch or sash leaves free, on the side chip's line), `tl`, `tr`, `bl`, `br`, `above_logo` / `below_logo` (centred on the title logo or fallback title text, just above or below wherever it landed, so it follows each logo's height; moved further off if the rating is in the way, and bottom centre on posters with no logo drawn), or a custom position `x,y,align` in fractions of the poster (e.g. `badge_group2=0.955,0.14,r:2:res,cert`); max is 1–4; badges are any of `video`, `audio`, `res`, `cert`, `network`, `studio`, `cinema` in the order they should appear. `cinema` is a small disc on a film that is still only in cinemas, or not out anywhere yet — the same Cinema / Production status the release-status sash uses, without needing that sash or a slot in `sash_priority` (a leak confirmed by r/movieleaks takes it off, as it does the sash). It shows the day the film reaches home, its first future digital or disc date, as the month over the day (`OCT` / `16`); with no such date, a popcorn bucket for a film in cinemas or a clapperboard for one still in production. A series gets it only while it has yet to air: its premiere date, or the clapperboard when none is set. A renewed or returning series doesn't, as the disc can't say which kind of date it is. `badge_cinema_style` is its look: `auto` (default) takes its tone from the art it sits on, a white-to-silver disc over dark art and black-to-grey over light; `frosted` is the frosted notch's glass, the poster blurred under its tint. The popcorn badge's old colours (`timing`, `red`, `black`, `white`) are read as `auto`. `network` is a TV show's network logo (Netflix, HBO, Apple TV, BBC One, ...), or for a film made by a streamer's own studio (Netflix, Apple Studios, Amazon MGM Studios, HBO Films) that streamer's; films a streamer only distributed aren't marked, as TMDB lists only production companies. `studio` is the first of the title's production companies on a curated list of ones people know and whose logos read at badge size (Pixar, A24, NEON, Marvel Studios, Lucasfilm, Blumhouse, Illumination, LAIKA, Searchlight, Focus Features, Universal, Warner Bros., Legendary and more); other companies are never shown. Both are TMDB's logos drawn as white marks, downloaded once and kept in `/app/cache/company_logos`. Size is the group's row height (10–60, default 20, which matches the chip) and spacing the space between its badges as a fraction of the poster's width (0–0.08, default 0.028), e.g. `bl:2:res,cert:28:0.02`; both are left out at their defaults. The default is `badge_group1=chip:4:video,audio,res,cert` and no other groups, and a badge listed in more than one group stays in the first. Groups are placed in order, each seeing the ones before it, so two aimed at the same corner stack rather than overlap. Top groups sit on the chip's line (the notch's own line when it is centred), bottom groups on the bottom margin — level with Minimalist's text. Each group looks at what the logo, rating, sash and the earlier groups actually drew and uses the space that is left: where its corner is taken (the frosted bar, Minimalist's Split layout, a diagonal sash, the chip itself) it slides away from the edge until its first badge fits, and badges that still don't fit beside it drop from the end of its list. A custom position is for dodging something the canvas can't see, such as a badge your client draws over the poster, so it stays exactly where it is put: `y` is the row's centre line, and `align` says which part of the row sits at `x`: `l` its left edge (the row grows rightwards), `c` its centre, `r` its right edge (grows leftwards). That edge stays put however many badges a title has. Without an `align`, the nearer edge of the poster decides. Only badges that would run off the poster are dropped. `badge_min_score` gates the quality marks but not the certificate, network or studio. Only a layout with a quality badge (`video`, `audio` or `res`) in some group asks the quality source for anything: with just the certificate, network and studio there is no quality fetch, `wait_for_quality` doesn't hold the poster back, `greyscale_no_quality` doesn't apply, and no quality source needs to be configured; `badge_height` isn't used in this mode, each group having its own size. The certificate, network and production companies come from one TMDB call per title per month (its details, with the US release dates or content ratings appended); the certificate falls back to MDBList's age (`14+`) when TMDB has none. The Dolby and DTS:X marks are fetched once from Wikimedia Commons, pinned by SHA-1, and kept in `/app/cache/commons`; until they are there, or if Commons serves a different file, those marks are simply left out.
+`quality_after_digital=true` ignores the stream quality a film turns up with before its digital release, in every badge mode and on both shapes: until then a `4K` or `WEB-DL` is a cam or a mislabel. A film counts as out once TMDB's digital or disc date has passed, or an r/movieleaks post confirms it (the release-status sash's own rule, no sash needed); before that it is drawn as if no quality was found, so `greyscale_no_quality` can greyscale it and `cinema_greyscale_skip_if_available` has nothing to go on. A series counts as out once its first episode has aired: before that its quality is ignored the same way, while a show between seasons keeps it, even when TMDB still calls it In Production. Off by default.
+
+`badge_display_mode=7` (**Graphic Badges**) draws Dolby Vision, Dolby Atmos (one combined *Dolby / VISION • ATMOS* mark when both are in the same group), DTS:X (drawn as the "dts" letters alone, so it holds the row's height without outweighing it; plain DTS is never shown), HDR10/HDR10+, resolution (`4K` / `HD`) and the age certificate (`PG-13`, `TV-MA`, ...; another country's with `badge_cert_country`) in up to four groups, `badge_group1` to `badge_group4`. Each is `anchor:max:badges[:size[:spacing]]`. The anchor is `chip` (the top corner the notch or sash leaves free, on the side chip's line), `tl`, `tr`, `bl`, `br`, `above_logo` / `below_logo` (centred on the title logo or fallback title text, just above or below wherever it landed, so it follows each logo's height; moved further off if the rating is in the way, and bottom centre on posters with no logo drawn), or a custom position `x,y,align` in fractions of the poster (e.g. `badge_group2=0.955,0.14,r:2:res,cert`); max is 1–4; badges are any of `video`, `audio`, `res`, `cert`, `network`, `studio`, `cinema` in the order they should appear. `cinema` is a small disc on a film that is still only in cinemas, or not out anywhere yet — the same Cinema / Production status the release-status sash uses, without needing that sash or a slot in `sash_priority` (a leak confirmed by r/movieleaks takes it off, as it does the sash). It shows the day the film reaches home, its first future digital or disc date, as the month over the day (`OCT` / `16`); with no such date, a popcorn bucket for a film in cinemas or a clapperboard for one still in production. A series gets it only while it has yet to air: its premiere date, or the clapperboard when none is set. A renewed or returning series doesn't, as the disc can't say which kind of date it is. `badge_cinema_style` is its look: `auto` (default) takes its tone from the art it sits on, a white-to-silver disc over dark art and black-to-grey over light; `frosted` is the frosted notch's glass, the poster blurred under its tint. The popcorn badge's old colours (`timing`, `red`, `black`, `white`) are read as `auto`. `badge_quality_style` is the quality badges' look (landscape's own is `landscape_badge_quality_style`): `solid` (default) draws the filled `4K` / `HD` / `HDR` boxes and the bare Dolby and DTS:X marks; `frosted` puts each on a chip of the frosted notch's glass, the poster blurred under its tint, with the mark or label in the tint's ink. `badge_cert_style` and `badge_logo_style` make the same choice for the certificate and for the network and studio logos: `solid` (default) is the outlined certificate box and the bare white logo; `frosted` puts each on the same glass chip, the logo sized to sit inside it (a `badge_logo_scale` above 1 grows the chip with it). `network` is a TV show's network logo (Netflix, HBO, Apple TV, BBC One, ...), or for a film made by a streamer's own studio (Netflix, Netflix Animation, Apple, Apple Studios, Amazon Studios, Amazon MGM Studios, HBO, HBO Films, HBO Documentary Films) that streamer's; films a streamer only distributed aren't marked, as TMDB lists only production companies. `studio` is whichever of the title's production companies comes first on a curated list of ones people know (bigger studios first, so Die Hard shows 20th Century Fox rather than Silver Pictures) and whose logos read at badge size (Pixar, A24, NEON, Marvel Studios, Lucasfilm, Blumhouse, Illumination, LAIKA, Searchlight, Focus Features, Universal, Warner Bros., Legendary, MGM, Miramax, Lionsgate, Summit, TriStar, Working Title, Skydance, StudioCanal, Film4, MUBI, Cartoon Saloon, Studio Ponoc, Toei Animation, Kyoto Animation, ufotable, MAPPA, 20th Century, DreamWorks, Paramount, New Line, Castle Rock, Carolco, Lightstorm, CJ Entertainment, Studio Ghibli, Bad Robot, Syncopy, Toho, Silver Pictures, Big Talk and more); other companies are never shown. Both are TMDB's logos drawn as white marks, downloaded once and kept in `/app/cache/company_logos`. They are sized to carry about the same weight whatever their shape: each covers about the area of a box 2.6 row heights wide, so a long wordmark is drawn shorter than the row and a compact emblem taller (up to 1.15 rows, centred on the row) and none runs wider than 3.8 rows, a heavy logo's limits shrinking with its ink, and that area is weighed by the logo's ink, so a solid logo is drawn smaller than a thin outline one. `badge_logo_scale=0.5–2.0` (default `1.0`) multiplies that size (`landscape_badge_logo_scale` on landscape). Where a logo doesn't fit on its group's line beside what is already there (Minimalist's genre and year, say), it is drawn smaller, down to 60%, before the group moves off that line. `docker exec postersplus python3 tools/logo_sheet.py` draws every logo the instance has downloaded on one sheet, at badge size, into `/app/cache/logo_sheet.png`. Size is the group's row height (10–60, default 20, which matches the chip) and spacing the space between its badges as a fraction of the poster's width (0–0.08, default 0.028), e.g. `bl:2:res,cert:28:0.02`; both are left out at their defaults. The default is `badge_group1=chip:4:video,audio,res,cert` and no other groups, and a badge listed in more than one group stays in the first. Groups are placed in order, each seeing the ones before it, so two aimed at the same corner stack rather than overlap. Top groups sit on the chip's line (the notch's own line when it is centred), bottom groups on the bottom margin — level with Minimalist's text. Each group looks at what the logo, rating, sash and the earlier groups actually drew and uses the space that is left: where its corner is taken (the frosted bar, Minimalist's Split layout, a diagonal sash, the chip itself) it slides away from the edge until its first badge fits, and badges that still don't fit beside it drop from the end of its list. `badge_overflow=hide` (default `move`; landscape's own is `landscape_badge_overflow`, never read from the plain name) keeps every group on its own line instead: a group whose line is taken drops the badges that don't fit there from the end of its list, and is left out when none do. A custom position is for dodging something the canvas can't see, such as a badge your client draws over the poster, so it stays exactly where it is put: `y` is the row's centre line, and `align` says which part of the row sits at `x`: `l` its left edge (the row grows rightwards), `c` its centre, `r` its right edge (grows leftwards). That edge stays put however many badges a title has. Without an `align`, the nearer edge of the poster decides. Only badges that would run off the poster are dropped. `badge_min_score` gates the quality marks but not the certificate, network or studio. Only a layout with a quality badge (`video`, `audio` or `res`) in some group asks the quality source for anything: with just the certificate, network and studio there is no quality fetch, `wait_for_quality` doesn't hold the poster back, `greyscale_no_quality` doesn't apply, and no quality source needs to be configured; `badge_height` isn't used in this mode, each group having its own size. The certificate, network and production companies come from one TMDB call per title per month (its details, with the release dates or content ratings appended, which carry every country's certificate at once). `badge_cert_country` (an ISO 3166-1 code, default `US`; one setting for both shapes) picks whose certificate the `cert` badge shows, as that country's board issues it (`GB` 12A, `DE` 16, `AU` MA 15+, `SE` 11). Any country costs no further call. Only the certificates a country's board issues are drawn (TMDB's per-country certification lists, without NR / Unrated / Exempt), so a stray value TMDB holds is skipped; a film takes its theatrical certificate first. The certificate falls back to MDBList's age (`14+`) when the chosen country has none, and never to another country's. The Dolby and DTS:X marks are fetched once from Wikimedia Commons, pinned by SHA-1, and kept in `/app/cache/commons`; until they are there, or if Commons serves a different file, those marks are simply left out.
+
+The `legacy` badge slot draws one of the badges the older display modes drew, picked by `badge_legacy_style` (one setting for both shapes): `notch` (default, the Quality Notch tier pill), `bookmark` (the Quality Bookmark fold), `row` (the Quality Badge Row), `combined` (the Combined Badge; `combined_badge_stacked=true` stacks it), `quality_age` (the age rating in the quality tier's colour) or `age` (the age rating in silver, which asks the quality source for nothing). Each keeps its old mode's minimum-quality rule, and at a group's default size draws at its old default height; the group's size scales it from there. The bookmark isn't laid out in the row: it hangs from its group's corner (`tl`, `tr`, `bl`, `br`, the bottom ones flipped; `chip` and the logo anchors take the top corner the notch or sash leaves free; a custom group the nearest corner), drawn before the groups so the rest of its group, and every other group, lays out around it. The old modes (`badge_display_mode=1`–`6`, with `badge_height`, `badge_anchor_x/y` and `badge_gap`) still render as they did; the configurator now offers Graphic Badges only, and imports an old mode as its legacy style alone in group 1, at a custom position where it was drawn (the bookmark beside the chip).
 
 ---
 
@@ -218,7 +542,7 @@ The source lists are what MDBList actually returns for anime. Anime films carry 
 `rating_badges` shows individual sites' scores, each behind that site's logo, in place of the ★ and the weighted score: after the genre in Clean (`rating_display_mode=2`), before each score in Minimalist (`3`), and after the year and genre in the Bar (`4`), in place of its "★ score". It takes a comma list in display order, up to 6, from `pplus` (the weighted score itself, under the Posters+ mark), `imdb`, `tomatoes`, `popcorn`, `metacritic`, `metacriticuser`, `letterboxd`, `trakt`, `tmdb`, `rogerebert`, `myanimelist`, `anilist` and `kitsu`: for example `rating_badges=imdb,tomatoes`.
 
 - `rating_badge_max=1–5` draws at most that many: the first ones down the list that the title has a score from, so the sites further down stand in when one is missing (`rating_badges=imdb,letterboxd,tomatoes&rating_badge_max=1` shows IMDb, or Letterboxd where there is no IMDb score). Without it, as many as fit are drawn.
-- A site can be limited to some kinds of title by adding `:` and any of `m` (movies), `t` (TV) and `a` (anime): `rating_badges=imdb:mt,tomatoes,myanimelist:a` shows IMDb on movies and TV, MyAnimeList on anime only, and Rotten Tomatoes on everything. A title counts as anime when it was requested by anime id or has a score from an anime site, the same rule the anime weights use.
+- A site can be limited to some kinds of title by adding `:` and any of `m` (movies), `t` (TV), `f` (anime movies) and `s` (anime series), with `a` short for both anime kinds: `rating_badges=imdb:mt,tomatoes,myanimelist:a` shows IMDb on movies and TV, MyAnimeList on anime only, and Rotten Tomatoes on everything, and `rating_badges=letterboxd:mf,imdb:ts` shows Letterboxd on movies and anime movies, IMDb on TV and anime series. Anime titles count only as `f` or `s`, never as `m` or `t`. A title counts as anime when it was requested by anime id or has a score from an anime site, and as a film or series by its type, the same rule the anime weights use.
 
 - A site the title has no score from is skipped. A title with a score from none of them keeps the weighted score.
 - Only as many as fit on the line are drawn, first ones first. The rest of the label keeps its room and the badges get what is left: Clean's large type usually fits one or two beside the genre, and the Bar two or three after the year and genre (more with Hide Year or Hide Genre). With nothing else on the Bar, the badges are spread evenly across it.
@@ -227,7 +551,7 @@ The source lists are what MDBList actually returns for anime. Anime films carry 
 - `rating_badge_scale=native` (default) prints each score the way the site does (`7.8`, `92%`, `3.9`). `normalized` puts them on the weighted score's scale, following the mode's out-of-10 switch.
 - The Rating Bar (`1`), Minimalist's Year layout and the Bar's year-only or sash labels (`bar_append=year` / `sash`) print no score, so they draw no badges. Neither does landscape, nor a hidden rating.
 
-`meta_order` sets the order genre, year and rating print in, as all three names comma-separated (`year,genre,rating`), in every mode and shape that prints more than one of them; a field a mode doesn't print is skipped, and without it each mode keeps its own order. A score that comes first carries its own ★ where its style uses one. In Minimalist's Split layout the score keeps its own margin: the right one, or the left when it comes first. Rating badges follow the score's place.
+`meta_order` sets the order genre, year and rating print in, as all three names comma-separated (`year,genre,rating`), in every mode and shape that prints more than one of them; a field a mode doesn't print is skipped, and without it each mode keeps its own order. A score that comes first carries its own ★ where its style uses one. In Minimalist's Split layout the score keeps its own margin: the right one, or the left when it comes first. Rating badges follow the score's place. `landscape_meta_order` sets landscape's own, falling back to `meta_order`.
 
 The logos are downloaded once per instance and none ship with PostersPlus. See the [README](README.md#license) for sources.
 
@@ -237,10 +561,14 @@ The logos are downloaded once per instance and none ship with PostersPlus. See t
 
 Text rendered onto posters (genre labels and info-sash labels) can be localised. The language follows the request's **poster/logo language** setting.
 
+`original_labels` gives a title's labels in its own language instead: a comma list of original languages (`original_labels=ar` or `ar,he`), and a title first made in one of them has its genre and sash labels translated into that language, and a text title standing in for its logo drawn as its original title (when a label font has its letters). Every other title keeps the request's language. A language with no file here is left as it is. Off (blank) by default.
+
+A language file may give its own digits as `"digits"` (ten characters, zero first; `ar.json` has `"٠١٢٣٤٥٦٧٨٩"`). They are used for the trending rank, release dates, season numbers and the year; scores, ratings and names such as "A24" keep 0-9.
+
 To add a language, copy `languages/en.json` to `languages/<code>.json` (e.g. `fr.json`) and translate the **values** only; the keys are the canonical English strings and must stay unchanged. Translation is display-only with per-key English fallback: any missing key, malformed file, or language with no JSON falls back to English, so partial translations are safe.
 
 Region-qualified files (`pt-br.json`) are supported and take precedence over the bare language (`pt.json`) for a `pt-br` request. Note that this differs from how region-qualified **artwork** is selected: a region file wins per *table*, not per *key*, so a `pt-br.json` that ships a partial `sashLabels` map does **not** borrow the missing entries from `pt.json` — they fall through to English. Region files should be full copies of `en.json`, not diffs.
 
-`label_font` picks the font poster text is drawn in: `inter` (default), `rubik`, `jakarta` (Plus Jakarta Sans), `manrope`, `montserrat`, `robotocondensed`, `barlowcondensed`, `oswald`, `spacegrotesk`, `exo2`, `fira` (Fira Sans) or `opensans`. An operator can upload more in the dashboard (Fonts); those take a `custom-…` key, shown there, and a key the instance doesn't have draws in Inter. It covers the genre / year / rating line, the sash and notch, the Bar, the trending ribbon's caption and the landscape labels; quality and age badges and the trending numeral stay in Inter. A language the chosen font has no glyphs for is drawn in the first font that has them, so Hebrew is always drawn in Rubik and Greek or Vietnamese always in Inter. A text title standing in for a missing logo does the same when its genre font can't draw it.
+`label_font` picks the font poster text is drawn in: `inter` (default), `rubik`, `jakarta` (Plus Jakarta Sans), `manrope`, `montserrat`, `robotocondensed`, `barlowcondensed`, `oswald`, `spacegrotesk`, `exo2`, `fira` (Fira Sans), `opensans` or `almarai`. An operator can upload more in the dashboard (Fonts); those take a `custom-…` key, shown there, and a key the instance doesn't have draws in Inter. It covers the genre / year / rating line, the sash and notch, the Bar, the trending ribbon's caption and the landscape labels; quality and age badges and the trending numeral stay in Inter. A language the chosen font has no glyphs for is drawn in the first font that has them, so Hebrew is always drawn in Rubik, Arabic, Persian and Urdu in Almarai (or Rubik for Arabic and Persian when it is chosen), and Greek or Vietnamese always in Inter. A text title standing in for a missing logo does the same when its genre font can't draw it.
 
-> Note: between them the label fonts cover **Latin, Greek, Cyrillic and Hebrew**. Right-to-left text is reordered line by line with the Unicode bidi algorithm, which is all Hebrew needs; there are no CJK, Arabic, Indic or Thai glyphs, and no shaping for scripts whose letters join (Arabic), so those will not render correctly. `tests/test_i18n_sash_vocabulary.py` fails on any character no label font can draw.
+> Note: between them the label fonts cover **Latin, Greek, Cyrillic, Hebrew and Arabic script** (Arabic, Persian, Urdu). Right-to-left text is reordered line by line with the Unicode bidi algorithm, which is all Hebrew needs; Arabic-script posters are laid out with Pillow's raqm, which joins their letters as well (the image installs `libfribidi0` for it; without it they draw unjoined). There are no CJK, Indic or Thai glyphs, so those will not render correctly. `tests/test_i18n_sash_vocabulary.py` fails on any character no label font can draw.

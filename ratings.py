@@ -2,6 +2,7 @@
 import logging
 import math
 import time
+from typing import Callable
 import httpx
 import numpy as np
 
@@ -23,8 +24,8 @@ from awards import (FETCH_FAILED, _FetchFailed, _RateLimited, dominant_frost_rgb
                     _frost_ink, _frosted_tint)
 from config import (
     ANIME_RATING_SOURCES,
-    GENRE_MAP,
     GENRE_PRIORITY,
+    genre_label,
     SCORE_NORMALISERS,
     SCORE_GLOW_THRESHOLD,
     SCORE_GLOW_BLUR,
@@ -98,6 +99,48 @@ def _record_mdblist_quota(mdblist_key: str, headers) -> MDBListQuota | None:
     return quota
 
 
+async def refresh_mdblist_quota_from_account(client: httpx.AsyncClient, mdblist_key: str) -> MDBListQuota | None:
+    """Refresh *mdblist_key*'s snapshot from MDBList's /user endpoint.
+
+    The snapshots above only exist for keys this process has spent a rating
+    request on, so a freshly restarted server shows nothing, a standby key
+    that has never been rotated to stays blank, and with several workers each
+    one sees only its own calls. /user reports the account's daily limit and
+    the requests counted against it today without counting itself, so the
+    dashboard and the warmer can read the real figure for every key. Its body
+    carries rate_limit_reset; without it the window is taken as the UTC day
+    (x-ratelimit-reset is always a UTC midnight).
+    """
+    started = time.time()
+    try:
+        resp = await client.get(
+            "https://api.mdblist.com/user", params={"apikey": mdblist_key}, timeout=3.0,
+        )
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        limit = int(body["api_requests"])
+        used = int(body["api_requests_count"])
+        body_reset = body.get("rate_limit_reset")
+    except Exception as exc:
+        logger.debug(f"MDBList account quota read failed: {type(exc).__name__}: {exc}")
+        return None
+    now = time.time()
+    current = MDBLIST_QUOTA.get(mdblist_key)
+    if current is not None and current.observed_at >= started:
+        # A rating response recorded while this read was in flight is newer.
+        return current
+    if isinstance(body_reset, (int, float)) and body_reset > now:
+        reset_at = float(body_reset)
+    elif current is not None and current.reset_at is not None and current.is_current(now):
+        reset_at = current.reset_at  # MDBList's own header beats the computed midnight
+    else:
+        reset_at = float((int(now) // 86400 + 1) * 86400)
+    quota = MDBListQuota(limit, max(0, limit - used), reset_at, now)
+    MDBLIST_QUOTA[mdblist_key] = quota
+    return quota
+
+
 def mdblist_quota_remaining(mdblist_key: str, now: float | None = None) -> int | None:
     """Remaining daily requests for *mdblist_key*, or None when unknown / stale."""
     quota = MDBLIST_QUOTA.get(mdblist_key)
@@ -148,6 +191,10 @@ def remember_mdblist_release_dates(media_id: str, media_type: str, data: dict) -
         return
     released = str(data.get("released") or "")[:10] or None
     digital  = str(data.get("released_digital") or "")[:10] or None
+    if "released_digital" not in data:
+        # The bulk record has no digital date at all — unknown, not "none yet":
+        # keep the one an earlier single call remembered.
+        digital = (mdblist_release_dates(media_id, media_type) or {}).get("released_digital")
     if not released and not digital:
         return
     try:
@@ -169,6 +216,150 @@ def mdblist_release_dates(media_id: str | None, media_type: str) -> dict | None:
         return get_cached_tvdb_json(_mdblist_dates_key(media_id, media_type))
     except Exception:
         return None
+
+
+# Whether MDBList lists Horror for a show, by TMDB id, from the same answer.
+# TMDB has no Horror genre for TV; MDBList carries IMDb's (American Horror
+# Story: Drama, Horror, Mystery, Sci-Fi), and agreed with the TVDB/Cinemeta
+# consensus on every one of the 169 most-voted shows it answered.  Kept in the
+# generic JSON cache for the same reason as the dates above; every MDBList
+# answer rewrites it, so the long TTL only covers rows not yet refreshed.
+_MDBLIST_GENRES_TTL = 90 * 86400
+
+
+def _mdblist_horror_key(tmdb_id) -> str:
+    return f"mdblist_tv_horror:{tmdb_id}"
+
+
+def remember_mdblist_tv_horror(data: dict) -> None:
+    from cache import set_cached_tvdb_json
+    if data.get("type") != "show":
+        return
+    tmdb_id = (data.get("ids") or {}).get("tmdb")
+    genres = data.get("genres")
+    if not tmdb_id or not isinstance(genres, list) or not genres:
+        return
+    horror = any(
+        str((g.get("title") if isinstance(g, dict) else g) or "").strip().lower() == "horror"
+        for g in genres
+    )
+    try:
+        set_cached_tvdb_json(_mdblist_horror_key(tmdb_id), {"horror": horror}, _MDBLIST_GENRES_TTL)
+    except Exception as exc:   # a cache hiccup must not cost the rating
+        logger.warning(f"Could not cache MDBList genres for tmdb {tmdb_id}: {exc}")
+
+
+def mdblist_tv_horror(tmdb_id) -> bool | None:
+    """MDBList's word on whether TMDB TV show *tmdb_id* is horror, or None
+    when no MDBList answer for it is cached."""
+    if not tmdb_id:
+        return None
+    from cache import get_cached_tvdb_json
+    try:
+        row = get_cached_tvdb_json(_mdblist_horror_key(tmdb_id))
+    except Exception:
+        return None
+    return bool(row["horror"]) if row and "horror" in row else None
+
+
+def _rate_limited(resp, quota, label: str) -> _RateLimited:
+    """A 429 / 503 answer as _RateLimited.
+
+    429 is either the daily quota or the per-IP burst limit; 503 is how the
+    burst limit first shows itself (a run of 503s, then 429 + Retry-After for
+    every key on the address). Both go back as _RateLimited so the caller
+    pauses instead of walking the network-failure ladder.
+    """
+    retry_after: float | None = None
+    raw = resp.headers.get("retry-after")
+    if raw:
+        try:
+            # Most APIs send Retry-After as an integer seconds value.
+            # HTTP-date format also exists but is uncommon for JSON APIs;
+            # we don't try to parse it — caller will fall back to default.
+            parsed = float(raw)
+            if parsed > 0:
+                retry_after = parsed
+        except ValueError:
+            pass
+    # Only treat the 429 as quota exhaustion when MDBList says the key is
+    # actually empty; a 429 with requests still remaining (or none of the
+    # quota headers at all) is the burst throttle, and parking the key
+    # until midnight for it would be wrong.
+    reset_at = None
+    if (
+        resp.status_code == 429
+        and quota and quota.reset_at
+        and (quota.remaining is None or quota.remaining <= 0)
+    ):
+        reset_at = quota.reset_at
+    logger.warning(
+        f"MDblist {'rate-limited' if resp.status_code == 429 else 'refused (503)'} "
+        f"for {label} (retry-after={retry_after}, quota={quota})"
+    )
+    return _RateLimited(retry_after, reset_at=reset_at)
+
+
+def _metacritic_must_see(data: dict) -> bool:
+    import award_lists
+    for r in data.get("ratings") or []:
+        if (r.get("source") or "").lower() == "metacritic":
+            return award_lists.metacritic_must_see(r.get("value"), _rating_vote_count(r))
+    return False
+
+
+def _parse_mdblist_title(data: dict, media_id: str, media_type: str, genre: str,
+                         bulk: bool = False):
+    """One MDBList title record as ``(ratings_dict, genre, release_date,
+    keywords, age_rating)``.  The single and the bulk call share it; the bulk
+    record (*bulk*) has no ``keywords`` and no ``released_digital``, and its
+    Letterboxd value is out of 10."""
+    release_date = data.get("released")
+    keywords: list[dict] = list(data.get("keywords") or [])
+    # Metacritic Must-See is read off the score rather than the keyword, which
+    # the bulk answer lacks; it rides in as the keyword the flag code reads.
+    if _metacritic_must_see(data) and not any(
+        (kw.get("name") or "").lower().strip() == "metacritic-must-see" for kw in keywords
+    ):
+        keywords.append({"name": "metacritic-must-see"})
+    remember_mdblist_release_dates(media_id, media_type, data)
+    remember_mdblist_tv_horror(data)
+
+    age_rating: int | None = data.get("age_rating") or None
+    if age_rating is not None:
+        try:
+            age_rating = int(age_rating)
+        except (ValueError, TypeError):
+            age_rating = None
+
+    ratings_dict: dict[str, float] = {}
+    for r in data.get("ratings") or []:
+        source = (r.get("source") or "").lower()
+        value  = r.get("value")
+        if source not in SCORE_NORMALISERS or value is None:
+            continue
+
+        vote_count = _rating_vote_count(r)
+        if source != "rogerebert" and vote_count is not None and vote_count < RATING_MIN_VOTES:
+            logger.info(
+                f"Skipping {source} rating for {media_id}: "
+                f"vote_count={vote_count} < {RATING_MIN_VOTES}"
+            )
+            continue
+
+        if source == "letterboxd":
+            # The bulk answer gives Letterboxd's average out of 10 (8.0 where
+            # the single call says 4.0); the score, out of 100, is the same in
+            # both, so the stored value is that score back out of 5, or the
+            # bulk value halved when it has none.
+            if isinstance(r.get("score"), (int, float)):
+                value = round(r["score"] / 20, 2)
+            elif bulk:
+                value = round(value / 2, 2)
+
+        ratings_dict[source] = value
+
+    return ratings_dict, genre, release_date, keywords, age_rating
 
 
 async def fetch_rating(
@@ -196,11 +387,7 @@ async def fetch_rating(
     would otherwise have silently become the API key.
     """
 
-    genre = "Unknown"
-    for gid in GENRE_PRIORITY:
-        if gid in genre_ids:
-            genre = GENRE_MAP[gid]
-            break
+    genre = genre_label(genre_ids, GENRE_PRIORITY)
 
     mdb_type = "show" if media_type in ("tv", "series") else "movie"
     # MDBList files an IMDb id under its own type only, and 404s it under the
@@ -233,39 +420,8 @@ async def fetch_rating(
     if resp.status_code == 200:
         media_type = "tv" if mdb_type == "show" else "movie"
 
-    # 429 is either the daily quota or the per-IP burst limit; 503 is how the
-    # burst limit first shows itself (a run of 503s, then 429 + Retry-After
-    # for every key on the address). Both go back as _RateLimited so the
-    # caller pauses instead of walking the network-failure ladder.
     if resp.status_code in (429, 503):
-        retry_after: float | None = None
-        raw = resp.headers.get("retry-after")
-        if raw:
-            try:
-                # Most APIs send Retry-After as an integer seconds value.
-                # HTTP-date format also exists but is uncommon for JSON APIs;
-                # we don't try to parse it — caller will fall back to default.
-                parsed = float(raw)
-                if parsed > 0:
-                    retry_after = parsed
-            except ValueError:
-                pass
-        # Only treat the 429 as quota exhaustion when MDBList says the key is
-        # actually empty; a 429 with requests still remaining (or none of the
-        # quota headers at all) is the burst throttle, and parking the key
-        # until midnight for it would be wrong.
-        reset_at = None
-        if (
-            resp.status_code == 429
-            and quota and quota.reset_at
-            and (quota.remaining is None or quota.remaining <= 0)
-        ):
-            reset_at = quota.reset_at
-        logger.warning(
-            f"MDblist {'rate-limited' if resp.status_code == 429 else 'refused (503)'} "
-            f"for {media_id} (retry-after={retry_after}, quota={quota})"
-        )
-        return _RateLimited(retry_after, reset_at=reset_at)
+        return _rate_limited(resp, quota, media_id)
 
     if resp.status_code == 404:
         logger.info(f"MDblist 404 for {provider}/{media_id} — title not found, returning empty result")
@@ -275,36 +431,160 @@ async def fetch_rating(
         logger.warning(f"MDblist error {resp.status_code} for {provider}/{media_id}")
         return FETCH_FAILED
 
-    data         = resp.json()
-    release_date = data.get("released")
-    keywords: list[dict] = data.get("keywords") or []
-    remember_mdblist_release_dates(media_id, media_type, data)
+    return _parse_mdblist_title(resp.json(), media_id, media_type, genre)
 
-    age_rating: int | None = data.get("age_rating") or None
-    if age_rating is not None:
-        try:
-            age_rating = int(age_rating)
-        except (ValueError, TypeError):
-            age_rating = None
 
-    ratings_dict: dict[str, float] = {}
-    for r in data.get("ratings", []):
-        source = (r.get("source") or "").lower()
-        value  = r.get("value")
-        if source not in SCORE_NORMALISERS or value is None:
+# ---------------------------------------------------------------------------
+# Bulk fetch
+# ---------------------------------------------------------------------------
+# MDBList also answers ``POST /{provider}/{type}`` with ``{"ids": [...]}``: up
+# to 200 titles for one request, about as fast as one title.  The answer is a
+# plain list of title records, in no particular order, with every id MDBList
+# doesn't file under that type left out.  Each record is the single call's
+# record minus ``keywords`` (even when asked for), ``released_digital`` and the
+# episode fields — which is why the cult, festival, Oscar and Metacritic flags
+# no longer depend on keywords (award_lists.py).
+#
+# The endpoint is not documented anywhere we've read, so it is treated as
+# unofficial: an answer it can't make sense of turns bulk off for an hour and
+# the caller falls back to single calls.
+
+MDBLIST_BULK_MAX_IDS = 200
+_BULK_DISABLE_SECS = 3600
+_bulk_disabled_until = 0.0
+
+
+def mdblist_bulk_available(now: float | None = None) -> bool:
+    return (time.time() if now is None else now) >= _bulk_disabled_until
+
+
+def _disable_bulk(reason: str) -> None:
+    global _bulk_disabled_until
+    _bulk_disabled_until = time.time() + _BULK_DISABLE_SECS
+    logger.warning(f"MDBList bulk ratings disabled for {_BULK_DISABLE_SECS // 60} min: {reason}")
+
+
+def _record_id(data: dict, provider: str) -> str | None:
+    value = (data.get("ids") or {}).get(provider)
+    return str(value) if value not in (None, "") else None
+
+
+async def _bulk_post(client, mdblist_key: str, provider: str, mdb_type: str, ids: list[str]):
+    """One bulk request: ``{id: record}``, _RateLimited, FETCH_FAILED on a
+    network error, or None on an answer that turns bulk off."""
+    logger.info(
+        f"External API Call: Requested bulk ratings from MDBlist for "
+        f"{len(ids)} {provider}/{mdb_type} ids"
+    )
+    try:
+        resp = await client.post(
+            f"https://api.mdblist.com/{provider}/{mdb_type}",
+            params={"apikey": mdblist_key},
+            json={"ids": ids},
+            timeout=30.0,
+        )
+    except Exception as exc:
+        logger.error(f"MDblist bulk request error: {type(exc).__name__}: {exc}")
+        return FETCH_FAILED
+    quota = _record_mdblist_quota(mdblist_key, resp.headers)
+    if resp.status_code in (429, 503):
+        return _rate_limited(resp, quota, f"bulk {provider}/{mdb_type} ({len(ids)} ids)")
+    if resp.status_code != 200:
+        _disable_bulk(f"HTTP {resp.status_code} for {provider}/{mdb_type}")
+        return None
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, list):
+        _disable_bulk(f"unexpected answer shape ({type(body).__name__}) for {provider}/{mdb_type}")
+        return None
+    wanted = set(ids)
+    out: dict[str, dict] = {}
+    for record in body:
+        if not isinstance(record, dict):
             continue
+        rid = _record_id(record, provider)
+        if rid in wanted:
+            out[rid] = record
+    return out
 
-        vote_count = _rating_vote_count(r)
-        if source != "rogerebert" and vote_count is not None and vote_count < RATING_MIN_VOTES:
-            logger.info(
-                f"Skipping {source} rating for {media_id}: "
-                f"vote_count={vote_count} < {RATING_MIN_VOTES}"
-            )
-            continue
 
-        ratings_dict[source] = value
+async def fetch_ratings_bulk(
+    client: httpx.AsyncClient,
+    mdblist_key: str,
+    provider: str,
+    mdb_type: str,
+    ids: list[str],
+    *,
+    genre_ids: dict[str, list[int]] | None = None,
+    on_request: Callable[[], None] | None = None,
+) -> "dict[str, tuple | _FetchFailed | _RateLimited] | _FetchFailed | _RateLimited":
+    """Ratings for many titles of one type at once.
 
-    return ratings_dict, genre, release_date, keywords, age_rating
+    Returns ``{id: (ratings_dict, genre, release_date, keywords, age_rating)}``
+    — fetch_rating's answer, per title — for every id in *ids*.  An id MDBList
+    doesn't know comes back as fetch_rating's 404 answer; an IMDb id is first
+    asked again under the other type, as fetch_rating does.  *genre_ids* maps
+    an id to its TMDB genre ids, for the genre label.  *on_request* is called
+    once per POST sent, which can be more than one for a call.
+
+    A request refused with 429 / 503 gives _RateLimited, and a network error or
+    bulk turning itself off gives FETCH_FAILED (the caller then makes single
+    calls).  Requests after a failure aren't sent; the ids they or the failed
+    one would have answered map to that failure, and the rest keep the answers
+    already received.  When nothing was answered the failure is returned alone,
+    as it is when bulk is already off.
+    """
+    ids = [str(i) for i in dict.fromkeys(ids) if i]
+    if not ids:
+        return {}
+    if not mdblist_bulk_available():
+        return FETCH_FAILED
+    genre_ids = genre_ids or {}
+
+    records: dict[str, tuple[dict, str]] = {}   # id -> (record, media type it answered as)
+    unanswered: set[str] = set()                # ids a failed or unsent request held
+    failure = None
+
+    async def _ask(type_: str, wanted: list[str]) -> None:
+        nonlocal failure
+        answered_as = "tv" if type_ == "show" else "movie"
+        for i in range(0, len(wanted), MDBLIST_BULK_MAX_IDS):
+            chunk = wanted[i:i + MDBLIST_BULK_MAX_IDS]
+            if failure is not None:
+                unanswered.update(chunk)
+                continue
+            if on_request is not None:
+                on_request()
+            got = await _bulk_post(client, mdblist_key, provider, type_, chunk)
+            if got is None:
+                got = FETCH_FAILED
+            if isinstance(got, _RateLimited) or got is FETCH_FAILED:
+                failure = got
+                unanswered.update(chunk)
+                continue
+            records.update({k: (v, answered_as) for k, v in got.items()})
+
+    await _ask(mdb_type, ids)
+    missing = [i for i in ids if i not in records and i not in unanswered]
+    if missing and provider == "imdb":
+        await _ask("movie" if mdb_type == "show" else "show", missing)
+    if failure is not None and not records:
+        return failure
+
+    out: dict[str, tuple | _FetchFailed | _RateLimited] = {}
+    for media_id in ids:
+        genre = genre_label(genre_ids.get(media_id) or [], GENRE_PRIORITY)
+        if media_id in records:
+            record, answered_as = records[media_id]
+            out[media_id] = _parse_mdblist_title(record, media_id, answered_as, genre, bulk=True)
+        elif media_id in unanswered:
+            out[media_id] = failure
+        else:
+            logger.info(f"MDblist bulk: {provider}/{media_id} not found — returning empty result")
+            out[media_id] = ({}, genre, None, [], None)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -644,6 +924,39 @@ def draw_score_bar_vertical(
 # Frosted bar (rating_display_mode == 4)
 # ---------------------------------------------------------------------------
 
+_BAR_SILVER = (210, 210, 218)
+_BAR_GOLD   = (212, 175, 55)
+
+
+def _frosted_bar_geometry(height: int, bar_height_ratio: float, bottom_inset: float) -> tuple[float, float]:
+    """(height, top) of the Bar on a canvas *height* tall, in 500-wide units."""
+    bar_h = max(fixed(24), px(height * bar_height_ratio))
+    return bar_h, height - bar_h - px(height * bottom_inset)
+
+
+def frosted_bar_box(size: tuple[int, int], bar_height_ratio: float,
+                    bottom_inset: float = 0.0) -> tuple[int, int, int, int]:
+    """The box draw_frosted_bar fills, for laying out around it."""
+    bar_h, bar_y = _frosted_bar_geometry(size[1], bar_height_ratio, bottom_inset)
+    bar_h, bar_y = round(bar_h), round(bar_y)
+    return 0, bar_y, size[0], bar_y + bar_h
+
+
+def bar_fill_color(style: str, accent: str, score: int | None,
+                   custom_palette: "CustomScorePalette | None" = None) -> tuple[int, int, int] | None:
+    """The fill_color draw_frosted_bar takes for Bar style *style* in Rating
+    Bar Colour *accent*: None for a style with no fill, and for "sample",
+    which draw_frosted_bar derives from the bar's own tint."""
+    if style not in ("rating_black", "rating_frosted") or accent == "sample":
+        return None
+    fixed_colour = {"silver": _BAR_SILVER, "gold": _BAR_GOLD}.get(accent)
+    if fixed_colour is not None:
+        return fixed_colour
+    if score is None:
+        return _BAR_SILVER
+    mode = 3 if accent == "palette_custom" else int(accent[-1])
+    return score_color_for_mode(score, mode, custom_palette)[0]
+
 def draw_frosted_bar(
     image: Image.Image,
     left_text: str,
@@ -682,11 +995,14 @@ def draw_frosted_bar(
     width, height = image.size
     # Laid out in 500-wide units (pxscale) and snapped to this canvas's pixels
     # once the sizes that derive from bar_h are known.  Plain ints at 500.
-    bar_h = max(fixed(24), px(height * bar_height_ratio))
-    bar_y = height - bar_h - px(height * bottom_inset)
+    bar_h, bar_y = _frosted_bar_geometry(height, bar_height_ratio, bottom_inset)
 
     # ── Font ─────────────────────────────────────────────────────────────────
     font_size = max(fixed(10), px(bar_h * font_size_ratio))
+    h_pad     = max(fixed(20), px(width * 0.055))
+    if center_text and center_run is None:
+        # A long translated genre shrinks to fit between the bar's padding.
+        font_size = fonts.fit_label_size(visual(center_text), font_size, width - 2 * h_pad)
     try:
         font = fonts.label_font(font_size)
     except IOError:
@@ -698,8 +1014,8 @@ def draw_frosted_bar(
     # downward compensation to account for the accent bar stealing top space.
     text_y = px((bar_h - (_ref_b[3] - _ref_b[1])) / 2) - _ref_b[1]
 
-    _SILVER = (210, 210, 218)
-    _GOLD   = (212, 175, 55)
+    _SILVER = _BAR_SILVER
+    _GOLD   = _BAR_GOLD
     # Solid accent styles use a thin stripe; rating bar modes use a larger one.
     _accent_stripe = max(fixed(2), px(bar_h * 0.06))
     _rating_stripe = max(fixed(3), px(bar_h * 0.10))
@@ -820,7 +1136,6 @@ def draw_frosted_bar(
 
     txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
     td        = ImageDraw.Draw(txt_layer)
-    h_pad     = max(fixed(20), px(width * 0.055))
 
     if center_run is not None:
         import rating_badges

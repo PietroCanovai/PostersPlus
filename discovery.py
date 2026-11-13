@@ -20,6 +20,7 @@ returning    TV show with a fresh/upcoming non-premiere episode
 premiere     Show initial release within the last 14 days
 just_added   Movie with a fresh TMDB digital/TV release date
 season_finale Recently-ended TV final season
+blockbuster  Top-grossing film of its release year (box_office.py)
 cult         Cult Classic / Cult Film (MDblist keyword)
 foreign      Non-English original language film
 new_release  Legacy combined newly released signal
@@ -306,6 +307,7 @@ _SASH_TYPES: dict[str, str] = {
     "premiere":         "alert",     # red — show initial release date recency
     "just_added":       "alert",     # red — fresh movie digital/TV release
     "season_finale":    "alert",     # red — final-season/finale signal
+    "blockbuster":     "trending",  # blue — popularity signal, like cult
     "cult":            "trending",  # blue — popularity signal, closest to trending without a new colour
     "foreign":         "info",      # teal — informational / discovery
     "new_release":     "alert",     # red — legacy combined newly released signal
@@ -389,12 +391,24 @@ def release_date_label(
     if rd is None or not window:
         return None
     today = today or date.today()
-    if rd <= today:
+    # An episode is still to come on its own day ("Airing Oct 12" until it
+    # has gone out); a release is not, it has arrived.
+    if rd < today or (rd == today and window != "Airing"):
         return None
     month = _MONTHS_SHORT[rd.month - 1]
     if (rd - today).days >= 365:
         return f"{month} {rd.year} {window}"
     return f"{month} {rd.day} {window}"
+
+
+def premiered_label(premiere_date: str | None, *, today: date | None = None) -> str | None:
+    """"Oct 2 Premiered" for a series' first air date that has arrived, the
+    past-tense twin of release_date_label's "Dec 25 Premiere"; None for one
+    still to come or absent.  (Translated word-first: "Premiered Oct 2".)"""
+    rd = _parse_date(premiere_date)
+    if rd is None or rd > (today or date.today()):
+        return None
+    return f"{_MONTHS_SHORT[rd.month - 1]} {rd.day} Premiered"
 
 
 def season_window(season: int) -> str:
@@ -417,8 +431,9 @@ def tv_release_facts(
     series details (``next_episode_to_air``, ``last_episode_to_air`` and the
     season list) says which it is, at no extra API call:
 
-    * **Airing** — an episode aired within TV_RECENT_EPISODE_DAYS, or the next
-      one is due within TV_RETURNING_LOOKAHEAD_DAYS and continues the season.
+    * **Airing** — an episode aired within TV_RECENT_EPISODE_DAYS (unless TMDB
+      marks it a finale), or the next one is due within
+      TV_RETURNING_LOOKAHEAD_DAYS and continues the season.
       A mid-season break further out than that is still Airing, dated with the
       episode it resumes on ("Jan 8 Returns").
     * **Renewed** — the next season is known: either its first episode is
@@ -446,6 +461,15 @@ def tv_release_facts(
     next_ep = tmdb_data.get("next_episode") or None
     last_ep = tmdb_data.get("last_episode") or None
     seasons = tmdb_data.get("seasons") or []
+
+    # Data cached before the "next" episode aired: it is the latest one now.
+    # Left as next, a season that premiered since read as an undated
+    # "Renewed" (its own date passed, its last episode the old finale).
+    _next_aired = _parse_date(_episode_date(next_ep))
+    if _next_aired is not None and _next_aired <= today:
+        if (_parse_date(_episode_date(last_ep)) or date.min) <= _next_aired:
+            last_ep = next_ep
+        next_ep = None
 
     def _future(value: str | None) -> date | None:
         d = _parse_date(value)
@@ -479,7 +503,21 @@ def tv_release_facts(
     last_date = _parse_date(_episode_date(last_ep))
     next_date = _parse_date(_episode_date(next_ep))
     last_season = _episode_season(last_ep) or 0
-    recent = last_date is not None and 0 <= (today - last_date).days <= TV_RECENT_EPISODE_DAYS
+    # A finale TMDB has marked as one ends the run there: without it a show
+    # read Airing for a fortnight after its season was over (Ted Lasso).
+    # So does a season released all at once (Gnomes: six episodes in a day),
+    # which TMDB doesn't mark: its last episode, out on the season's own date.
+    _season_count = _season_episode_count(seasons, _episode_season(last_ep))
+    _season_date = next((s.get("air_date") for s in seasons
+                         if _season_number(s) == _episode_season(last_ep)), None)
+    binge_dropped = (
+        _season_count is not None and _season_count >= 2
+        and (_episode_number(last_ep) or 0) >= _season_count
+        and _season_date is not None and _season_date == _episode_date(last_ep)
+    )
+    recent = (last_date is not None and 0 <= (today - last_date).days <= TV_RECENT_EPISODE_DAYS
+              and (last_ep or {}).get("episode_type") not in ("finale", "mid_season")
+              and not binge_dropped)
 
     if next_date is not None and next_date >= today:
         next_season = _episode_season(next_ep) or last_season
@@ -508,8 +546,57 @@ def tv_release_facts(
         air_date = _future(air)
         if air_date is not None:
             return "Renewed", air_date.isoformat(), season_window(n)
+        premiered = _parse_date(air)
+        if premiered is not None and (today - premiered).days <= TV_RECENT_EPISODE_DAYS:
+            # Its premiere has been and gone, the episode data hasn't caught up.
+            return "Airing", None, None
         return "Renewed", None, None
     return None, None, None
+
+
+def tvdb_revival(
+    status: str | None,
+    tmdb_data: dict,
+    tvdb_series: dict | None,
+    *,
+    today: date | None = None,
+) -> "tuple[str, str | None, str | None] | None":
+    """``(status, upcoming_date, window)`` for a series TMDB has closed but
+    TVDB has carried on, else None.
+
+    TMDB can sit at "Ended" well after a show is renewed — Cyberpunk:
+    Edgerunners stayed a one-season miniseries there with its second season
+    already in TVDB.  A revival needs both halves of the evidence from TVDB
+    (tvdb.fetch_series_status): a season numbered past the last one TMDB
+    knows, and a dated sign of life — a future episode, or one aired in the
+    last TV_RECENT_EPISODE_DAYS.  Neither alone is enough: TVDB splits some
+    anime into more seasons than TMDB does, and its "continuing" is left on
+    some finished shows, so the status word isn't evidence on its own.
+    Needs TMDB's episode data to count seasons by, so a series from an anime
+    provider (one entry per season, no episode list) is never revived.
+
+    Read the way tv_release_facts reads TMDB's: a future episode dates the
+    renewal ("Oct 20 Season 2"), a recent one makes it on air.
+    """
+    if status not in ("Ended", "Cancelled") or not tvdb_series:
+        return None
+    today = today or date.today()
+    last_ep = tmdb_data.get("last_episode") or None
+    tmdb_last = max([_episode_season(last_ep) or 0,
+                     *(n for s in tmdb_data.get("seasons") or []
+                       if (n := _season_number(s)) is not None)])
+    if tmdb_last <= 0:
+        return None
+    newer = [n for n in tvdb_series.get("seasons") or [] if n > tmdb_last]
+    next_date = _parse_date(tvdb_series.get("next_aired"))
+    last_date = _parse_date(tvdb_series.get("last_aired"))
+    recent = last_date is not None and 0 <= (today - last_date).days <= TV_RECENT_EPISODE_DAYS
+    upcoming = next_date is not None and next_date >= today
+    if not (newer and (upcoming or recent)):
+        return None
+    if upcoming and next_date > today and not recent:
+        return "Renewed", next_date.isoformat(), season_window(newer[0])
+    return "Airing", None, None
 
 
 def _season_number(season: dict) -> int | None:
@@ -596,6 +683,9 @@ class DiscoveryMeta:
     is_returning: bool = False        # S2+ non-premiere fresh/upcoming
     is_season_finale: bool = False    # conservative final-season/finale heuristic
 
+    # Top-grossing film of its release year (box_office.py) — movies only
+    is_blockbuster: bool = False
+
     # Keyword-based discovery signals (from MDblist keywords)
     is_cult:              bool = False   # cult-classic or cult-film
     is_true_story:        bool = False   # based-on-true-story
@@ -615,6 +705,9 @@ class DiscoveryMeta:
     # treatment, cache tiers and slot matching.
     upcoming_release_date: str | None = None
     upcoming_release_window: str | None = None
+    # The first air date behind is_premiere, printed on its sash ("Premiered
+    # Oct 2"); the caller clears it when dates are off.
+    premiere_date: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +725,7 @@ def extract_discovery_meta(
     release_date: str | None = None,
     keywords: list[dict] | None = None,
     festival_keyword:         str | None  = None,
+    imdb_id:                  str | None  = None,
     is_cult_override:         bool | None = None,
     is_true_story_override:   bool | None = None,
     is_metacritic_override:   bool | None = None,
@@ -645,6 +739,7 @@ def extract_discovery_meta(
     notable_cast:      dict[str, str] | None = None,
     language_labels:   dict[str, str] | None = None,
     is_watchlisted:    bool = False,
+    is_blockbuster:    bool = False,
 ) -> DiscoveryMeta:
     studios        = notable_studios   or NOTABLE_STUDIOS
     directors      = notable_directors or NOTABLE_DIRECTORS
@@ -656,6 +751,7 @@ def extract_discovery_meta(
         trending_rank=trending_rank,
         original_language=tmdb_data.get("original_language"),
         is_watchlisted=is_watchlisted,
+        is_blockbuster=is_blockbuster and media_type not in ("tv", "series"),
     )
 
     # Build keyword name set once — reused for festival detection and the
@@ -675,6 +771,7 @@ def extract_discovery_meta(
         festival_keyword if festival_keyword is not None
         else match_festival_keyword(keyword_names),
         tmdb_id if tmdb_id is not None else tmdb_data.get("id"),
+        imdb_id or tmdb_data.get("imdb_id"),
     )
 
     # --- Keyword-based discovery signals ---
@@ -751,6 +848,7 @@ def extract_discovery_meta(
     tmdb_release_date = tmdb_data.get("tmdb_release_date") or release_date
     if is_tv and _is_recent(tmdb_release_date):
         meta.is_premiere = True
+        meta.premiere_date = tmdb_release_date
 
     if is_tv:
         next_ep = tmdb_data.get("next_episode") or None
@@ -924,7 +1022,9 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
         return "Returning" if meta.is_returning else None
 
     if slot == "premiere":
-        return "Premiere" if meta.is_premiere else None
+        if not meta.is_premiere:
+            return None
+        return premiered_label(meta.premiere_date) or "Premiere"
 
     if slot == "just_added":
         return "Just Added" if meta.is_just_added else None
@@ -942,6 +1042,9 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
 
     if slot == "metacritic":
         return "Must-See" if meta.is_metacritic_must_see else None
+
+    if slot == "blockbuster":
+        return "Blockbuster" if meta.is_blockbuster else None
 
     if slot == "cult":
         return "Cult Classic" if meta.is_cult else None
@@ -1010,6 +1113,7 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "premiere",
     "just_added",
     "season_finale",
+    "blockbuster",
     "cult",
     "foreign",
     "new_release",

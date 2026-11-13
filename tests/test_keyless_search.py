@@ -68,8 +68,8 @@ class ConfiguratorKeylessTests(unittest.TestCase):
         self.assertNotIn("Enter your TMDB API key above to search", html)
         self.assertIn("async function fetchTmdbId(", html)
         self.assertIn("if (tmdbId) params.set('tmdb_id', tmdbId);", html)
-        self.assertIn("if (resolvedTmdbId || resolvedImdbId) loadPreview();", html)
-        self.assertIn("if (!data.tmdbId && !data.imdbId) return;", html)
+        self.assertIn("if (resolvedTmdbId || resolvedImdbId || resolvedAnimeId) loadPreview();", html)
+        self.assertIn("if (!data.tmdbId && !data.imdbId && !data.animeId) return;", html)
 
 
 if __name__ == "__main__":
@@ -110,7 +110,7 @@ class CinemetaStructureTests(unittest.TestCase):
     def test_release_status_rescue_is_wired_for_the_cinemeta_spine(self):
         src = open("main.py", encoding="utf-8").read()
         self.assertIn('elif use_cinemeta and tmdb_data.get("cinemeta_theatrical_date"):', src)
-        self.assertIn("_trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))", src)
+        self.assertIn("_trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or _trending_lists.url(type)))", src)
 
 
 class MdblistReleaseDatesTests(unittest.TestCase):
@@ -157,12 +157,10 @@ class AssumedDigitalWindowTests(unittest.TestCase):
         src = open("main.py", encoding="utf-8").read()
         block = src[src.index('elif use_cinemeta and tmdb_data.get("cinemeta_theatrical_date"):'):]
         block = block[:block.index("# r/movieleaks confirmation")]
-        # Only a "Cinema" verdict with no digital date is ever promoted, and
-        # only past the window; 0 disables it.
-        self.assertIn('_release_status == "Cinema" and _cm_digital is None', block)
-        self.assertIn("_cfg.CINEMA_ASSUMED_DIGITAL_DAYS > 0", block)
-        self.assertIn(".days > _cfg.CINEMA_ASSUMED_DIGITAL_DAYS", block)
-        self.assertIn('_release_status = "Streaming"', block)
+        # The keyless path goes through the same cinema window as TMDB's
+        # dates (tmdb.cinema_window_days), with whatever vote count it has.
+        self.assertIn("_compute_movie_status_from_dates(", block)
+        self.assertIn('vote_count=tmdb_data.get("vote_count")', block)
 
 
 class KeyChangeCompositeTests(unittest.TestCase):

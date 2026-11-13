@@ -146,12 +146,17 @@ class HideRatingConfiguratorTests(unittest.TestCase):
         # A control that cannot change anything should not be on screen to be
         # tried — the same rule the landscape tabs follow.
         fields = re.search(r"function updateRatingFields\(\) \{(.*?)\n\}", self.html, re.S).group(1)
-        for row in ("rating-glow-fields", "rating-alt-colors-toggle",
+        for row in ("rating-glow-fields",
                     "numeric-score10-row", "minimalist-score10-row", "bar-score10-row"):
             with self.subTest(row=row):
                 line = re.search(rf"getElementById\('{row}'\)\.style\.display\s*=([^\n]*)", fields)
                 self.assertIsNotNone(line, f"{row} is not painted by updateRatingFields")
                 self.assertIn("!hideRating", line.group(1))
+        # The palette row asks _paletteUsed, which answers no with it hidden.
+        used = re.search(r"function _paletteUsed\(\) \{(.*?)\n\}", self.html, re.S).group(1)
+        # Except landscape's Rating Bar, whose bar stays with the rating hidden.
+        self.assertIn("if (c('tog-hide-rating') && !_scoreBarKept()) return false;", used)
+        self.assertIn("getElementById('rating-alt-colors-toggle').style.display = _paletteUsed()", fields)
 
     def test_hiding_the_rating_leaves_the_rating_bar_choice_alone(self):
         # The fallback is display-only. Writing it into the select made the
@@ -170,7 +175,8 @@ class HideRatingConfiguratorTests(unittest.TestCase):
 
     def test_returning_to_portrait_repaints_the_rating_rows(self):
         shape = re.search(r"function updateShapeFields\(\) \{(.*?)\n\}", self.html, re.S).group(1)
-        self.assertIn("if (!landscape) updateRatingFields();", shape)
+        # Both ways: each shape's Display Mode picks the rating rows on show.
+        self.assertRegex(shape, r"\n  updateRatingFields\(\);")
 
 
 if __name__ == "__main__":

@@ -84,6 +84,12 @@ Override the Kitsu endpoint (useful for a proxy or a mirror).
 
 Default: `https://kitsu.io/api/edge`
 
+### `JIKAN_API_URL`
+
+The Jikan v4 instance (a MyAnimeList API, no key needed) a later anime season's own MyAnimeList score is read from. MDBList only has one MyAnimeList score per show, its first season's, which is kept when Jikan can't answer or the season isn't scored yet. The public `api.jikan.moe` shut down on 1 October 2026, so the default is a community-run instance; to run your own, see [AIOMetadata's self-hosted Jikan guide](https://github.com/cedya77/aiometadata/blob/dev/docs/self-hosted-jikan.md) and point this at it. Leave it empty to always use the first season's score.
+
+Default: `https://jikan.slokker.cc/v4`
+
 ### `CINEMETA_METADATA_CACHE_DURATION`
 
 Days to cache a title's Cinemeta document — the art urls, title, genres, dates and the TMDB id it carries (which is what resolves an IMDb-only request without a TMDB key). Metahub art itself is cached under the normal image cache.
@@ -96,12 +102,6 @@ Days to cache a "no such id on Cinemeta" result. Throttles and network errors ar
 
 Default: `3`
 
-### `CINEMA_ASSUMED_DIGITAL_DAYS`
-
-Without a TMDB key, a movie's release status comes from Cinemeta's theatrical and disc dates and MDBList's digital date. When none of those says the film has left cinemas — no MDBList key, or MDBList has no digital date yet — a theatrical release older than this many days is treated as Streaming rather than Cinema. Studio windows have settled at 17–45 days for most films and about 60 for the largest releases. Never consulted when a digital, physical or TMDB date is known. Set to 0 to keep Cinema until a date is known.
-
-Default: `60`
-
 ### `CINEMETA_API_BASE`
 
 Override the Cinemeta endpoint (useful for a proxy or a mirror).
@@ -112,9 +112,27 @@ Default: `https://v3-cinemeta.strem.io`
 
 ## Caching and output
 
+### `CINEMA_ASSUMED_DIGITAL_DAYS`
+
+TMDB is often slow to add a film's digital date, and sometimes never does. A movie whose only known past release is theatrical, with no digital date published, is treated as Streaming rather than Cinema once its theatrical date is older than this many days. This applies with or without a TMDB key: without one, the dates come from Cinemeta (theatrical, disc) and MDBList (digital). Studio windows have settled at 17–45 days for most films and about 60 for the largest releases. Films with at least `CINEMA_POPULAR_VOTES` TMDB votes use `CINEMA_POPULAR_DIGITAL_DAYS` instead. A published digital date, even a future one, always wins over the assumption, and a film assumed to be streaming still has its TMDB dates re-checked daily. Set to 0 to keep Cinema until a date is known (up to `CINEMA_MAX_AGE_YEARS`).
+
+Default: `60`
+
+### `CINEMA_POPULAR_VOTES`
+
+TMDB vote count at which a movie counts as popular: big enough that TMDB will publish its digital date on time, and big enough for a long cinema run. Such films stay Cinema for up to `CINEMA_POPULAR_DIGITAL_DAYS` rather than `CINEMA_ASSUMED_DIGITAL_DAYS`. The vote count is TMDB's, refreshed with the title's metadata (weekly). A movie with no known vote count (a keyless Cinemeta render, for one) uses the shorter window; a film on a trending list without a vote count on its row counts as popular when `TRENDING_HIDE_UNRELEASED` judges it. Set to 0 to treat every movie alike (the shorter window).
+
+Default: `1000`
+
+### `CINEMA_POPULAR_DIGITAL_DAYS`
+
+Like `CINEMA_ASSUMED_DIGITAL_DAYS`, for movies with at least `CINEMA_POPULAR_VOTES` TMDB votes: past this many days in cinemas with no digital date published, they are treated as Streaming. Long enough for the longest modern runs (about 120 days). Set to 0 to keep popular films at Cinema until a date is known (up to `CINEMA_MAX_AGE_YEARS`).
+
+Default: `180`
+
 ### `CINEMA_MAX_AGE_YEARS`
 
-Movies whose only known release is a theatrical date older than this many years are treated as "Streaming" rather than "Cinema" — guards against stale TMDB data that never got a physical/digital release date added. Set to 0 to disable the gate entirely. Default: 3.
+Outer backstop: a movie whose only known past release is a theatrical date older than this many years is treated as "Streaming" rather than "Cinema", whatever `CINEMA_ASSUMED_DIGITAL_DAYS` and `CINEMA_POPULAR_DIGITAL_DAYS` say and even if TMDB lists a (stale) future digital date. Set to 0 to disable the gate entirely.
 
 Default: `3`
 
@@ -133,6 +151,26 @@ Default: `10`
 How long a *provisional* poster is kept: one rendered with a piece missing — quality badges still being fetched, a rating source rate-limited or down, a text-detection scan still queued. It is served without an ETag and with `Cache-Control: public, max-age` no longer than what is left of this window, so neither the server nor a client holds an incomplete poster for long, while an outage of the thing it waits on costs one render per title and configuration per window rather than one per view. `0` never keeps them: every view renders again until the poster is complete (the behaviour before this setting). Default: `300`.
 
 Default: `172800`
+
+### `TRENDING_SOURCE_CHOICES`
+
+More trending lists visitors may pick in the configurator's trending **Configure** dialog, while `TRENDING_LIST_CHOICE` is on. Comma-separated `type|Name|URL` entries, where `type` is `movie`, `tv`, `anime` or `anime_movie` and the URL is an MDBList list page or a TMDB-shaped JSON endpoint, as for `TRENDING_SOURCE_MOVIE`:
+
+```
+TRENDING_SOURCE_CHOICES=movie|Trakt Trending|https://mdblist.com/lists/<user>/<movie-list>,tv|Trakt Trending|https://mdblist.com/lists/<user>/<show-list>
+```
+
+The name is what visitors see, and its slug (`trakt-trending`) is what their URLs carry, so a list's URL can be changed without breaking them. Each entry is one more list for that type: it is fetched only once someone picks it, refreshed when it is due, and dropped after a week nobody asks for it. A pick that is later removed from here falls back to the instance's own list.
+
+Default: (empty)
+
+### `TRENDING_TOP10_URL`
+
+Where the trending **Configure** dialog's **Streaming Top 10** charts are read: each streaming service's daily Top 10 in each of 119 countries, as FlixPatrol publishes them. The default is the fp-crawler project's daily copies on GitHub, the same files AIOMetadata's Top 10 catalogs read. If that copy goes away, point this at a mirror of the same files: `availability.json` (which services each country has) and one `<country>.json` per country (`united-kingdom.json`, `global.json`).
+
+While the charts can't be read, each Streaming Top 10 catalog keeps serving the last list it had rather than going empty. The picker's index of countries and services is stored in the cache volume, so it survives a restart. Turn the whole feature off by leaving `flixpatrol` out of `TRENDING_LIST_SOURCES`.
+
+Default: `https://raw.githubusercontent.com/0xConstant1/fp-crawler/main/catalogs`
 
 ### `TRENDING_SOURCE_MAX_ITEMS`
 
@@ -349,21 +387,25 @@ Default: `100`
 
 ## Genres
 
-A title usually has several genres. The first one it carries, in the order below, is the genre printed on the poster. It also sets the tint and background of the no-art fallback card and the font used for a text title. The easiest way to change an order is to drag the list in the [admin dashboard](README.md#admin-dashboard). In the environment, give comma-separated TMDB genre ids. Unknown or repeated ids are ignored, and any id you leave out keeps its default place at the end. Changing an order re-renders cached posters once.
+A title usually has several genres. The first one it carries, in the order below, is the genre printed on the poster. It also sets the tint and background of the no-art fallback card and the font used for a text title. The easiest way to change an order is to drag the list in the [admin dashboard](README.md#admin-dashboard). In the environment, give comma-separated TMDB genre ids. Unknown or repeated ids are ignored. If you list only a few ids, the rest follow in their default order. If your list is missing just a few ids (an order saved before a genre was added), each missing one goes in front of the id that follows it in the default. Changing an order re-renders cached posters once.
 
 TMDB gives TV shows a merged "Sci-Fi & Fantasy" genre (10765). PostersPlus splits it into Sci-Fi (878) or Fantasy (14) using the show's TMDB keywords. When the keywords tie, it asks Cinemeta for IMDb's genres. Shows that neither source decides keep 10765, which prints as Sci-Fi. "Action & Adventure" (10759) and "War & Politics" (10768) aren't split. They print as Action and War, and are listed separately so they can be ranked on their own.
+
+TMDB has no Horror genre for TV, so American Horror Story printed Fantasy. A show gets Horror (27) when MDBList lists it. That answer comes with the ratings PostersPlus already fetches, so it costs no extra call. Until MDBList has answered for a show, and on servers without an MDBList key, the show's TMDB keywords decide: a keyword with "horror" in it gives Horror. A show with no keywords asks Cinemeta for IMDb's genres, and TVDB (when a TVDB key is set) if Cinemeta has nothing.
+
+Rom-Com (`1074935`) isn't a TMDB genre. Any title TMDB (or AniList/Kitsu) gives both Comedy and Romance also carries it. Genres from Cinemeta or TVDB don't count, because IMDb and TVDB tag plain sitcoms like Friends with Romance. By default it ranks just above Comedy, so The Love Hypothesis and Notting Hill print Rom-Com while Friends, which TMDB tags Comedy only, stays Comedy. To turn it off, rank it below Comedy and Romance.
 
 ### `GENRE_PRIORITY`
 
 The order for every title except those requested by anime id. Horror, Thriller, Sci-Fi and Fantasy come first because they say the most about a title. Mystery comes after them because TMDB puts it on so much of its TV. War ranks above Action and History. Drama and Adventure come near the end because so many titles carry them, and Animation is after them because the poster art already shows a title is animated.
 
-Default: `27,53,878,10765,14,9648,80,35,10749,10751,10752,10768,28,10759,36,10402,37,99,18,12,16,10764,10762,10763,10766,10767`
+Default: `27,53,878,10765,14,9648,80,1074935,35,10749,10751,10752,10768,28,10759,36,10402,37,99,18,12,16,10764,10762,10763,10766,10767`
 
 ### `ANIME_GENRE_PRIORITY`
 
 The order for titles requested by an AniList or Kitsu id. Action, Adventure and Fantasy rank higher here than in the main order, because they describe anime better than the Mystery or Supernatural tags the providers add liberally. Animation stays last, as the label when nothing else matches.
 
-Default: `10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,10402,18,10762,10751,16`
+Default: `1074935,10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,10402,18,10762,10751,16`
 
 ---
 
@@ -379,6 +421,17 @@ inside the cache volume, so no extra mount is needed. The file is re-read
 within a few seconds of changing, no restart needed.
 
 Default: `/app/cache/discovery_overrides.json`
+
+### `SASH_LABELS_PATH`
+
+JSON file that holds the operator's wording for sash labels ("New Season",
+"#{rank} Today", "Streams {month} {day}"), per poster language, on top of the
+bundled translations in `languages/`. The admin dashboard's Sash labels view
+writes it. The default sits inside the cache volume, so no extra mount is
+needed. The file is re-read within a few seconds of changing, no restart
+needed, and posters re-render as they are next requested.
+
+Default: `/app/cache/sash_labels.json`
 
 
 ### `LOGO_CONTRAST_RESCUE`

@@ -620,12 +620,14 @@ def match_festival_keyword(keyword_names: set[str]) -> str | None:
     return None
 
 
-def festival_label(keyword: str | None, tmdb_id: int | str | None) -> str | None:
+def festival_label(keyword: str | None, tmdb_id: int | str | None,
+                   imdb_id: str | None = None) -> str | None:
     """The sash label for a title, or None if no festival applies.
 
-    A top-prize winner is recognised from its TMDB id alone, so the prize still
-    shows when MDblist never answered.  Everything else needs the keyword to
-    know a festival is involved at all.
+    A top-prize winner is recognised from its TMDB id alone, or from its IMDb id
+    on the winners lists in data/festival_winners.json (award_lists.py), so the
+    prize still shows when MDblist never answered.  Everything else needs the
+    keyword to know a festival is involved at all.
     """
     numeric_id: int | None = None
     if tmdb_id is not None:
@@ -638,6 +640,11 @@ def festival_label(keyword: str | None, tmdb_id: int | str | None) -> str | None
         for festival in FESTIVALS:
             if numeric_id in festival.top_prize_ids:
                 return festival.top_prize
+
+    import award_lists
+    listed = _BY_KEYWORD.get(award_lists.festival_win(imdb_id) or "")
+    if listed is not None:
+        return listed.top_prize
 
     festival = _BY_KEYWORD.get(keyword) if keyword else None
     return festival.winner_label if festival else None

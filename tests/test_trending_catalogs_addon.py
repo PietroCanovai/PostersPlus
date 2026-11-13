@@ -10,14 +10,29 @@ import time
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import parse_qsl, urlsplit
 
 from fastapi.testclient import TestClient
 
 import anime
 import cache
+import param_aliases
 import main
+import tmdb
 from tests.test_trending_snapshot_turnover import _TempDb
 
+# The stored movie / TV lists' signature while anime has its own lists.
+TMDB_SIG = "tmdb" + tmdb._ANIME_SPLIT_MARK
+
+
+
+def _poster_query(url: str) -> dict:
+    """A poster URL's settings as the server reads them: short names spelled
+    out (param_aliases)."""
+    out: dict = {}
+    for k, v in param_aliases.expand(parse_qsl(urlsplit(url).query, keep_blank_values=True)):
+        out.setdefault(k, []).append(v)
+    return out
 
 class _AddonTest(_TempDb):
     def setUp(self):
@@ -62,6 +77,7 @@ class ManifestTests(_AddonTest):
             ("movie", "pp.trending.movie"),
             ("series", "pp.trending.series"),
             ("series", "pp.trending.anime"),
+            ("movie", "pp.trending.anime.movie"),
         ])
 
     def test_no_access_key_serves_the_plain_path(self):
@@ -90,7 +106,7 @@ class CatalogTests(_AddonTest):
             "11": {"name": "First", "year": "2026", "imdb_id": "tt0000011", "poster": "/a.jpg"},
             "22": {"name": "Second", "poster": "/b.jpg"},
             "33": {"name": "Third"},
-        }, "tmdb")
+        }, TMDB_SIG)
 
         async def _resolve(client, tmdb_id, media_type, key):
             return {"22": "tt0000022"}.get(tmdb_id)
@@ -103,14 +119,14 @@ class CatalogTests(_AddonTest):
         self.assertEqual([m["name"] for m in metas], ["First", "Second", "Third"])
         self.assertEqual(metas[0]["poster"], "https://image.tmdb.org/t/p/w500/a.jpg")
         self.assertTrue(all(m["type"] == "movie" for m in metas))
-        # Cached no longer than the snapshot, like the ranked posters.
+        # Cached briefly: the snapshot can be rebuilt before it expires.
         max_age = int(resp.headers["cache-control"].split("max-age=")[1])
-        self.assertAlmostEqual(max_age, 86400, delta=5)
+        self.assertEqual(max_age, main._CATALOG_MAX_AGE)
 
     def test_a_snapshot_without_details_is_filled_from_tmdb(self):
         # Snapshots written before details were stored carry ids only; Nuvio
         # showed those rows as blank tiles named by IMDb id.
-        cache.set_cached_trending_snapshot("movie", {"11": 1}, "tmdb")
+        cache.set_cached_trending_snapshot("movie", {"11": 1}, TMDB_SIG)
         calls = []
 
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
@@ -131,7 +147,7 @@ class CatalogTests(_AddonTest):
     def test_skip_returns_the_rest_of_the_list(self):
         self._store_with_details("tv", ["1", "2", "3"], {
             k: {"imdb_id": f"tt000000{k}"} for k in ("1", "2", "3")
-        }, "tmdb")
+        }, TMDB_SIG)
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series/skip=2.json")
         self.assertEqual([m["id"] for m in resp.json()["metas"]], ["tt0000003"])
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series/skip=3.json")
@@ -142,7 +158,7 @@ class CatalogTests(_AddonTest):
         main._cfg.TRENDING_BROAD_FETCH_COUNT = 2
         self._store_with_details("tv", ["1", "2", "3"], {
             k: {"imdb_id": f"tt000000{k}"} for k in ("1", "2", "3")
-        }, "tmdb")
+        }, TMDB_SIG)
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series.json")
         self.assertEqual(len(resp.json()["metas"]), 2)
 
@@ -150,10 +166,27 @@ class CatalogTests(_AddonTest):
         self._store_with_details("anime", ["anilist:5", "anilist:9"], {
             "anilist:5": {"name": "Five", "poster": "https://img.anili.st/5.jpg"},
         }, "anilist")
-        resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: None):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
         metas = resp.json()["metas"]
         self.assertEqual([m["id"] for m in metas], ["anilist:5", "anilist:9"])
         self.assertEqual(metas[0]["poster"], "https://img.anili.st/5.jpg")
+
+    def test_anime_catalog_hands_out_the_mapped_kitsu_id(self):
+        # Stream addons and Nuvio's watch history know Kitsu ids, not
+        # AniList's; an entry the mapping has no Kitsu id for stays AniList.
+        self._store_with_details("anime", ["anilist:5", "anilist:9"], {}, "anilist")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: {5: 49001}.get(a)):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        self.assertEqual([m["id"] for m in resp.json()["metas"]], ["kitsu:49001", "anilist:9"])
+
+    def test_anime_catalog_keeps_ids_unique_and_survives_a_bad_id(self):
+        # Two entries on one Kitsu entry: the later keeps its AniList id, so
+        # item N still lines up with rank N.  A malformed id is passed through.
+        self._store_with_details("anime", ["anilist:5", "anilist:6", "anilist:x"], {}, "anilist")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: {5: 49001, 6: 49001}.get(a)):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        self.assertEqual([m["id"] for m in resp.json()["metas"]], ["kitsu:49001", "anilist:6", "anilist:x"])
 
     def test_unknown_catalog_and_wrong_type_are_not_found(self):
         self.assertEqual(self.client.get("/trending/sekrit/catalog/movie/pp.trending.series.json").status_code, 404)
@@ -174,7 +207,7 @@ class AddonConfigTests(_AddonTest):
 
     def setUp(self):
         super().setUp()
-        self._store_with_details("movie", ["11"], {"11": {"name": "A", "imdb_id": "tt0000011"}}, "tmdb")
+        self._store_with_details("movie", ["11"], {"11": {"name": "A", "imdb_id": "tt0000011"}}, TMDB_SIG)
         self._store_with_details("anime", ["anilist:5"], {"anilist:5": {"name": "Five"}}, "anilist")
 
     def _metas(self, path, **headers):
@@ -188,8 +221,8 @@ class AddonConfigTests(_AddonTest):
                             **{"x-forwarded-proto": "https", "x-forwarded-host": "posters.example"})
         poster = metas[0]["poster"]
         self.assertTrue(poster.startswith("https://posters.example/poster?"), poster)
-        from urllib.parse import parse_qs, urlsplit
-        q = parse_qs(urlsplit(poster).query)
+        from urllib.parse import urlsplit
+        q = _poster_query(poster)
         self.assertEqual(q["tmdb_id"], ["11"])
         self.assertEqual(q["imdb_id"], ["tt0000011"])
         self.assertEqual(q["type"], ["movie"])
@@ -199,7 +232,7 @@ class AddonConfigTests(_AddonTest):
         self.assertNotIn("shape", q)
         self.assertEqual(len(q["tmdb_id"]), 1)
         # The same settings drawn 16:9 for landscape rows.
-        lq = parse_qs(urlsplit(metas[0]["landscapePoster"]).query)
+        lq = _poster_query(metas[0]["landscapePoster"])
         self.assertEqual(lq["shape"], ["landscape"])
         self.assertEqual(lq["tmdb_id"], ["11"])
         self.assertEqual(lq["badge_display_mode"], ["6"])
@@ -207,10 +240,10 @@ class AddonConfigTests(_AddonTest):
     def test_anime_posters_are_requested_by_anilist_id(self):
         seg = _cfg_segment("badge_display_mode=4")
         metas = self._metas(f"/trending/sekrit/{seg}/catalog/series/pp.trending.anime.json")
-        self.assertIn("stremio_id=anilist%3A5", metas[0]["poster"])
+        self.assertIn("stremio_id=anilist:5", metas[0]["poster"])
         self.assertIn("type=series", metas[0]["poster"])
         self.assertTrue(metas[0]["poster"].startswith("http://testserver/poster?"))
-        self.assertIn("stremio_id=anilist%3A5", metas[0]["landscapePoster"])
+        self.assertIn("stremio_id=anilist:5", metas[0]["landscapePoster"])
         self.assertIn("shape=landscape", metas[0]["landscapePoster"])
 
     def test_settings_segment_works_on_manifest_and_paged_urls(self):
@@ -244,6 +277,101 @@ class AddonConfigTests(_AddonTest):
     def test_unexpected_paths_are_not_found(self):
         self.assertEqual(self.client.get("/trending/sekrit/extra/manifest.json").status_code, 404)
         self.assertEqual(self.client.get("/trending/sekrit/catalog/movie.json").status_code, 404)
+
+
+
+class AddonLandscapeTests(_AddonTest):
+    """An "sh-" segment names the lists whose rows are landscape: their items
+    carry 16:9 art as the poster, marked posterShape "landscape", whether or
+    not the URL carries poster settings."""
+
+    def setUp(self):
+        super().setUp()
+        self._store_with_details("movie", ["11", "22"], {
+            "11": {"name": "A", "imdb_id": "tt0000011", "poster": "/a.jpg", "backdrop": "/a-bg.jpg"},
+            "22": {"name": "B", "imdb_id": "tt0000022", "poster": "/b.jpg"},
+        }, TMDB_SIG)
+        self._store_with_details("anime", ["anilist:5"], {
+            "anilist:5": {"name": "Five", "poster": "https://img.anili.st/5.jpg",
+                          "backdrop": "https://img.anili.st/5-banner.jpg"},
+        }, "anilist")
+
+    def _metas(self, path):
+        resp = self.client.get(path)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()["metas"]
+
+    def test_with_settings_the_poster_is_the_landscape_render(self):
+        seg = _cfg_segment("badge_display_mode=6")
+        meta = self._metas(f"/trending/sekrit/sh-m/{seg}/catalog/movie/pp.trending.movie.json")[0]
+        self.assertEqual(meta["posterShape"], "landscape")
+        self.assertEqual(_poster_query(meta["poster"])["shape"], ["landscape"])
+        self.assertEqual(meta["poster"], meta["landscapePoster"])
+        self.assertNotIn("background", meta)
+
+    def test_without_settings_the_poster_is_the_backdrop(self):
+        async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
+            return ([], False, [], "2026", "B", "/b.jpg", "/b-bg.jpg", {})
+
+        with mock.patch.object(main, "_coalesced_fetch_poster_metadata", side_effect=_meta) as fetch:
+            metas = self._metas("/trending/sekrit/sh-m/catalog/movie/pp.trending.movie.json")
+        # The stored backdrop, then TMDB's for the row that had none.
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual([m["poster"] for m in metas], [
+            "https://image.tmdb.org/t/p/w780/a-bg.jpg", "https://image.tmdb.org/t/p/w780/b-bg.jpg"])
+        self.assertTrue(all(m["posterShape"] == "landscape" for m in metas))
+        self.assertTrue(all(m["background"] == m["poster"] for m in metas))
+
+    def test_a_title_without_a_backdrop_keeps_its_portrait_poster(self):
+        async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
+            return ([], False, [], "2026", "B", "/b.jpg", None, {})
+
+        with mock.patch.object(main, "_coalesced_fetch_poster_metadata", side_effect=_meta):
+            meta = self._metas("/trending/sekrit/sh-m/catalog/movie/pp.trending.movie.json")[1]
+        self.assertEqual(meta["poster"], "https://image.tmdb.org/t/p/w500/b.jpg")
+        self.assertEqual(meta["posterShape"], "poster")
+
+    def test_only_the_named_lists_are_landscape(self):
+        metas = self._metas("/trending/sekrit/sh-a/catalog/movie/pp.trending.movie.json")
+        self.assertTrue(all(m["posterShape"] == "poster" for m in metas))
+        anime = self._metas("/trending/sekrit/sh-a/catalog/series/pp.trending.anime.json")[0]
+        self.assertEqual(anime["posterShape"], "landscape")
+        self.assertEqual(anime["poster"], "https://img.anili.st/5-banner.jpg")
+
+    def test_without_the_segment_rows_stay_portrait(self):
+        metas = self._metas("/trending/sekrit/catalog/movie/pp.trending.movie.json")
+        self.assertTrue(all(m["posterShape"] == "poster" for m in metas))
+        self.assertTrue(all("background" not in m for m in metas))
+
+    def test_segment_order_and_unknown_letters(self):
+        seg = _cfg_segment("badge_display_mode=6")
+        for path in (f"/trending/sekrit/{seg}/sh-mzz/catalog/movie/pp.trending.movie.json",
+                     "/trending/sekrit/sh-MT/catalog/movie/pp.trending.movie.json"):
+            self.assertEqual(self._metas(path)[0]["posterShape"], "landscape", path)
+        self.assertEqual(self.client.get("/trending/sekrit/sh-m/manifest.json").status_code, 200)
+
+    def test_the_segment_names_catalogs(self):
+        self.assertEqual(main._addon_landscape_catalogs("sh-m:tmdb.imdb,t:tmdb,a"),
+                         frozenset({"movie:tmdb", "movie:imdb", "tv:tmdb", "anime"}))
+        self.assertEqual(main._addon_landscape_catalogs("sh-MT"), frozenset({"movie", "tv"}))
+        self.assertEqual(main._addon_landscape_catalogs("sh-x:tmdb,zz"), frozenset())
+
+    def test_another_catalogs_pick_leaves_this_one_portrait(self):
+        metas = self._metas("/trending/sekrit/sh-m:imdb/catalog/movie/pp.trending.movie.json")
+        self.assertTrue(all(m["posterShape"] == "poster" for m in metas))
+
+    def test_the_default_catalog_by_its_source(self):
+        metas = self._metas("/trending/sekrit/sh-m:tmdb/catalog/movie/pp.trending.movie.json")
+        self.assertEqual(metas[0]["posterShape"], "landscape")
+
+    def test_segment_does_not_bypass_the_key(self):
+        self.assertEqual(self.client.get("/trending/sh-m/manifest.json").status_code, 403)
+        self.assertEqual(
+            self.client.get("/trending/sekrit/sh-m/sh-t/manifest.json").status_code, 404)
+
+    def test_the_key_is_redacted_beside_the_segment(self):
+        self.assertEqual(main._TruncateUrlFilter._redact("/trending/sh-mt/manifest.json"),
+                         "/trending/sh-mt/manifest.json")
 
 
 class _Resp:
@@ -281,11 +409,13 @@ class AniListTrendingTests(unittest.TestCase):
             ids = asyncio.run(anime.fetch_anilist_trending(client, details))
         self.assertEqual(ids, ["anilist:1", "anilist:2", "anilist:3"])
         self.assertEqual(calls, [1, 2])
-        self.assertEqual(details["anilist:1"], {"name": "One", "year": "2026", "poster": "l1"})
+        self.assertEqual(details["anilist:1"], {"name": "One", "year": "2026", "poster": "l1", "genres": [16]})
         self.assertEqual(details["anilist:2"]["poster"], "x2")
 
     def test_query_keeps_to_series_formats(self):
-        self.assertIn("format_in: [TV, TV_SHORT, ONA]", anime._ANILIST_TRENDING_QUERY)
+        self.assertIn("format_in: $formats", anime._ANILIST_TRENDING_QUERY)
+        self.assertEqual(anime._ANILIST_SERIES_FORMATS, ["TV", "TV_SHORT", "ONA"])
+        self.assertEqual(anime._ANILIST_FILM_FORMATS, ["MOVIE"])
         self.assertIn("sort: TRENDING_DESC", anime._ANILIST_TRENDING_QUERY)
         self.assertIn("isAdult: false", anime._ANILIST_TRENDING_QUERY)
 
@@ -313,17 +443,10 @@ class AnimeRankTests(_AddonTest):
         self.assertEqual(rank, 2)
         self.assertIsNotNone(expires_at)
 
-    def test_render_path_ranks_anilist_requests_only_with_the_addon_on(self):
+    def test_render_path_ranks_anime_requests_only_with_the_addon_on(self):
         src = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn(
-            '_trending_by_anilist = anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED',
-            src,
-        )
-        self.assertIn(
-            'fetch_trending_rank_entry(client, anime_key, effective_tmdb_key, "anime")\n'
-            '            if _trending_by_anilist',
-            src,
-        )
+        self.assertIn("has_tmdb_id) if anime_split() else []", src)
+        self.assertIn("            if _anime_rank_keys\n", src)
 
     def test_cycle_refreshes_anime_and_rerenders_by_the_leading_key(self):
         seen = {}
@@ -350,7 +473,7 @@ class AnimeRankTests(_AddonTest):
         import tmdb
         calls = []
 
-        async def _fail(client, details_out=None):
+        async def _fail(client, details_out=None, **_kw):
             calls.append(1)
             return None
 
@@ -364,7 +487,7 @@ class AnimeRankTests(_AddonTest):
 
     def test_only_ranked_titles_keep_details(self):
         cache.set_cached_trending_snapshot(
-            "movie", {"1": 1}, "tmdb", {"1": {"name": "a"}, "2": {"name": "b"}},
+            "movie", {"1": 1}, TMDB_SIG, {"1": {"name": "a"}, "2": {"name": "b"}},
         )
         self.assertEqual(cache.get_cached_trending_details("movie"), {"1": {"name": "a"}})
 

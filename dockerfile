@@ -4,7 +4,7 @@
 # ~200MB of build toolchain doesn't ship to users.
 # Pinned by digest (Dependabot keeps it current): a moved tag can't change
 # what the published image is built from.
-FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS builder
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,15 +18,18 @@ RUN pip wheel --wheel-dir /wheels --no-cache-dir -r requirements.txt
 RUN find /wheels -type f -name 'opencv_python-*.whl' -delete
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 WORKDIR /app
 
 # libcairo2 (runtime only — no -dev headers needed) for pycairo;
 # gosu for privilege drop in entrypoint.sh;
-# tini as PID 1 so orphaned processes get reaped (see CMD below).
+# tini as PID 1 so orphaned processes get reaped (see CMD below);
+# libfribidi0, which Pillow's wheel loads to enable raqm (it bundles HarfBuzz
+# and raqm themselves): Arabic-script labels are shaped with it (fonts.py).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     libcairo2 \
+    libfribidi0 \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,7 +52,7 @@ COPY --from=builder /wheels /wheels
 # dependency scanners do not report the deliberate substitution as broken.
 RUN pip install --no-cache-dir --no-deps /wheels/*.whl \
     && sed -i 's/^Requires-Dist: opencv_python/Requires-Dist: opencv-python-headless/' \
-       /usr/local/lib/python3.11/site-packages/rapidocr-*.dist-info/METADATA \
+       "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"/rapidocr-*.dist-info/METADATA \
     && pip check \
     && rm -rf /wheels
 
@@ -100,6 +103,12 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 ENV STUDIO_GIT_COMMIT=${GIT_COMMIT} \
     STUDIO_BUILD_DATE=${BUILD_DATE}
+
+# onnxruntime (pulled in by RapidOCR) ships a 1DS telemetry client on Linux
+# that posts a persistent device id, hardware details and loaded-model info to
+# mobile.events.data.microsoft.com.  Off by default here; text_detect.py sets
+# the same default for runs outside this image.
+ENV ORT_DISABLE_TELEMETRY=1
 
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.

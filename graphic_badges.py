@@ -34,6 +34,7 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+import certifications
 from pxscale import px, pxr
 
 logger = logging.getLogger(__name__)
@@ -324,7 +325,7 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
     reads as a different kind of fact from the outlined ones beside it."""
     ss = 4
     # 500-wide rounding (pxscale), snapped to whole pixels for the image.
-    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss)
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss, layout_engine=ImageFont.Layout.BASIC)
     w = round(px(font.getlength(text) / ss + h * _BOX_PAD))
     im = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -343,6 +344,190 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
         d.rounded_rectangle(box, radius=px(h * _BOX_RADIUS * ss), outline=(*_INK, 235), width=bw)
         d.text((w * ss / 2, h * ss / 2), text, font=font, fill=(*_INK, 245), anchor="mm")
     return im.reduce(ss)
+
+
+# ---------------------------------------------------------------------------
+# Frosted quality chips (badge_quality_style=frosted)
+# ---------------------------------------------------------------------------
+
+# The quality badges, each on a chip of the frosted notch's glass: the poster
+# under it blurred beneath the frost tint, the mark or label in the tint's
+# ink.  The chip is the row's height, so a Dolby lockup inside it is smaller
+# than the bare mark — set to carry the same weight as the box labels.
+QUALITY_STYLES = ("solid", "frosted")
+DEFAULT_QUALITY_STYLE = "solid"
+# The certificate (badge_cert_style) and the network and studio logos
+# (badge_logo_style) take the same choice: "solid" is the outlined box and the
+# bare white logo, "frosted" puts each on the same glass chip.
+CHIP_STYLES = QUALITY_STYLES
+DEFAULT_CHIP_STYLE = DEFAULT_QUALITY_STYLE
+_CHIP_MARK  = 0.68    # a mark's height inside its chip, of the chip height
+_CHIP_PAD   = 0.50    # a mark's total horizontal padding, of the chip height
+_CHIP_FROST = 0.78    # the tint layer's opacity when no other is given
+_CHIP_LOGO  = 0.72    # the row height a logo is sized for inside its chip, of the chip height
+_CHIP_LOGO_MAX = 0.84 # a logo's most height inside its chip; a larger one grows the chip
+
+
+def _frost_look(tint: tuple[float, float, float], opacity: float | None) -> str:
+    """"rgb:r,g,b" for a frost tint, with "@alpha" (0-255) after it when the
+    tint layer's opacity is set: the sash's, so the chips and disc read as
+    the same glass as the frosted notch beside them."""
+    look = "rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
+    if opacity is not None:
+        look += f"@{round(255 * min(1.0, max(0.0, opacity)))}"
+    return look
+
+
+def _parse_look(look: str) -> tuple[tuple[int, int, int] | None, int]:
+    """(tint, tint alpha) of a look: the tint None for "auto"."""
+    alpha = round(255 * _CHIP_FROST)
+    if "@" in look:
+        look, a = look.split("@", 1)
+        alpha = int(a)
+    if look.startswith("rgb:"):
+        return tuple(int(c) for c in look[4:].split(",")), alpha
+    return None, alpha
+
+
+def quality_style(value: str | None) -> str | None:
+    """badge_quality_style (or badge_cert_style, badge_logo_style) as given;
+    None if unknown."""
+    v = (value or "").strip().lower()
+    return v if v in QUALITY_STYLES else None
+
+
+chip_style = quality_style
+
+
+def quality_look(style: str, tint: tuple[float, float, float] | None = None,
+                 opacity: float | None = None) -> str | None:
+    """What row_items takes for the quality badges (or the certificate, or
+    the logos): None for the solid ones, else the frost tint ("rgb:r,g,b",
+    then "@alpha" with an *opacity*), or "auto" while it isn't sampled (the
+    layout pass: a chip is the same size either way)."""
+    if style != "frosted":
+        return None
+    return _frost_look(tint, opacity) if tint is not None else "auto"
+
+
+def chip_looks(cfg, tint: tuple[float, float, float] | None = None,
+               opacity: float | None = None) -> dict[str, str | None]:
+    """row_items' quality_look, cert_look and logo_look for a request config."""
+    return {"quality_look": quality_look(cfg.badge_quality_style, tint, opacity),
+            "cert_look": quality_look(getattr(cfg, "badge_cert_style", DEFAULT_CHIP_STYLE), tint, opacity),
+            "logo_look": quality_look(getattr(cfg, "badge_logo_style", DEFAULT_CHIP_STYLE), tint, opacity)}
+
+
+def chips_want_frost(cfg, show_quality: bool) -> bool:
+    """Whether a frosted chip may be drawn, so the frost tint is sampled:
+    frosted quality badges with quality to show, or a frosted certificate or
+    logo in some group."""
+    slots = {s for g in cfg_groups(cfg) for s in g.slots}
+    return ((show_quality and wants_frost(cfg.badge_quality_style) and groups_use_quality(cfg))
+            or (wants_frost(getattr(cfg, "badge_cert_style", "")) and "cert" in slots)
+            or (wants_frost(getattr(cfg, "badge_logo_style", ""))
+                and bool(slots & {"network", "studio"})))
+
+
+def _chip_ink(content: str, h: int) -> Image.Image | None:
+    """The chip's contents as white ink on a clear sheet the chip's size:
+    a mark ("mark:DV") or a label, centred.  None for a mark not on disk."""
+    if content.startswith("mark:"):
+        mark = _mark(content[5:], max(1, round(h * _CHIP_MARK)))
+        if mark is None:
+            return None
+        w = round(px(pxr(mark.width) + h * _CHIP_PAD))
+        im = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        im.alpha_composite(mark, ((w - mark.width) // 2, (h - mark.height) // 2))
+        return im
+    return _chip_label(content, h)
+
+
+@lru_cache(maxsize=128)
+def _chip_label(content: str, h: int) -> Image.Image:
+    ss = 4
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss, layout_engine=ImageFont.Layout.BASIC)
+    w = round(px(font.getlength(content) / ss + h * _BOX_PAD))
+    im = Image.new("RGBA", (w * ss, h * ss), (255, 255, 255, 0))
+    ImageDraw.Draw(im).text((w * ss / 2, h * ss / 2), content, font=font,
+                            fill=(255, 255, 255, 255), anchor="mm")
+    return im.reduce(ss)
+
+
+@lru_cache(maxsize=64)
+def _chip_mask(w: int, h: int) -> Image.Image:
+    ss = 4
+    m = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(m).rounded_rectangle([0, 0, w * ss - 1, h * ss - 1],
+                                        radius=px(h * _BOX_RADIUS * ss), fill=255)
+    return m.reduce(ss)
+
+
+def _logo_chip_ink(logo: "Logo", h: int, scale: float) -> Image.Image | None:
+    """A network or studio logo as chip ink: sized as on a row a little
+    shorter than the chip, so it sits inside it whatever its shape; scaled
+    up past the chip's height, the chip grows with it."""
+    mark = _logo_mark(logo, max(1, round(h * _CHIP_LOGO)), scale)
+    if mark is None:
+        return None
+    ch = max(h, round(mark.height / _CHIP_LOGO_MAX))
+    w = round(px(pxr(mark.width) + ch * _CHIP_PAD))
+    im = Image.new("RGBA", (w, ch), (255, 255, 255, 0))
+    im.alpha_composite(mark, ((w - mark.width) // 2, (ch - mark.height) // 2))
+    return im
+
+
+def _frost_chip(content: str, h: int, look: str) -> Image.Image | None:
+    """The placeholder the row is laid out with (a smoked chip); draw_row
+    swaps in the glass once it knows what is underneath (_resolve_chip)."""
+    return _frost_sheet(_chip_ink(content, h), look)
+
+
+def _frost_sheet(ink: Image.Image | None, look: str) -> Image.Image | None:
+    if ink is None:
+        return None
+    im = Image.new("RGBA", ink.size, (20, 20, 24, 0))
+    im.putalpha(_chip_mask(*ink.size).point(lambda a: a * 150 // 255))
+    im.alpha_composite(ink)
+    im.info["frost_chip"] = (look, ink)     # the ink, so it is cut only once
+    return im
+
+
+def _glass(image: Image.Image, x: int, y: int, w: int, h: int,
+           tint: tuple[int, int, int] | None,
+           alpha: int = round(255 * _CHIP_FROST)) -> tuple[Image.Image, tuple[int, int, int]] | None:
+    """The frosted notch's glass for a (w, h) badge at (x, y): the art under
+    it blurred beneath the tint at *alpha*, unmasked.  ``tint`` None
+    samples one from that art.  Returns (glass, tint), or None off-canvas."""
+    box = (max(0, x), max(0, y), min(image.width, x + w), min(image.height, y + h))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    under = image.crop(box).convert("RGB")
+    if tint is None:
+        from awards import _frosted_tint, dominant_frost_rgb
+        tint = tuple(int(round(c)) for c in _frosted_tint(*dominant_frost_rgb(under)))
+    glass = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
+                (box[0] - x, box[1] - y))
+    frost = Image.new("RGBA", (w, h), (*tint, 0))
+    frost.putalpha(Image.new("L", (w, h), alpha))
+    return Image.alpha_composite(glass, frost), tint
+
+
+def _resolve_chip(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.Image:
+    """The frosted chip for where it lands at (x, y) on ``image``."""
+    from awards import _frost_ink
+    look, ink = im.info["frost_chip"]
+    w, h = im.size
+    made = _glass(image, x, y, w, h, *_parse_look(look))
+    if made is None:
+        return im
+    glass, tint = made
+    glass.putalpha(_chip_mask(w, h))
+    tinted = Image.new("RGBA", ink.size, (*_frost_ink(*tint), 0))
+    tinted.putalpha(ink.getchannel("A"))
+    glass.alpha_composite(tinted)
+    return glass
 
 
 # ---------------------------------------------------------------------------
@@ -391,16 +576,16 @@ class CinemaRun:
 
 
 def cinema_ink(style: str, run: CinemaRun | None,
-               tint: tuple[float, float, float] | None = None) -> str | None:
+               tint: tuple[float, float, float] | None = None,
+               opacity: float | None = None) -> str | None:
     """The badge's key for ``row_items`` ("disc|<look>|<face>"), or None when
     there is no badge.  The look is "auto" or the frost tint ("rgb:r,g,b"),
     "auto" too for a frosted disc whose tint isn't sampled yet (the layout
-    pass: same size either way).  The face is the date ("OCT 16"), else
+    pass: same size either way); an *opacity* follows the tint as "@alpha".  The face is the date ("OCT 16"), else
     "popcorn" or "clapper"."""
     if run is None:
         return None
-    look = ("rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
-            if style == "frosted" and tint is not None else "auto")
+    look = _frost_look(tint, opacity) if style == "frosted" and tint is not None else "auto"
     if run.home_date is not None:
         face = f"{_MONTHS[run.home_date.month - 1]} {run.home_date.day}"
     else:
@@ -522,8 +707,8 @@ def _disc_face(face: str, h: int, ink: tuple[int, int, int]) -> Image.Image:
     im = Image.new("RGBA", (d_ss, d_ss), (*ink, 0))
     d = ImageDraw.Draw(im)
     font_path = os.path.join(_FONTS_DIR, "Inter-Bold.ttf")
-    mon_font = ImageFont.truetype(font_path, px(h * 0.24) * ss or ss)
-    day_font = ImageFont.truetype(font_path, px(h * 0.49) * ss or ss)
+    mon_font = ImageFont.truetype(font_path, px(h * 0.24) * ss or ss, layout_engine=ImageFont.Layout.BASIC)
+    day_font = ImageFont.truetype(font_path, px(h * 0.49) * ss or ss, layout_engine=ImageFont.Layout.BASIC)
     # The two lines as one block centred on the disc, by their ink (caps and
     # figures, so no descenders): month cap-height, a gap, then the day.
     mon_h = -d.textbbox((0, 0), month, font=mon_font, anchor="ls")[1]
@@ -567,19 +752,13 @@ def _resolve_disc(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.
     box = (max(0, x), max(0, y), min(image.width, x + h), min(image.height, y + h))
     if box[2] <= box[0] or box[3] <= box[1]:
         return im
-    under = image.crop(box).convert("RGB")
     if look.startswith("rgb:"):
         from awards import _frost_ink
-        tint = tuple(int(c) for c in look[4:].split(","))
-        glass = Image.new("RGBA", (h, h), (0, 0, 0, 0))
-        glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
-                    (box[0] - x, box[1] - y))
-        frost = Image.new("RGBA", (h, h), (*tint, 0))
-        frost.putalpha(Image.new("L", (h, h), round(255 * 0.78)))
-        glass = Image.alpha_composite(glass, frost)
+        glass, tint = _glass(image, x, y, h, h, *_parse_look(look))
         glass.putalpha(_disc_mask(h))
         glass.alpha_composite(_disc_face(face, h, _frost_ink(*tint)))
         return glass
+    under = image.crop(box).convert("RGB")
     luma = float(np.asarray(under.convert("L"), dtype=np.float32).mean())
     return _gradient_disc(face, h, luma < _DISC_LIGHT_BELOW)
 
@@ -596,11 +775,16 @@ def _cinema_mark(key: str, h: int) -> Image.Image | None:
 
 LOGO_DIR = "/app/cache/company_logos"
 
-# Studios shown on the studio badge, by TMDB company id: ones people know and
-# whose TMDB logo still reads as a white mark at badge height.  Picked by
-# rendering each one; DreamWorks, Paramount, 20th Century, Toho, DC Studios,
-# Bad Robot, Studio Ghibli, Syncopy and New Line (too long to stay legible
-# at its fitted size) were left out as illegible there.
+# Studios shown on the studio badge, by TMDB company id: ones people know.
+# The first set was picked by rendering each one.  The rest have ids checked
+# against TMDB's company pages and are judged on tools/logo_sheet.py; drop
+# any that don't read.  DreamWorks, Paramount, 20th Century, Toho, Bad Robot,
+# Studio Ghibli, Syncopy and New Line were once left out as illegible, under
+# the conversion and sizing before the knockout and ink-weighted sizing, and
+# are back to be judged again.  TMDB often keeps a studio under several ids
+# (Lionsgate / Lions Gate Films), so each one it uses is listed.  The order
+# is the priority: a film by several listed studios shows the first here, not
+# the first TMDB credits.
 STUDIOS = {
     3: "Pixar", 1: "Lucasfilm", 420: "Marvel Studios", 7505: "Marvel",
     6125: "Walt Disney Animation Studios", 2: "Walt Disney Pictures", 6704: "Illumination",
@@ -609,6 +793,21 @@ STUDIOS = {
     43: "Fox Searchlight", 10146: "Focus Features", 90733: "NEON", 13184: "Annapurna",
     81: "Plan B", 5: "Columbia", 1632: "Lionsgate", 9383: "Blue Sky",
     128064: "DC Films", 923: "Legendary",
+    # Checked ids, judged on the logo sheet.
+    35: "Lions Gate Films", 21: "Metro-Goldwyn-Mayer", 14: "Miramax", 491: "Summit Entertainment",
+    41: "Orion Pictures", 559: "TriStar Pictures", 9195: "Touchstone Pictures",
+    79: "Village Roadshow Pictures", 10163: "Working Title", 82819: "Skydance",
+    179999: "Skydance Animation", 694: "StudioCanal", 6705: "Film4", 204957: "MUBI",
+    23948: "Cartoon Saloon", 84493: "Studio Ponoc", 5542: "Toei Animation",
+    5438: "Kyoto Animation", 5887: "ufotable", 21444: "MAPPA",
+    25: "20th Century Fox", 127928: "20th Century Studios", 521: "DreamWorks Animation",
+    7: "DreamWorks Pictures", 4: "Paramount Pictures", 12: "New Line Cinema",
+    97: "Castle Rock Entertainment", 275: "Carolco Pictures", 574: "Lightstorm Entertainment",
+    7036: "CJ Entertainment", 10342: "Studio Ghibli", 11461: "Bad Robot", 9996: "Syncopy",
+    882: "TOHO",
+    # Last, so a film's bigger studio wins (Die Hard credits Silver Pictures
+    # ahead of 20th Century Fox).
+    1885: "Silver Pictures", 443: "Big Talk Studios",
 }
 # A film has no network on TMDB; one made by a streamer's own studio arm gets
 # that streamer's network logo.  Company id -> network id.  Only as good as
@@ -617,9 +816,24 @@ STUDIOS = {
 STREAMER_NETWORKS = {
     178464: 213, 198834: 213, 185004: 213,   # Netflix (US, GB, JP) -> Netflix
     145174: 213,                             # Netflix International Pictures -> Netflix
-    194232: 2552,                            # Apple Studios -> Apple TV
-    210099: 1024,                            # Amazon MGM Studios -> Prime Video
-    7429: 49,                                # HBO Films -> HBO
+    171251: 213,                             # Netflix Animation Studios -> Netflix
+    194232: 2552, 14801: 2552,               # Apple Studios, Apple -> Apple TV
+    210099: 1024, 20580: 1024,               # Amazon MGM Studios, Amazon Studios -> Prime Video
+    7429: 49, 3268: 49, 14914: 49,           # HBO Films, HBO, HBO Documentary Films -> HBO
+}
+
+
+# Networks drawn with another network's logo, where their own doesn't
+# survive the white-mark conversion: Fox Kids' letters sit in a thick comic
+# outline that joins them into one blob.  Network id -> network id.
+NETWORK_STAND_INS = {
+    2686: 19,                                # Fox Kids -> FOX
+}
+# A network or studio held to one of its TMDB logos, by path.  TMDB has given
+# HBO two over the years (purple, and the sharper black one), and titles whose
+# facts were cached at different times would otherwise show either.
+PINNED_LOGOS = {
+    ("network", 49): "/tuomPhY2UtuPTqqFnKMVHvSb724.png",   # HBO, the black one
 }
 
 
@@ -630,24 +844,35 @@ class Logo:
     path: str        # TMDB logo path
 
 
+def make_logo(kind: str, ident: int, path: str) -> Logo:
+    """A Logo, held to its PINNED_LOGOS path where it has one."""
+    return Logo(kind, ident, PINNED_LOGOS.get((kind, ident), path))
+
+
 def pick_logos(facts: dict | None, media_type: str) -> tuple[Logo | None, Logo | None, int | None]:
-    """(network, studio, streamer network id) for a title's badge facts.  TV
-    takes its first network with a logo; a film, the network of the first
-    streamer studio that made it — whose logo path the caller looks up, as it
-    isn't in the film's own data (the third value).  The studio is the first
-    of the title's production companies on the curated list."""
+    """(network, studio, network id to look up) for a title's badge facts.
+    TV takes its first network with a logo; a film, the network of the first
+    streamer studio that made it.  Where the network's logo path isn't in the
+    title's own data — a film's streamer, or a network drawn with a stand-in's
+    logo (NETWORK_STAND_INS) — the caller looks it up by the third value.  The
+    studio is whichever of the title's production companies comes first on
+    the curated list."""
     if not facts:
         return None, None, None
-    network, streamer = None, None
+    network, lookup = None, None
     if media_type in ("tv", "series"):
-        network = next((Logo("network", n["id"], n["logo_path"])
-                        for n in facts.get("networks", []) if n.get("logo_path")), None)
+        first = next((n for n in facts.get("networks", []) if n.get("logo_path")), None)
+        if first and first["id"] in NETWORK_STAND_INS:
+            lookup = NETWORK_STAND_INS[first["id"]]
+        elif first:
+            network = make_logo("network", first["id"], first["logo_path"])
     else:
-        streamer = next((STREAMER_NETWORKS[c["id"]] for c in facts.get("companies", [])
-                         if c["id"] in STREAMER_NETWORKS), None)
-    studio = next((Logo("company", c["id"], c["logo_path"]) for c in facts.get("companies", [])
-                   if c["id"] in STUDIOS and c.get("logo_path")), None)
-    return network, studio, streamer
+        lookup = next((STREAMER_NETWORKS[c["id"]] for c in facts.get("companies", [])
+                       if c["id"] in STREAMER_NETWORKS), None)
+    listed = {c["id"]: c["logo_path"] for c in facts.get("companies", [])
+              if c["id"] in STUDIOS and c.get("logo_path")}
+    studio = next((make_logo("company", i, listed[i]) for i in STUDIOS if i in listed), None)
+    return network, studio, lookup
 
 
 def _logo_file(logo: Logo) -> str:
@@ -682,14 +907,56 @@ async def ensure_logo(client, logo: Logo | None) -> None:
     os.replace(tmp, _logo_file(logo))
 
 
-# A logo that is mostly one solid block (a badge, a shield: Marvel Studios'
-# red box, ABC's disc) carries its lettering as lighter colour inside it, which
-# a plain white mark would lose.  Those have their light parts cut out — but
-# only where the light parts don't swamp the block: a logo that is itself
-# light lettering (Marvel's wordmark, STARZ: all light) would otherwise
-# vanish.  Warner Bros.' shield is just over half gold (rim, letters, banner).
+# A shape that is mostly one solid block (a badge, a shield: Marvel Studios'
+# red box, ABC's disc, SBT's colour wheel, Toei's cat) carries its lettering as another
+# colour inside it, which a plain white mark would lose.  Those have the
+# lettering cut out, found against the block's own median brightness, never
+# a fixed one: a bright orange or yellow block is the block, not lettering.
+#
+# Lettering is one even colour on one side of the block, lighter (white on
+# red) or darker (black on a white disc).  So only one side is cut — the more
+# neutral one when both stand out, as white letters do on SBT's wheel, whose
+# dark purples stand out too — and of that side only what is near its colour:
+# its white or black when it has one (_KNOCKOUT_NEUTRAL), else its median
+# colour.  The wheel's yellows and purples are block.  Only where that is a
+# minority of the block (_KNOCKOUT_SHARE) and differs by more than shading
+# does (_KNOCKOUT_GAP): a logo that is all lettering (Marvel's wordmark,
+# STARZ) has nothing to cut.  And only parts the block holds inside it: one
+# that reaches the logo's outside edge (Fox Kids' yellow X, HBO Max's "max")
+# is part of the mark's own shape, and stays.  Warner Bros.' shield is just
+# over half gold (rim, letters, banner), so its blue field, inside the rim,
+# is what goes.
 _KNOCKOUT_FILL = 0.55
-_KNOCKOUT_LIGHT = (0.03, 0.65)
+_KNOCKOUT_SHARE = (0.03, 0.65)
+_KNOCKOUT_GAP = 60
+_KNOCKOUT_NEUTRAL = 40      # chroma (max - min channel) under which a colour is white, grey or black
+_KNOCKOUT_NEAR = 60         # RGB distance within which a pixel is the lettering's colour
+_KNOCKOUT_MIN_PART = 0.05   # share of the logo's ink a shape needs to be judged on its own
+
+
+def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
+    """The parts of ``marks`` the block surrounds: not joined to the logo's
+    outside (what isn't block) except through other marks."""
+    import cv2
+    passable = np.pad(marks | ~block, 1, constant_values=True).astype(np.uint8)
+    _, labels = cv2.connectedComponents(passable, connectivity=4)
+    return marks & (labels[1:-1, 1:-1] != labels[0, 0])
+
+
+def _lettering(rgb: np.ndarray, lum: np.ndarray, block: np.ndarray):
+    """(mask, colour) of the lettering a solid block holds, or (None, None)."""
+    differs = (np.abs(lum - np.median(lum[block])) > _KNOCKOUT_GAP) & block
+    chroma = rgb.max(axis=2) - rgb.min(axis=2)
+    sides = [m for m in (differs & (lum > np.median(lum[block])),
+                         differs & (lum < np.median(lum[block]))) if m.any()]
+    if not sides:
+        return None, None
+    side = min(sides, key=lambda m: float(chroma[m].mean()))
+    neutral = side & (chroma < _KNOCKOUT_NEUTRAL)
+    pick = neutral if neutral.sum() >= 0.3 * side.sum() else side
+    colour = np.median(rgb[pick], axis=0)
+    near = (np.linalg.norm(rgb - colour, axis=2) < _KNOCKOUT_NEAR) & side
+    return _enclosed(near, block), colour
 
 
 def logo_alpha(im: Image.Image) -> np.ndarray:
@@ -707,34 +974,78 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
         return np.zeros((1, 1), dtype=np.uint8)
     rows, cols = np.flatnonzero(solid.any(axis=1)), np.flatnonzero(solid.any(axis=0))
     y0, y1, x0, x1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
-    block = solid[y0:y1, x0:x1]
-    light = (lum[y0:y1, x0:x1] > 170) & block
-    light_share = light.sum() / max(1, block.sum())
-    if block.mean() > _KNOCKOUT_FILL and _KNOCKOUT_LIGHT[0] < light_share < _KNOCKOUT_LIGHT[1]:
-        alpha = alpha * np.clip((200 - lum) / 80, 0, 1)
-    return alpha[y0:y1, x0:x1].astype(np.uint8)
+    alpha, lum, block = alpha[y0:y1, x0:x1], lum[y0:y1, x0:x1], solid[y0:y1, x0:x1]
+    # Each separate shape is judged on its own, so an emblem over a wordmark
+    # (Toei's cat over "TOEI ANIMATION") has the emblem's lettering and
+    # details cut even though the logo as a whole is mostly empty.
+    import cv2
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(block.astype(np.uint8), connectivity=8)
+    rgb = a[y0:y1, x0:x1, :3]
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if area < _KNOCKOUT_MIN_PART * block.sum() or area <= _KNOCKOUT_FILL * w * h:
+            continue
+        box = (slice(y, y + h), slice(x, x + w))
+        part = labels[box] == i
+        marks, colour = _lettering(rgb[box], lum[box], part)
+        if marks is None or not _KNOCKOUT_SHARE[0] < marks.sum() / part.sum() < _KNOCKOUT_SHARE[1]:
+            continue
+        # Faded across the edge between block and lettering, by distance from
+        # the lettering's colour, so anti-aliased letters keep a clean
+        # outline; nothing further off is touched.
+        near = cv2.dilate(marks.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+        dist = np.linalg.norm(rgb[box] - colour, axis=2)
+        rest = near & part & ~marks
+        ref = max(1.0, float(np.median(dist[rest]))) if rest.any() else 255.0
+        alpha[box] = np.where(near, alpha[box] * np.clip((dist / ref - 0.25) / 0.5, 0, 1), alpha[box])
+    return alpha.astype(np.uint8)
 
 
-# Logos come in every shape, so they're sized by area rather than height:
-# each is scaled to cover about the area of a box _LOGO_AREA_W row heights
-# wide and one high, which shrinks a long wordmark (Lionsgate, Netflix) and
-# lets a compact emblem (HBO, A24) fill the row — no taller than the row, so
-# the shared top and bottom line holds, and no wider than _LOGO_MAX_W.
+# Logos come in every shape and weight, so they're sized by how much they
+# weigh on the row rather than by height: each is scaled to cover about the
+# area of a box _LOGO_AREA_W row heights wide and one high, which shrinks a
+# long wordmark (Lionsgate, Netflix) and grows a compact emblem (HBO, A24).
+# That area is then weighed by the logo's ink: a solid block (Marvel Studios'
+# box) holds far more than an outline or a thin wordmark in the same box, so
+# it is drawn smaller and the light one larger — half way to equal ink
+# (_LOGO_FILL_POWER), within _LOGO_FILL_LIMITS, since a hairline logo blown up
+# to a solid one's ink would tower over the row.
+#
+# Every logo then fits a box _LOGO_MAX_W rows wide and _LOGO_MAX_H high, so
+# its footprint is predictable wherever a group puts it.  The caps are what
+# size the two ends: compact emblems (abc, Universal) meet the height, long
+# wordmarks (TV TOKYO, TOKYO MX) the width.  A heavy logo's box shrinks with
+# its ink too, or a solid disc (abc, TNT) would fill the same box as an
+# outline emblem (Warner Bros., Universal) and look far bigger.  Tuned on a
+# sheet of real TMDB logos (tools/logo_sheet.py): aspect 2-4 wordmarks
+# (NETFLIX, CBS, PIXAR) are the reference the ends were pulled towards.
+# ``scale`` (badge_logo_scale) multiplies the result.
 _LOGO_AREA_W = 2.6
-_LOGO_MAX_W  = 3.5
+_LOGO_MAX_W  = 3.8
+_LOGO_MAX_H  = 1.15
+_LOGO_FILL   = 0.45            # the ink share of a typical logo's box
+_LOGO_FILL_POWER  = 0.5
+_LOGO_FILL_LIMITS = (0.75, 1.5)
+LOGO_SCALE_DEFAULT, LOGO_SCALE_RANGE = 1.0, (0.5, 2.0)
 
 
-def logo_size(shape: tuple[int, int], row_h: int) -> tuple[int, int]:
-    """(width, height) for a logo of ``shape`` (h, w) in a row ``row_h`` tall."""
+def logo_size(shape: tuple[int, int], row_h: int, fill: float = _LOGO_FILL,
+              scale: float = 1.0) -> tuple[int, int]:
+    """(width, height) for a logo of ``shape`` (h, w) whose ink covers
+    ``fill`` of its box, in a row ``row_h`` tall."""
     aspect = shape[1] / shape[0]
-    h = min(row_h, (row_h * row_h * _LOGO_AREA_W / aspect) ** 0.5)
-    w = min(h * aspect, row_h * _LOGO_MAX_W)
+    unit = row_h * scale
+    weight = (_LOGO_FILL / max(fill, 1e-3)) ** _LOGO_FILL_POWER
+    weight = min(_LOGO_FILL_LIMITS[1], max(_LOGO_FILL_LIMITS[0], weight))
+    box = unit * min(1.0, weight ** 0.5)    # a heavy logo's box shrinks with it
+    h = min(box * _LOGO_MAX_H, (unit * unit * _LOGO_AREA_W * weight / aspect) ** 0.5)
+    w = min(h * aspect, box * _LOGO_MAX_W)
     h = w / aspect
     return max(1, round(w)), max(2, round(h))
 
 
 @lru_cache(maxsize=128)
-def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
+def _logo_mark(logo: Logo, h: int, scale: float = 1.0) -> Image.Image | None:
     path = _logo_file(logo)
     if not os.path.exists(path):
         return None
@@ -745,7 +1056,8 @@ def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
         return None
     if a.shape[0] < 2:
         return None
-    m = Image.fromarray(a).resize(logo_size(a.shape, h), Image.Resampling.LANCZOS)
+    fill = float(a.mean()) / 255
+    m = Image.fromarray(a).resize(logo_size(a.shape, h, fill, scale), Image.Resampling.LANCZOS)
     out = Image.new("RGBA", m.size, (255, 255, 255, 0))
     out.putalpha(m)
     return out
@@ -768,10 +1080,17 @@ def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
 ANCHORS = ("chip", "tl", "tr", "bl", "br", "above_logo", "below_logo")
 # Centred on the title logo (or fallback title text), wherever it landed.
 LOGO_ANCHORS = ("above_logo", "below_logo")
-SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema")
+SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema", "legacy")
 # The slots that show stream quality; the rest come from TMDB alone, so a
-# layout without any of these needs no quality source at all.
+# layout without any of these needs no quality source at all.  "legacy" shows
+# quality in every style but "age" (legacy_uses_quality).
 QUALITY_SLOTS = ("video", "audio", "res")
+# The "legacy" slot draws one of the badges the old display modes drew, picked
+# by badge_legacy_style; the value is the badge_display_mode it came from.
+# "bookmark" isn't a row item: it hangs in its group's corner (main.
+# _draw_legacy_bookmark) and the rest of the group lays out around it.
+LEGACY_STYLES = {"notch": 4, "bookmark": 6, "row": 2, "combined": 5, "quality_age": 1, "age": 3}
+DEFAULT_LEGACY_STYLE = "notch"
 MAX_ITEMS = 4
 DEFAULT_GROUP1 = "chip:4:video,audio,res,cert"
 # The request parameters holding the groups, in drawing order.
@@ -863,9 +1182,21 @@ def format_group(group: Group | None) -> str:
     return spec if group.size == DEFAULT_SIZE else f"{spec}:{group.size}"
 
 
+def legacy_style(value: str | None) -> str | None:
+    """A badge_legacy_style value, or None when unknown."""
+    value = (value or "").strip().lower()
+    return value if value in LEGACY_STYLES else None
+
+
+def legacy_uses_quality(style: str) -> bool:
+    return style != "age"
+
+
 def groups_use_quality(cfg) -> bool:
     """Whether any of a request config's groups shows a quality badge."""
-    return any(slot in QUALITY_SLOTS for g in cfg_groups(cfg) for slot in g.slots)
+    legacy = legacy_uses_quality(getattr(cfg, "badge_legacy_style", DEFAULT_LEGACY_STYLE))
+    return any(slot in QUALITY_SLOTS or (slot == "legacy" and legacy)
+               for g in cfg_groups(cfg) for slot in g.slots)
 
 
 def cfg_groups(cfg) -> list[Group]:
@@ -896,7 +1227,8 @@ def resolve_groups(*raw: str | None) -> list[Group]:
 # Every badge is exactly the row's unit height, ink top to ink bottom — marks
 # cropped to their ink, boxes drawn edge to edge — so the row shares one top
 # and one bottom line.  Network and studio logos are the exception: sized by
-# area within that height (see logo_size), since their shapes vary so much.
+# area and ink around that height (see logo_size), since their shapes vary so
+# much, and centred on the row.
 
 _US_CERTS = {"G", "PG", "PG-13", "R", "NC-17",
              "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"}
@@ -906,58 +1238,93 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
               unit_h: int, slots: tuple[str, ...] = SLOTS,
               show_quality: bool = True,
               network: Logo | None = None, studio: Logo | None = None,
-              cinema: str | None = None) -> list[tuple[str, Image.Image]]:
+              cinema: str | None = None,
+              legacy=None,
+              quality_look: str | None = None,
+              logo_scale: float = LOGO_SCALE_DEFAULT,
+              cert_look: str | None = None,
+              logo_look: str | None = None) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
     Quality marks only when ``show_quality`` (the minimum-quality gate); the
     certificate always.  ``cinema`` is the cinema badge's key (cinema_ink), None
-    for a title that is out at home.  Dolby Vision and Atmos in the same group share the
-    combined mark, in the video slot's place."""
+    for a title that is out at home.  ``quality_look`` (quality_look) puts the
+    quality marks on frosted chips, ``cert_look`` the certificate and
+    ``logo_look`` the network and studio logos (the same looks, from
+    badge_cert_style and badge_logo_style), and ``logo_scale``
+    (badge_logo_scale) multiplies the logos' size.  ``legacy`` makes the
+    legacy slot's badge at a row height (main._legacy_badge), None when it
+    draws nothing; it does its own quality gating.  Dolby Vision and Atmos in
+    the same group share the combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
     dolby_h = unit_h
     combined = ("video" in slots and "audio" in slots and "DV" in t and "ATMOS" in t
                 and _mark("DV+ATMOS", dolby_h) is not None)
 
+    def mark(name: str):
+        if quality_look:
+            return _frost_chip("mark:" + name, unit_h, quality_look)
+        return _mark(name, dolby_h)
+
+    def box(text: str):
+        # Filled: solid enough to hold its own beside the Dolby marks;
+        # outlined boxes are left to the certificate.
+        if quality_look:
+            return _frost_chip(text, unit_h, quality_look)
+        return _box(text, unit_h, True)
+
     def video():
         if combined:
-            return _mark("DV+ATMOS", dolby_h)
+            return mark("DV+ATMOS")
         if "DV" in t:
-            return _mark("DV", dolby_h)
-        # Filled like the resolution box: solid enough to hold its own beside
-        # the Dolby marks; outlined boxes are left to the certificate.
+            return mark("DV")
         if "HDR10+" in t:
-            return _box("HDR10+", unit_h, True)
+            return box("HDR10+")
         if "HDR10" in t:
-            return _box("HDR10", unit_h, True)
+            return box("HDR10")
         return None
 
     def audio():
         if combined:
             return None
         if "ATMOS" in t:
-            return _mark("ATMOS", dolby_h)
+            return mark("ATMOS")
         if "DTSX" in t:
-            return _mark("DTSX", unit_h)
+            return mark("DTSX")
         return None
 
     def res():
         if "4K" in t:
-            return _box("4K", unit_h, True)
+            return box("4K")
         if "1080P" in t:
-            return _box("HD", unit_h, True)
+            return box("HD")
         return None
 
     def cert():
-        c = (certification or "").strip().upper()
-        if c in _US_CERTS:
-            return _box(c, unit_h, False)
-        if age_rating:
-            return _box(f"{int(age_rating)}+", unit_h, False)
-        return None
+        # The certificate as its country's board issues it (resolved by the
+        # caller, certifications.display); US ones may come in any case.
+        c = (certification or "").strip()
+        if c.upper() in _US_CERTS:
+            c = c.upper()
+        if not certifications.known(c):
+            if not age_rating:
+                return None
+            c = f"{int(age_rating)}+"
+        if cert_look:
+            return _frost_chip(c, unit_h, cert_look)
+        return _box(c, unit_h, False)
+
+    def logo(lg: Logo | None):
+        if lg is None:
+            return None
+        if logo_look:
+            return _frost_sheet(_logo_chip_ink(lg, unit_h, logo_scale), logo_look)
+        return _logo_mark(lg, unit_h, logo_scale)
 
     build = {"video": video, "audio": audio, "res": res, "cert": cert,
-             "network": lambda: _logo_mark(network, unit_h) if network else None,
-             "studio": lambda: _logo_mark(studio, unit_h) if studio else None,
-             "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None}
+             "network": lambda: logo(network),
+             "studio": lambda: logo(studio),
+             "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None,
+             "legacy": lambda: legacy(unit_h) if legacy else None}
     items = [(slot, build[slot]()) for slot in slots]
     return [(slot, im) for slot, im in items if im is not None]
 
@@ -978,6 +1345,28 @@ def fit(items: list[tuple[str, Image.Image]], budget: int, gap: int) -> list[tup
     while items and row_width(items, gap) > budget:
         items.pop()
     return items
+
+
+# A row whose network or studio logo doesn't fit on its own line, beside what
+# is already there (Minimalist's genre and year, say), has the logo shrunk in
+# these steps before the group is moved off that line — so a long wordmark
+# (TOKYO MX) gives a little size rather than its place.
+LOGO_SHRINK_STEPS = (0.9, 0.8, 0.7, 0.6)
+
+
+def has_logo(items: list[tuple[str, Image.Image]]) -> bool:
+    return any(slot in ("network", "studio") for slot, _ in items)
+
+
+def fit_shrinking(build, budget: int, gap: int, scale: float) -> list[tuple[str, Image.Image]] | None:
+    """``build(logo_scale)``'s items, all of them no wider than ``budget``,
+    their logos at ``scale`` or shrunk as far as LOGO_SHRINK_STEPS goes; None
+    when even that doesn't fit them all."""
+    for step in (1.0, *LOGO_SHRINK_STEPS):
+        items = build(scale * step)
+        if items and row_width(items, gap) <= budget:
+            return items
+    return None
 
 
 def free_run(occupied_cols: np.ndarray, right: bool, margin: int) -> int:
@@ -1010,6 +1399,13 @@ def draw_row(image: Image.Image, items: list[tuple[str, Image.Image]], *,
     for _, im in items:
         if "cinema_disc" in im.info:
             im = _resolve_disc(image, im, round(x), int(round(center_y - im.height / 2)))
+        elif "frost_chip" in im.info:
+            im = _resolve_chip(image, im, round(x), int(round(center_y - im.height / 2)))
+        if "legacy" in im.info:
+            # Carries its own glow and shadow.
+            image.alpha_composite(im, (round(x), int(round(center_y - im.height / 2))))
+            x += pxr(im.width) + gap
+            continue
         shadow, pad = _shadowed(im)
         sx, sy = round(x) - pad, int(round(center_y - im.height / 2)) - pad
         cl, ct = max(0, -sx), max(0, -sy)

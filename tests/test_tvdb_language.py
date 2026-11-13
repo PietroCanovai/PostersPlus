@@ -14,6 +14,13 @@ class ToTvdbLangTests(unittest.TestCase):
         self.assertEqual(_to_tvdb_lang("es-mx"), "spa")
         self.assertEqual(_to_tvdb_lang("fr-fr"), "fra")
 
+    def test_portuguese_keeps_brazil_apart_from_portugal(self):
+        # TVDB's "pt" is Brazil's Portuguese, "por" Portugal's.
+        self.assertEqual(_to_tvdb_lang("pt-br"), "pt")
+        self.assertEqual(_to_tvdb_lang("pt_BR"), "pt")
+        self.assertEqual(_to_tvdb_lang("pt-pt"), "por")
+        self.assertEqual(_to_tvdb_lang("pt"), "por")
+
     def test_locale_separators_and_casing_are_normalised(self):
         self.assertEqual(_to_tvdb_lang("es_MX"), "spa")
         self.assertEqual(_to_tvdb_lang("  ES-mx "), "spa")

@@ -12,7 +12,7 @@ import os
 # records the field the admin dashboard shows (group, kind, help, bounds) and
 # returns the raw string to parse, honouring the saved settings file over the
 # environment over the default.  See settings.py for the precedence rules.
-from settings import env as _env
+from settings import env as _env, merge_order
 
 
 def effective_cpus() -> int:
@@ -71,6 +71,7 @@ LOG_DIR               = "/app/cache/logs"
 
 # Environment
 
+PUBLIC_SHARE_ORIGIN   = _env('PUBLIC_SHARE_ORIGIN', "", group='Access & serving', kind='url', label='Public share origin', help="Explicitly declare this instance public for Share settings by setting its HTTPS origin, e.g. https://posters.example.com (no path, credentials, query or fragment). Blank keeps the instance private and shares use https://postersplus.cc. Shared URLs used directly in clients send requests to that public server and use its configuration and resources. Set only for an instance intended for public use without an access key; this does not change access controls.", placeholder='https://posters.example.com').strip()
 PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="The address clients reach this instance on, e.g. https://posters.example.com. Used for the poster links the trending catalogs addon hands out. Blank derives it from each request's Host / X-Forwarded-Host / X-Forwarded-Proto headers, which works behind most proxies but lets a forged header change the links in a response a shared cache might keep.", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
 ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='secret', label='Access key', help='Shared secret every poster and configurator request must carry as access_key. Leave blank for open access.') or None
 # For operators who protect the configurator with a separate login (Authelia,
@@ -133,7 +134,7 @@ QUALICACHE_MIN_TRUST = (
     if QUALICACHE_MIN_TRUST_RAW in QUALICACHE_MIN_TRUST_VALUES
     else "medium"
 )
-SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request.').strip()
+SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. Either the API key or the longer API Read Access Token works.').strip()
 SERVER_MDBLIST_KEY    = _env('MDBLIST_API_KEY', "", group='API keys', kind='secret', label='MDBList API key', help='Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable.').strip()
 SERVER_MDBLIST_KEY_2  = _env('MDBLIST_API_KEY_2', "", group='API keys', kind='secret', label='MDBList API key (second)', help="Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset.").strip()
 
@@ -162,7 +163,7 @@ TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fall
 # A user-selectable poster source, like FANART_POSTERS: poster_source=tvdb
 # takes TVDB's best no-language poster (textless in practice), or under
 # original art its best poster in the request's language order.
-TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Let users pick TVDB as their poster source: its best no-language poster (TVDB\'s no-language posters are textless), or under Original Art its best poster in their language. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Let users pick TVDB as their poster source: its best no-language poster (TVDB\'s no-language posters are textless), or under Original Art its best poster in their language. Landscape users can pick TVDB backdrops the same way. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
 
 # Optional fanart.tv source.  With a project key AND FANART_POSTERS on, the
 # configurator offers poster_source=fanart (most-liked fanart.tv poster, TMDB
@@ -170,6 +171,10 @@ TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fa
 # scans alongside the TMDB art.  Random picks are RANDOM_POSTERS.
 FANART_API_KEY        = _env('FANART_API_KEY', "", group='API keys', kind='secret', label='Fanart API key', help='Optional Fanart project key, needed for the Fanart poster source (see FANART_POSTERS).').strip()
 FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='Fanart', kind='bool', label='Offer Fanart posters', help='Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+
+# Artwork overrides shared between instances (art_overrides.py, "Sharing").
+ART_OVERRIDES_SHARE      = _flag(_env("ART_OVERRIDES_SHARE", "false", group='Artwork sharing', kind='bool', label='Share artwork overrides', help='Let other Posters+ instances follow the art you pick in the dashboard\'s Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default.'), False)
+ART_OVERRIDES_REMOTE_URL = _env('ART_OVERRIDES_REMOTE_URL', "", group='Artwork sharing', kind='url', label='Follow artwork from', help="Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none.", placeholder='https://posters.example.com').strip()
 
 # Where a TVDB clearlogo sits in the logo source chain:
 #   1 = TVDB first      — beats both TMDB and the Metahub CDN
@@ -195,6 +200,8 @@ CINEMETA_API_BASE = _env('CINEMETA_API_BASE', "https://v3-cinemeta.strem.io", gr
 # These engage only when a client passes an anime id (anilist_id / kitsu_id, or
 # one inside stremio_id), so metadata providers that only speak imdb/tmdb/tvdb
 # are completely unaffected.  Nothing is ever converted TO an anime id.  Neither provider requires an API key.
+# A MyAnimeList id (mal_id, or mal: in stremio_id) is rendered as the Kitsu or
+# AniList id the mapping below gives it, so it needs ANIME_ID_MAP_ENABLED.
 ANIME_SOURCES_ENABLED = _flag(_env("ANIME_SOURCES_ENABLED", "true", group='Anime sources', kind='bool', label='Anime sources', help='Serve art, titles, genres and a community score from AniList and Kitsu when a client passes an anilist_id or kitsu_id (or a kitsu:/anilist: stremio_id). Clients that only speak imdb/tmdb are unaffected. Neither provider needs an API key.'), True)
 # Composite a title logo over anime cover art. On by default: that art either
 # carries no logotype or a small block of Japanese corner text most viewers
@@ -210,10 +217,13 @@ ANIME_COMPOSITE_LOGO  = _flag(_env("ANIME_COMPOSITE_LOGO", "true", group='Anime 
 # enrichment.  This is what makes a client that can only send "{id}" for an
 # anime title (Nuvio's own pattern resolver: "kitsu:7442" and nothing else)
 # render the same poster as one that goes through AIOMetadata.
-ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider."), True)
+ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. Also what lets a MyAnimeList id (mal_id, or a mal: stremio_id) render, as the Kitsu or AniList entry it maps to."), True)
 ANIME_ID_MAP_URL     = _env('ANIME_ID_MAP_URL', "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='url', label='Anime id mapping source', help="Where the mapping list is downloaded from. Must be Fribb's anime-list-full.json format.", advanced=True).strip()
 ANIME_ID_MAP_PATH    = "/app/cache/anime_ids.db"
 ANIME_ID_MAP_REFRESH_HOURS = 24
+# A later season's own art in landscape, rather than the show's one backdrop
+# every season shares on TMDB (anime_season.py).
+ANIME_SEASON_ART     = _flag(_env("ANIME_SEASON_ART", "true", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='bool', label='Season art for later seasons', help="In landscape, give an anime's later seasons and cours their own art instead of the show's single TMDB backdrop: Kitsu's cover image for that season when it is big enough and carries no title, else TMDB's still of the season's first episode. Requests by AniList id borrow Kitsu's cover through the id mapping. Season 1 and anything with an operator's Artwork pick are unchanged. On by default."), True)
 # Capped per provider, because their limits differ by an order of magnitude.
 # AniList advertises 90 req/min per IP but has served a degraded 30 for a long
 # while (check the x-ratelimit-limit header), so it stays tight. Kitsu publishes
@@ -224,6 +234,7 @@ ANILIST_CONCURRENCY   = max(1, int(_env('ANILIST_CONCURRENCY', "3", group='Anime
 KITSU_CONCURRENCY     = max(1, int(_env('KITSU_CONCURRENCY', "8", group='Anime sources', kind='int', label='Kitsu concurrency', help='Maximum concurrent Kitsu requests.', min=1, max=64, advanced=True)))
 ANILIST_API_URL       = _env('ANILIST_API_URL', "https://graphql.anilist.co", group='Anime sources', kind='url', label='AniList API URL', help='Override only if you proxy AniList.', advanced=True).strip()
 KITSU_API_BASE        = _env('KITSU_API_BASE', "https://kitsu.io/api/edge", group='Anime sources', kind='url', label='Kitsu API base', help='Override only if you proxy Kitsu.', advanced=True).strip().rstrip("/")
+JIKAN_API_URL         = _env('JIKAN_API_URL', "https://jikan.slokker.cc/v4", group='Anime sources', kind='url', label='Jikan API URL', help="Jikan v4 instance (a MyAnimeList API, no key needed) that gives a later anime season its own MyAnimeList score; MDBList only has the first season's. The public api.jikan.moe shut down on 1 October 2026, so the default is a community instance; point it at your own Jikan if you run one, or leave it empty to keep the first season's score.", advanced=True).strip().rstrip("/")
 
 # Ordered list of all configured server-side MDBList keys (primary first).
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
@@ -342,13 +353,6 @@ ANIME_METADATA_CACHE_DURATION = int(_env('ANIME_METADATA_CACHE_DURATION', "7", g
 ANIME_NEG_CACHE_DURATION      = int(_env('ANIME_NEG_CACHE_DURATION', "3", group='Anime sources', kind='int', label='Anime negative cache (days)', help='Days to cache a no-such-id result from the provider.', min=1, max=365, advanced=True))       # days
 CINEMETA_METADATA_CACHE_DURATION = int(_env('CINEMETA_METADATA_CACHE_DURATION', "7", group='Cinemeta fallback', kind='int', label='Cinemeta metadata cache (days)', help="Days to cache a title's Cinemeta document, including the IMDb-to-TMDB id it carries.", min=1, max=365, advanced=True))  # days
 CINEMETA_NEG_CACHE_DURATION      = int(_env('CINEMETA_NEG_CACHE_DURATION', "3", group='Cinemeta fallback', kind='int', label='Cinemeta negative cache (days)', help='Days to cache a no-such-id result from Cinemeta.', min=1, max=365, advanced=True))       # days
-# Assumed theatrical-to-digital window, for the one case nothing knows a
-# movie's digital date: a Cinemeta-spined render (no TMDB key) with no
-# MDBList record to hand (no key, or MDBList has no date yet).  Studio windows
-# have settled at 17-45 days for most films and ~60 for the largest, so a
-# theatrical date older than this is far more likely to be streaming than in
-# cinemas.  Never consulted when a digital, physical or TMDB date is known.
-CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Cinemeta fallback', kind='int', label='Assumed digital window (days)', help="Without a TMDB key, and when MDBList has no digital date for a movie, treat a theatrical release older than this many days as Streaming rather than Cinema. Typical studio windows are 17-45 days, the largest releases about 60. 0 disables the assumption (Cinema until a date is known).", min=0, max=365, advanced=True)))
 DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
@@ -357,6 +361,13 @@ TRENDING_FETCH_TIME          = _env('TRENDING_FETCH_TIME', "", group='Trending',
 TRENDING_FETCH_TIMEZONE      = _env('TRENDING_FETCH_TIMEZONE', "UTC", group='Trending', kind='text', label='Trending fetch timezone', help='IANA timezone for the fetch time, e.g. America/New_York.', placeholder='UTC').strip()
 TRENDING_FETCH_COUNT         = int(_env('TRENDING_FETCH_COUNT', "40", group='Trending', kind='int', label='Trending count', help='Ranks 1 to this number get the Trending sash.', min=1, max=500))
 TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", group='Trending', kind='int', label='Broad trending count', help='Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash.', min=1, max=1000))
+
+# Blockbuster sash: a film among the top-grossing of its release year, by
+# TMDB's worldwide revenue (see box_office.py).  Ranking within the year rather
+# than against a flat figure keeps Jaws in and a mid-table 2020s sequel out; the
+# floor stops a thinly-recorded early year from crowning a $2M film.
+BLOCKBUSTER_TOP_N            = int(_env('BLOCKBUSTER_TOP_N', "10", group='Sashes', kind='int', label='Blockbuster: top N of its year', help="A film gets the Blockbuster sash when it is among this many highest-grossing films of its release year (TMDB worldwide revenue).", min=1, max=20))
+BLOCKBUSTER_MIN_REVENUE      = int(_env('BLOCKBUSTER_MIN_REVENUE', "100000000", group='Sashes', kind='int', label='Blockbuster: minimum gross (USD)', help="A film must also have grossed at least this much in today's dollars (adjusted for US inflation to its release year: $100M is about $17M for 1975), so an early year TMDB has little box-office data for doesn't hand the sash to a small film. 0 turns the floor off.", min=0, max=10000000000))
 
 # Where "trending" comes from.  Unset (the default) means TMDB's own global
 # trending endpoint, which is US-weighted and not configurable.  Point these at a
@@ -389,12 +400,60 @@ TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", gro
 # TMDB's list and looking like it worked.
 TRENDING_SOURCE_MOVIE        = _env('TRENDING_SOURCE_MOVIE', "", group='Trending', kind='url', label='Movie trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trending-movies').strip()
 TRENDING_SOURCE_TV           = _env('TRENDING_SOURCE_TV', "", group='Trending', kind='url', label='TV trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trakt-s-trending-shows').strip()
+# Anime ranks on their own lists while the trending catalogs addon is on (and
+# leaves the movie and TV lists above): AniList's trending series and films
+# unless one of these replaces it.  Same shapes as the sources above; their
+# rows are TMDB ids, so a poster is ranked by the TMDB id it carries.
+TRENDING_SOURCE_ANIME        = _env('TRENDING_SOURCE_ANIME', "", group='Trending', kind='url', label='Anime trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime series, for the Trending Anime catalog and the rank on every anime series poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on.", placeholder='https://mdblist.com/lists/<user>/<anime-list>').strip()
+TRENDING_SOURCE_ANIME_MOVIE  = _env('TRENDING_SOURCE_ANIME_MOVIE', "", group='Trending', kind='url', label='Anime film trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime films, for the Trending Anime Movies catalog and the rank on every anime film poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on.", placeholder='https://mdblist.com/lists/<user>/<anime-film-list>').strip()
 # A small Stremio addon serving the trending lists behind the sashes as three
 # catalogs (movies, series, anime), for metadata addons such as AIOMetadata to
 # import.  Row order and the "#N Today" labels then come from the same snapshot,
 # so the numbers line up with the row.  Also switches posters requested with an
 # AniList id to the AniList trending rank, the ranking the anime catalog uses.
-TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "true", group='Trending', kind='bool', label='Trending catalogs addon', help='Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series and Anime catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Also gives posters requested with an AniList id the AniList trending rank used by the anime catalog. On by default; turn off to serve no addon.').strip().lower() == "true"
+TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "true", group='Trending', kind='bool', label='Trending catalogs addon', help='Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series, Anime and Anime Movies catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Anime then ranks on its own lists (from AniList, unless an anime trending source is set) and leaves the movie and TV lists, so every anime poster, whatever id it is requested by, carries its rank in the anime catalogs. On by default; turn off to serve no addon.').strip().lower() == "true"
+# Leave out what can't be watched at home yet before ranks are numbered, so a
+# trending row (and the ranks on its posters) holds only what can be played.
+TRENDING_HIDE_UNRELEASED     = _env('TRENDING_HIDE_UNRELEASED', "false", group='Trending', kind='bool', label='Hide unreleased from trending', help='Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, anime series AniList lists as not yet airing, and anime films not out at home by their TMDB dates. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default.').strip().lower() == "true"
+# The genre names TRENDING_HIDE_GENRES offers: GENRE_MAP's (below), once each.
+_TRENDING_GENRE_CHOICES = (
+    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama",
+    "Family", "Fantasy", "History", "Horror", "Kids", "Music", "Mystery", "News",
+    "Reality", "Rom-Com", "Romance", "Sci-Fi", "Soap", "Talk", "Thriller", "War", "Western",
+)
+
+
+def _trending_genres(raw: str) -> list[str]:
+    """TRENDING_HIDE_GENRES's names, as typed in .env ("horror, Romance") or
+    saved by the dashboard; unknown ones dropped."""
+    lookup = {g.casefold(): g for g in _TRENDING_GENRE_CHOICES}
+    return [lookup[g.strip().casefold()] for g in raw.split(",") if g.strip().casefold() in lookup]
+
+
+# Genres left off the trending lists for the whole instance, before ranks are
+# numbered, so every poster's rank and its catalog row still agree.  Names are
+# GENRE_MAP's; TV's merged genres count as both halves (genre_names).
+TRENDING_HIDE_GENRES = _trending_genres(_env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh.", choices=_TRENDING_GENRE_CHOICES))
+TRENDING_HIDE_MIXED_GENRES = _env('TRENDING_HIDE_MIXED_GENRES', "true", group='Trending', kind='bool', label='Hide titles that are partly a hidden genre', help='On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance.').strip().lower() == "true"
+# Visitors choose their own trending lists (trending_list=, the configurator's
+# the trending Configure dialog): each list's source from a fixed menu, and whether titles not
+# out at home are left off.  The menu is TMDB's day and week lists, AniList for
+# anime, the sources above and TRENDING_SOURCE_CHOICES; nothing else can be
+# asked for, so the lists built stay bounded by the menu, not by visitors.
+# Visitors who choose alike share one list, built when first asked for.
+TRENDING_LIST_CHOICE         = _env('TRENDING_LIST_CHOICE', "true", group='Trending', kind='bool', label='Visitors choose trending lists', help="Let each visitor pick their trending lists in the configurator: any number of sources per type from TMDB's today and this week lists, AniList, the public lists below, the sources set here and the extra choices, each one a catalog of its own, and whether titles not out at home yet are left off. Their posters rank on the one list they mark per type. Each different pick is its own list, built when first asked for and refreshed when it is due; visitors who pick alike share one. Off: everyone gets the lists set here.").strip().lower() == "true"
+# The most catalogs a visitor may pick for one list type.  Each pick is a list
+# fetched, kept warm and rendered for, and Streaming Top 10 alone offers
+# hundreds, so one install URL can't ask for all of them.
+TRENDING_MAX_PICKS           = int(_env('TRENDING_MAX_PICKS', "8", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='int', label='Catalogs per list type', help="The most catalogs a visitor may pick for each of Movies, Series, Anime and Anime Movies. Every list picked is fetched, refreshed while it is in use and has its posters rendered, and Streaming Top 10 offers a chart for each service in each country, so this keeps one install from asking for hundreds. Picks past the limit in an existing install URL are dropped from the end.", min=1, max=30))
+# The public lists the trending Configure dialog offers besides TMDB's and AniList's own (see
+# trending_lists): each one is fetched only once a visitor picks it.
+TRENDING_LIST_SOURCES        = _env('TRENDING_LIST_SOURCES', "imdb,trakt,simkl,justwatch,rottentomatoes,tvstats,top10,shudder,flixpatrol", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='multi', label='Public lists to offer', help="Which public trending lists visitors may pick in the Trending Catalogs Addon's Configure dialog, besides TMDB's and AniList's own. IMDb, Trakt, JustWatch, Rotten Tomatoes, Television Stats and the streaming services' US Top 10s are read from the MDBList user snoak's daily mirrors of them, SIMKL from its own hourly lists; none needs a key. Shudder's (popular, and new in the last two years) are read from TMDB with the server's key. Streaming Top 10 adds every streaming service's daily Top 10 in each of 119 countries (FlixPatrol's charts, as fp-crawler publishes them; see TRENDING_TOP10_URL). A list is fetched only once someone picks it.", choices=("imdb", "trakt", "simkl", "justwatch", "rottentomatoes", "tvstats", "top10", "shudder", "flixpatrol"), labels={"imdb": "IMDb", "trakt": "Trakt", "simkl": "SIMKL", "justwatch": "JustWatch", "rottentomatoes": "Rotten Tomatoes", "tvstats": "Television Stats", "top10": "Streaming Top 10s (US)", "shudder": "Shudder (US)", "flixpatrol": "Streaming Top 10 (by country)"})
+TRENDING_SOURCE_CHOICES      = _env('TRENDING_SOURCE_CHOICES', "", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='list', label='Extra trending sources', help='More lists visitors may pick from, comma-separated as type|Name|URL, where type is movie, tv, anime or anime_movie and the URL is an MDBList list page or TMDB-shaped JSON like the sources above. E.g. movie|Trakt Trending|https://mdblist.com/lists/<user>/<list>', advanced=True)
+# Where Streaming Top 10's charts are read: fp-crawler's daily copies of
+# FlixPatrol's, the ones AIOMetadata's Top 10 catalogs read.  A mirror of the
+# same files (availability.json and <country>.json) can stand in for it.
+TRENDING_TOP10_URL           = _env('TRENDING_TOP10_URL', "https://raw.githubusercontent.com/0xConstant1/fp-crawler/main/catalogs", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), label='Streaming Top 10 source', help="Where Streaming Top 10's charts are read: fp-crawler's daily copies of FlixPatrol's, or a mirror of the same files (availability.json and <country>.json).", advanced=True).strip()
 # Cap on how many entries are taken from a custom source, so a 10k-item list
 # cannot balloon the snapshot held in memory and in trending_cache.
 TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500", group='Trending', kind='int', label='Custom source cap', help='Maximum entries taken from a custom trending source.', min=1, max=10000, advanced=True)))
@@ -406,7 +465,8 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 # it per user and multiply upstream quota.  One instance, one watchlist.
 #
 # WATCHLIST_SOURCE selects where the list comes from:
-#   mdblist   the watchlist of the account behind MDBLIST_API_KEY.  MDBList
+#   mdblist   the watchlist of the account behind MDBLIST_WATCHLIST_API_KEY,
+#             or MDBLIST_API_KEY when that is blank.  MDBList
 #             mirrors a linked Trakt watchlist, so this is also the free route
 #             for Trakt users (Trakt's own API needs a VIP-gated app key).
 #   simkl     the "Plan to Watch" list of a SIMKL account.  Needs a free SIMKL
@@ -419,7 +479,7 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 # Unset (the default) disables the feature entirely: no fetch, no sash.
 # -----------------------------------------------------------------------
 APP_VERSION                  = "1.2.0"
-WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
+WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, or of MDBLIST_WATCHLIST_API_KEY's when set; also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
 # How often the source is re-checked.  Every cycle is one cheap call (MDBList:
 # one page per 500 items; SIMKL: /sync/activities, the list itself only when
 # it changed; Trakt: two list calls; PMDB: the list lookup plus one page per
@@ -432,6 +492,10 @@ WATCHLIST_SIMKL_STATUSES     = [
     for s in _env('WATCHLIST_SIMKL_STATUSES', "plantowatch", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='list', label='SIMKL statuses', help='Which SIMKL lists count as the watchlist: plantowatch, watching, hold (comma-separated).', advanced=True, placeholder='plantowatch').split(",")
     if s.strip()
 ]
+# A key used only for WATCHLIST_SOURCE=mdblist, so the watchlist can come from
+# a personal MDBList account while the server key (ratings, warming) belongs
+# to another.  Blank falls back to MDBLIST_API_KEY.
+MDBLIST_WATCHLIST_KEY        = _env('MDBLIST_WATCHLIST_API_KEY', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'mdblist'), kind='secret', label='MDBList watchlist key', help="Reads the watchlist of this key's MDBList account instead of MDBLIST_API_KEY's, so a personal account's watchlist can be used without that key also spending its quota on ratings and cache warming. Blank uses MDBLIST_API_KEY.").strip()
 SIMKL_CLIENT_ID              = _env('SIMKL_CLIENT_ID', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client id', help='From a free app at simkl.com/settings/developer. Register it as "TV, devices & command line": PostersPlus links by code (the device/PIN flow), so that type needs no secret and no redirect URL. The account is then linked once from the admin dashboard\'s Watchlist group.').strip()
 # Only for a SIMKL app registered as "Server apps & services"; the other two
 # app types mint no secret and need none.
@@ -515,8 +579,8 @@ IMDB_DATASET_MIN_VOTES       = max(0, int(_env('IMDB_DATASET_MIN_VOTES', "10", g
 # count), so steady-state runs after the first one are typically far cheaper
 # than the configured budgets.
 CACHE_WARM_ENABLED           = _env('CACHE_WARM_ENABLED', "false", group='Cache warming', kind='bool', label='Cache warming', help="Pre-populate the TMDB and MDBList caches for trending, popular and catalog titles in the background. Off by default; enable once the server keys' quotas are understood.").strip().lower() == "true"
-CACHE_WARM_TMDB_BUDGET       = int(_env('CACHE_WARM_TMDB_BUDGET', "2000", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='TMDB budget per cycle', help='Ceiling on actual TMDB API calls per warm cycle; cache hits do not count.', min=0, max=100000))
-CACHE_WARM_MDBLIST_BUDGET    = int(_env('CACHE_WARM_MDBLIST_BUDGET', "500", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList budget per cycle', help='Ceiling on actual MDBList calls per warm cycle.', min=0, max=100000))
+CACHE_WARM_TMDB_BUDGET       = int(_env('CACHE_WARM_TMDB_BUDGET', "2000", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='TMDB budget per cycle', help='Ceiling on actual TMDB API calls per warm cycle; cache hits do not count. Also sets how many trending, popular and top-rated titles a cycle walks, so it decides how many titles the MDBList bulk requests can rate.', min=0, max=100000))
+CACHE_WARM_MDBLIST_BUDGET    = int(_env('CACHE_WARM_MDBLIST_BUDGET', "500", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList budget per cycle', help='Ceiling on MDBList requests per warm cycle. Stale ratings are fetched in bulk, up to 200 titles to a request that counts once; only when bulk is unavailable does each title cost its own request.', min=0, max=100000))
 # MDBList's limit is a per-key daily quota (1000/day free) shared with live
 # poster requests, and every response reports what's left. The warmer stops
 # spending a key once its remaining daily requests fall to this floor, so a
@@ -609,10 +673,23 @@ COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "0", group='Cachi
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.
 DISABLE_COMPOSITE_CACHE    = _env('DISABLE_COMPOSITE_CACHE', "false", group='Caching', kind='bool', label='Disable composite cache', help='Skip composite cache reads and writes entirely; every request re-renders. For development only.', advanced=True).strip().lower() in ("1", "true", "yes")
-# Movies with only a theatrical release date older than this many years are treated
-# as "Streaming" rather than "Cinema" — guards against stale TMDB data where a
-# physical/digital date was never added.  Set to 0 to disable the gate entirely.
-CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Movies whose only known release is a theatrical date older than this are treated as Streaming rather than Cinema, guarding against stale TMDB data missing a physical or digital date. 0 disables the gate.', min=0, max=50, advanced=True)))
+# How long a movie whose only past release is theatrical may stay "Cinema"
+# before it is assumed to be streaming.  TMDB is often slow to add a digital
+# date, or never does, and a film should not wear "Cinema" for years because of
+# it.  Studio windows have settled at 17-45 days for most films and ~60 for the
+# largest, so most films get CINEMA_ASSUMED_DIGITAL_DAYS.  A film with at least
+# CINEMA_POPULAR_VOTES TMDB votes is big enough that TMDB will be kept current,
+# and big enough for a long run (Oppenheimer played ~120 days), so it gets
+# CINEMA_POPULAR_DIGITAL_DAYS instead.  Neither is consulted while a future
+# digital date is published: that date is the answer.  CINEMA_MAX_AGE_YEARS is
+# the outer backstop for when the day windows are switched off.
+CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Rendering', kind='int', label='Assumed digital window (days)', help="A movie whose only known release is theatrical, with no digital date published, is treated as Streaming rather than Cinema once its theatrical date is older than this many days. Applies with or without a TMDB key; films with at least CINEMA_POPULAR_VOTES TMDB votes use CINEMA_POPULAR_DIGITAL_DAYS instead. Typical studio windows are 17-45 days, the largest releases about 60. 0 disables the assumption (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=365, advanced=True)))
+CINEMA_POPULAR_VOTES        = max(0, int(_env('CINEMA_POPULAR_VOTES', "1000", group='Rendering', kind='int', label='Popular film votes', help="TMDB vote count at which a movie counts as popular enough that TMDB will publish its digital date on time, so it may stay Cinema for CINEMA_POPULAR_DIGITAL_DAYS rather than CINEMA_ASSUMED_DIGITAL_DAYS. A movie with no known vote count uses the shorter window. 0 treats every movie alike (the shorter window).", min=0, max=1000000, advanced=True)))
+CINEMA_POPULAR_DIGITAL_DAYS = max(0, int(_env('CINEMA_POPULAR_DIGITAL_DAYS', "180", group='Rendering', kind='int', label='Popular film cinema window (days)', help="Like CINEMA_ASSUMED_DIGITAL_DAYS, for movies with at least CINEMA_POPULAR_VOTES TMDB votes: past this many days in cinemas with no digital date published, they are treated as Streaming. Long enough for the longest runs (about 120 days). 0 disables it (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=3650, advanced=True)))
+# Outer backstop: a theatrical-only movie older than this many years is
+# "Streaming" whatever the windows above say, even with a (stale) future
+# digital date published.  Set to 0 to disable the gate entirely.
+CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Movies whose only known past release is a theatrical date older than this are treated as Streaming rather than Cinema, whatever CINEMA_ASSUMED_DIGITAL_DAYS and CINEMA_POPULAR_DIGITAL_DAYS say — a backstop against stale TMDB data. 0 disables the gate.', min=0, max=50, advanced=True)))
 
 def _parse_bool(val: str, default: bool = False) -> bool:
     val = val.strip().lower()
@@ -641,6 +718,9 @@ YUNET_MODEL_PATH           = _env("YUNET_MODEL_PATH", "", group='Rendering', kin
 DISCOVERY_OVERRIDES_PATH   = _env("DISCOVERY_OVERRIDES_PATH", "/app/cache/discovery_overrides.json", group='Rendering', kind='text',
     label='Discovery overrides path', help='JSON file holding the notable studio, director and cast lists behind those sashes. The dashboard\'s Sash lists view writes it; see discovery_overrides.example.json to write it by hand.',
     advanced=True).strip() or "/app/cache/discovery_overrides.json"
+SASH_LABELS_PATH           = _env("SASH_LABELS_PATH", "/app/cache/sash_labels.json", group='Rendering', kind='text',
+    label='Sash labels path', help='JSON file holding the operator\'s wording for sash labels ("New Season", "#{rank} Today"), per language, on top of the bundled translations. The dashboard\'s Sash labels view writes it.',
+    advanced=True).strip() or "/app/cache/sash_labels.json"
 
 # Prefer textless posters with enough votes to be meaningful, but never allow
 # vote count alone to select art rated far below the best available option.
@@ -833,6 +913,64 @@ GENRE_MAP = {
     10765: "Sci-Fi", 10766: "Soap", 10767: "Talk", 10768: "War",
 }
 
+# Not a TMDB genre: a title TMDB (or AniList/Kitsu) gives both Comedy and
+# Romance also carries this one (with_derived_genres), so the priority order can rank "Rom-Com" above,
+# between or below the two.  Of the 300 most-voted films TMDB tags both, about
+# 7 in 10 open their Wikipedia article as a romantic comedy; most of the rest
+# are teen and sex comedies built round a romance (American Pie, Juno).
+ROMCOM_GENRE_ID = 1074935
+GENRE_MAP[ROMCOM_GENRE_ID] = "Rom-Com"
+
+
+def with_derived_genres(genre_ids: "list[int]") -> list[int]:
+    """*genre_ids* plus the genres derived from them (Rom-Com)."""
+    ids = list(genre_ids or ())
+    if 35 in ids and 10749 in ids and ROMCOM_GENRE_ID not in ids:
+        ids.append(ROMCOM_GENRE_ID)
+    return ids
+
+
+# TV's merged genres stand for both their halves when a title is matched by
+# genre name (the trending catalogs' genre filter).
+_GENRE_NAME_EXTRAS = {10759: ("Adventure",), 10765: ("Fantasy",)}
+
+
+def genre_names(genre_ids: "list[int]") -> set[str]:
+    """The genre names *genre_ids* carry, movie and TV ids alike, Rom-Com
+    included (derived here when not already there)."""
+    names: set[str] = set()
+    for gid in with_derived_genres(genre_ids):
+        if GENRE_MAP.get(gid):
+            names.add(GENRE_MAP[gid])
+        names.update(_GENRE_NAME_EXTRAS.get(gid, ()))
+    return names
+
+
+def genre_hidden(genre_ids: "list[int]", hidden: "set[str]", mixed: bool) -> bool:
+    """Whether a title with *genre_ids* is one of the *hidden* genres (names):
+    any of them when *mixed*, else only when every genre it has is hidden.
+    Rom-Com is derived from Comedy + Romance, so it neither keeps a title nor,
+    hidden, stands apart from them: hiding it covers both."""
+    names = genre_names(genre_ids)
+    if mixed:
+        return bool(names & hidden)
+    base = names - {"Rom-Com"}
+    if "Rom-Com" in names and "Rom-Com" in hidden:
+        base -= {"Comedy", "Romance"}
+    return bool(names) and base <= hidden
+
+
+def genre_label(genre_ids: "list[int]", priority: "list[int]") -> str:
+    """The name of the first genre in *priority* the title carries, or
+    "Unknown".  Rom-Com counts only if *genre_ids* already carry it: it is
+    derived where the genres come from TMDB or an anime provider (main.py),
+    not from IMDb or TVDB, which give Friends and Big Bang Theory Romance."""
+    ids = set(genre_ids or ())
+    for gid in priority:
+        if gid in ids and GENRE_MAP.get(gid):
+            return GENRE_MAP[gid]
+    return "Unknown"
+
 # The order genres are tried in when a title has several: the first one the
 # title carries is its label, tint, fallback background and title font.  Set
 # from the admin dashboard (a drag list) or as comma-separated ids; an id left
@@ -848,6 +986,7 @@ _GENRE_LABELS: dict[str, str] = {
     "10766": "Soap (TV)",
     "10767": "Talk (TV)",
     "10768": "War & Politics (TV)",
+    str(ROMCOM_GENRE_ID): "Rom-Com (Comedy + Romance)",
 }
 
 # Checked against the genres of TMDB's ~750 most-voted films and ~800 shows.
@@ -858,7 +997,7 @@ _GENRE_LABELS: dict[str, str] = {
 # (Dunkirk, Saving Private Ryan).  Animation is near last: the art already
 # shows a title is animated, so Family / Action / Drama say more.
 _DEFAULT_GENRE_PRIORITY = (
-    27, 53, 878, 10765, 14, 9648, 80, 35, 10749, 10751,
+    27, 53, 878, 10765, 14, 9648, 80, ROMCOM_GENRE_ID, 35, 10749, 10751,
     10752, 10768, 28, 10759, 36, 10402, 37, 99, 18, 12, 16,
     10764, 10762, 10763, 10766, 10767,
 )
@@ -877,6 +1016,7 @@ _DEFAULT_GENRE_PRIORITY = (
 # titles from both providers. It is a presentation choice, not a correctness
 # one — reorder freely if a different label reads better to you.
 _DEFAULT_ANIME_GENRE_PRIORITY = (
+    ROMCOM_GENRE_ID,  # Rom-Com — Romance and Comedy both
     10749,            # Romance — if it's a romance, that's the hook
     27,               # Horror
     37,               # Western — vanishingly rare in anime, so highly telling
@@ -904,13 +1044,13 @@ def _genre_order(key: str, default: tuple[int, ...], label: str, help: str) -> l
     raw = _env(key, ",".join(choices), group='Genres', kind='order', label=label,
                help=help, choices=choices, labels=_GENRE_LABELS, advanced=True)
     # Same rules the dashboard applies on save, for a value set in the
-    # environment: unknown ids and repeats are dropped, missing ones appended.
-    seen: list[int] = []
+    # environment: unknown ids and repeats are dropped, missing ones added.
+    seen: list[str] = []
     for part in raw.split(","):
         part = part.strip()
-        if part in choices and int(part) not in seen:
-            seen.append(int(part))
-    return seen + [gid for gid in default if gid not in seen]
+        if part in choices and part not in seen:
+            seen.append(part)
+    return [int(gid) for gid in merge_order(seen, choices)]
 
 
 GENRE_PRIORITY = _genre_order(
@@ -920,7 +1060,9 @@ GENRE_PRIORITY = _genre_order(
     "under merged genres (Action & Adventure, War & Politics), listed here "
     "apart from the film genres they print as. Sci-Fi & Fantasy is split into "
     "Sci-Fi or Fantasy from the show's keywords; the merged entry covers the "
-    "shows nothing decides, and prints Sci-Fi.",
+    "shows nothing decides, and prints Sci-Fi.  TMDB has no Horror for TV, so a "
+    "show is given it from MDBList's genres, else its keywords.  Rom-Com is "
+    "any title with both Comedy and Romance: rank it below them to turn it off.",
 )
 ANIME_GENRE_PRIORITY = _genre_order(
     'ANIME_GENRE_PRIORITY', _DEFAULT_ANIME_GENRE_PRIORITY, 'Anime genre priority',
@@ -981,7 +1123,6 @@ SASH_PRIORITY: list[str] = [
     # notable-cast match can't bury "this is new right now".
     "trending",
     "trending_broad",
-    "premiere",
     "new_release",
     "just_added",
     "new_season",
@@ -991,6 +1132,7 @@ SASH_PRIORITY: list[str] = [
     "director",
     "cast",
     # Static flavour — always true, never urgent.
+    "blockbuster",
     "cult",
     "foreign",
     "true_story",
@@ -1001,6 +1143,10 @@ SASH_PRIORITY: list[str] = [
     # they sit last and only surface when nothing above did.
     "returning",
     "airing",
+    # Under Airing, which dates a new series' next episode ("Airing Oct 15");
+    # Premiere ("Premiered Oct 2") shows when nothing is airing, as when a
+    # whole season came out at once.
+    "premiere",
     "cancelled",
     "ended",
     "physical",

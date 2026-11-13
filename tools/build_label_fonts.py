@@ -2,7 +2,7 @@
 """Build label fonts: a family's Bold from Google Fonts, with Inter Bold's ★
 added where the family has none.
 
-    docker run --rm -v "$PWD":/app -w /app python:3.11-slim \
+    docker run --rm -v "$PWD":/app -w /app python:3.14-slim \
         sh -c "pip install -q fonttools && python3 tools/build_label_fonts.py [OUT_DIR] [FAMILY ...]"
 
 Almost no Google Fonts family has the ★ the labels draw; fontprep's
@@ -38,6 +38,7 @@ FAMILIES: dict[str, str] = {
     "Exo 2": "Exo2-Bold.ttf",
     "Fira Sans": "FiraSans-Bold.ttf",
     "Open Sans": "OpenSans-Bold.ttf",
+    "Almarai": "Almarai-Bold.ttf",
 }
 
 # An old browser's UA gets one static TrueType file per family from the CSS

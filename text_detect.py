@@ -25,6 +25,11 @@ import config as _cfg
 
 logger = logging.getLogger(__name__)
 
+# Opt out of onnxruntime's Microsoft telemetry (device id, hardware, model
+# details) before RapidOCR imports it.  setdefault so an operator can still
+# set ORT_DISABLE_TELEMETRY=0 explicitly.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 try:
     from rapidocr import RapidOCR
     _HAS_RAPIDOCR = True
@@ -192,7 +197,27 @@ def _new_ocr_session():
         params["Cls.model_path"] = _CLS_MODEL_PATH
     if _REC_MODEL_PATH:
         params["Rec.model_path"] = _REC_MODEL_PATH
-    return RapidOCR(params=params)
+    ocr = RapidOCR(params=params)
+    # Load the detector now, while the pool is being built, so a session that
+    # can't detect fails here (and is retried) instead of on every scan.
+    _text_detector(ocr)
+    return ocr
+
+
+def _text_detector(ocr):
+    """The session's TextDetector, loading it if RapidOCR hasn't yet.
+
+    RapidOCR 3.10 builds each model lazily on its first ``ocr(...)`` call, so
+    ``text_det`` stays None until then — and we never make that call for
+    detection (see _run_detector).  Older releases built it up front."""
+    det = getattr(ocr, "text_det", None)
+    if det is None:
+        loader = getattr(ocr, "_load_det_model", None)
+        if loader is not None:
+            det = loader()
+    if det is None:
+        raise RuntimeError("RapidOCR session has no text detector")
+    return det
 
 
 def _ensure_model():
@@ -290,7 +315,7 @@ def _run_detector(ocr, rgb: np.ndarray):
     for a recogniser we don't run, and sorts the boxes without their scores —
     in most images each box came back paired with another box's score.
     """
-    det = ocr.text_det
+    det = _text_detector(ocr)
     height, width = rgb.shape[:2]
     # RapidOCR's max-side rule (TextDetector.get_preprocess): a 500x750 poster
     # runs at native size, rounded to the network's multiple of 32 (512x736).
@@ -673,6 +698,63 @@ def _verdict(
                 detected = True
                 break
     return detected, hits, recognised, centred_lines
+
+
+# Season cover gate (cover_has_text): a box this sure and this big whose text
+# the recogniser reads as this many letters.  Measured on 29 Kitsu covers of
+# later seasons (2026-10-04): catches 5 of the 8 with text on them, and none
+# of the 21 clean ones; a clean cover's confident boxes are scene texture the
+# recogniser reads as one stray glyph, or nothing.
+_COVER_MIN_SCORE = 0.50
+_COVER_MIN_AREA = 0.006
+_COVER_MIN_READ = 0.60
+_COVER_MIN_LATIN = 4
+_COVER_MIN_CJK = 2
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+
+
+def cover_has_text(image) -> bool | None:
+    """Whether a 16:9 cut of an anime season cover carries a title or other
+    lettering, or None when the scan is unavailable.
+
+    Not poster_has_burned_in_text's rules: those are tuned for posters and
+    pass a cover whose whole middle is a kanji logo.  Here the recogniser
+    decides, on every box worth reading, in any script."""
+    try:
+        boxes, scores, width, height = _detect(image)
+        if boxes is None:
+            return None
+        source = image.convert("RGB")
+        image_area = max(1, width * height)
+        try:
+            for box, score in zip(boxes, scores):
+                box = np.asarray(box, dtype=np.float32)
+                left, top = float(box[:, 0].min()), float(box[:, 1].min())
+                right, bottom = float(box[:, 0].max()), float(box[:, 1].max())
+                if (float(score) < _COVER_MIN_SCORE
+                        or (right - left) * (bottom - top) / image_area < _COVER_MIN_AREA):
+                    continue
+                pad = max(3, int((bottom - top) * 0.2))
+                crop = np.asarray(source.crop((
+                    max(0, int(left) - pad), max(0, int(top) - pad),
+                    min(width, int(right) + pad), min(height, int(bottom) + pad),
+                )))
+                with _borrow_ocr() as ocr:
+                    result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
+                for text, read in zip(result.txts or (), result.scores or ()):
+                    if float(read) < _COVER_MIN_READ:
+                        continue
+                    if (len(re.sub(r"[^a-z]", "", str(text).lower())) >= _COVER_MIN_LATIN
+                            or len(_CJK_RE.findall(str(text))) >= _COVER_MIN_CJK):
+                        logger.info(f"text_detect: season cover carries text ({text!r}, "
+                                    f"box {float(score):.2f})")
+                        return True
+        finally:
+            source.close()
+        return False
+    except Exception as exc:
+        logger.warning(f"text_detect error; cover scan unavailable: {exc}")
+        return None
 
 
 def text_column_profile(image, conf: float = _BOX_THRESHOLD):

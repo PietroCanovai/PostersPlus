@@ -114,7 +114,11 @@ Prefer environment variables? Everything the dashboard sets can be set that way 
 
 ## Connecting your client
 
-Open your instance's address in a browser to get the configurator. Pick a style, then press **Copy config**. The first time, it asks which client the URL is for (AIOMetadata, Nuvio, Bingecat and so on) and copies the right format. After that, a left-click copies for the same client and a right-click lets you pick another. The URL is built from whatever address you opened the configurator at, so open it from the address your client will use.
+Open your instance's address in a browser to get the configurator. Pick a style, then press **Copy config**. A left-click copies the URL for AIOMetadata, Nuvio, Bingecat and Xperience, which all take the same one. Right-click (or long press) to copy it for Discover+ or to share your settings; if you pick Discover+, a left-click keeps copying that until you pick otherwise. The URL is built from whatever address you opened the configurator at, so open it from the address your client will use.
+
+**Share settings** removes keys and personal choices and replaces the selected title with generic client placeholders. The shared URL can go directly into AIOMetadata, Nuvio, Bingecat or Xperience. For Discover+, import it into the configurator and use **Copy config → Discover+**. Import already uses the local instance's domain; it does not need the source domain replaced.
+
+Instances are private for sharing by default: shared URLs use `https://postersplus.cc`, so direct client requests go to that public instance and use its server-side configuration and resources. Public operators can explicitly set **Public share origin** (`PUBLIC_SHARE_ORIGIN`) to their canonical HTTPS origin, such as `https://posters.example.com`. Use an origin only, with no path, credentials, query or fragment, and only for an instance intended for public use without an access key. Blank or invalid values use the fallback. This setting does not change access controls; setting `PUBLIC_URL` alone does not opt in. Opening a public instance through a private address still shares only the configured public origin.
 
 > **Exposing it safely.** Clients need to reach PostersPlus over **HTTPS**, e.g. behind [Caddy](https://caddyserver.com/) or [Traefik](https://traefik.io/), with `ACCESS_KEY` set. If you use AIOMetadata, you can instead turn on its image proxy and keep PostersPlus off the internet entirely: use `http://postersplus:8000` as the address so the two talk over Docker's internal network. That's a little slower but the most secure option.
 
@@ -147,10 +151,34 @@ Chat, feature requests and bug reports are on [Discord](https://discord.com/invi
 
 If you'd like to support development: [Ko-fi](https://ko-fi.com/umbraprojects).
 
-## License
+## Attribution
 
-[GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.
+PostersPlus is built on data and images from these services. None of them endorse or certify it.
+
+<a href="https://www.themoviedb.org"><img src="static/tmdb-logo.svg" alt="TMDB" height="14"></a>
+
+- **[TMDB](https://www.themoviedb.org)**: this product uses the TMDB API but is not endorsed or certified by TMDB. Posters, backdrops, logos, metadata and trending lists.
+- **[TheTVDB](https://thetvdb.com)**: metadata and artwork provided by TheTVDB.
+- **[MDBList](https://mdblist.com)**: ratings (including Letterboxd, Rotten Tomatoes, Metacritic and Trakt scores) and lists.
+- **[IMDb](https://www.imdb.com)**: information courtesy of IMDb. Used with permission. IMDb ratings come from the [IMDb non-commercial datasets](https://developer.imdb.com/non-commercial-datasets/).
+- **[AniList](https://anilist.co)** and **[Kitsu](https://kitsu.app)**: anime art, titles, genres and scores.
+- **[Cinemeta and Metahub](https://www.stremio.com)** (Stremio): metadata and logo fallbacks.
+- **[fanart.tv](https://fanart.tv)**: posters, logos and backgrounds.
+- **[Trakt](https://trakt.tv)**, **[SIMKL](https://simkl.com)** and **[PublicMetaDB](https://publicmetadb.com)**: watchlists for the watchlist marker.
+- **[Arctic Shift](https://arctic-shift.photon-reddit.com)**: Reddit archive used to detect digital releases.
+- **[Wikidata](https://www.wikidata.org)**: festival award winners, and the IMDb ids the Wikipedia lists below are matched by, under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+- **[Wikipedia](https://en.wikipedia.org)**: cult film, festival and Best Picture lists derived from Wikipedia ([List of cult films](https://en.wikipedia.org/wiki/List_of_cult_films), the Palme d'Or, Golden Lion, Golden Bear, Golden Leopard and Sundance Grand Jury Prize winners, and the Academy Award for Best Picture), under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). They ship in [data/](data) and are rebuilt with `tools/build_award_lists.py`.
+- **[RapidOCR](https://github.com/RapidAI/RapidOCR)**: the PP-OCRv5 text detection model from [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), under the Apache License 2.0.
+- **Anime ID mapping**: from [Fribb/anime-lists](https://github.com/Fribb/anime-lists), which is built from [anime-offline-database](https://github.com/cedya77/anime-offline-database) (a continuation of [manami-project](https://github.com/manami-project)'s original) and [Anime-Lists/anime-lists](https://github.com/Anime-Lists/anime-lists). anime-offline-database is made available under the [Open Database License v1.0](https://opendatacommons.org/licenses/odbl/1-0/), and its contents under the [Database Contents License v1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
+
+The bundled fonts are Almarai, Barlow Condensed, Bebas Neue, Creepster, Exo 2, Fira Sans, Inter, Manrope, Montserrat, Noto Serif, Open Sans, Oswald, Pacifico, Playfair Display, Plus Jakarta Sans, Roboto Condensed, Rubik and Space Grotesk under the [SIL Open Font License 1.1](https://openfontlicense.org), and Ubuntu under the [Ubuntu Font Licence 1.0](https://ubuntu.com/legal/font-licence). Each licence, with its copyright notice, is in [fonts/](fonts).
+
+### Badge artwork
 
 The Graphic Badges mode downloads its marks from Wikimedia Commons at runtime; none ship with PostersPlus. Dolby Vision, Dolby Atmos and the combined Vision • Atmos mark are built from [Dolby Vision 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Vision_2021_logo.svg) and [Dolby Cinema 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Cinema_2021_logo.svg) (public domain). The DTS:X mark is [DTS X B&W.png](https://commons.wikimedia.org/wiki/File:DTS_X_B%26W.png) by CinemaLover24680, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), cut to its "dts" letters and recoloured white. Dolby, Dolby Vision, Dolby Atmos and DTS:X are trademarks of their owners.
 
 Rating badges are downloaded the same way, each pinned to the exact file reviewed. The IMDb, Rotten Tomatoes (tomato, lettered tomato, splat and both Popcornmeter buckets), Metacritic, Letterboxd, Trakt, MyAnimeList and AniList logos come from Wikimedia Commons, all public domain; the TMDB logo from [TMDB's logos page](https://www.themoviedb.org/about/logos-attribution); the Kitsu mark from [Simple Icons](https://simpleicons.org/) (CC0); and Roger Ebert's thumbs-up is [Material Symbols](https://github.com/google/material-design-icons)' `thumb_up` (Apache 2.0). Most are set on round plates in their brand colours. All are trademarks of their owners.
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.

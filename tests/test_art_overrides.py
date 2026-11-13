@@ -86,6 +86,25 @@ class PickPosterTests(unittest.TestCase):
             has_language=lambda _: True).path, "/de.jpg")
 
 
+class CinemetaOverrideTests(unittest.TestCase):
+    def test_cinemeta_is_an_original_only_source(self):
+        self.assertEqual(ao.normalise_sources("original", ["cinemeta", "tmdb"]),
+                         frozenset({"cinemeta", "tmdb"}))
+        self.assertEqual(ao.normalise_sources("textless", ["cinemeta", "tmdb"]),
+                         frozenset({"tmdb"}))
+        with self.assertRaises(ValueError):
+            ao.normalise_sources("textless", ["cinemeta"])
+
+    def test_original_override_only_for_cinemeta_when_ticked(self):
+        entry = {"original": {"en": _ov("original", "en", "/en.jpg", sources=("tmdb",))}}
+        pick = lambda: ao.pick_poster(
+            entry, original=True, source="cinemeta", language_order=["en"],
+            has_language=lambda _: True)
+        self.assertIsNone(pick())
+        entry["original"]["en"] = _ov("original", "en", "/en.jpg", sources=("tmdb", "cinemeta"))
+        self.assertEqual(pick().path, "/en.jpg")
+
+
 class CropTests(unittest.TestCase):
     def test_box_on_a_backdrop(self):
         # 1920x1080: the full-height 2:3 window is 720 wide.
@@ -166,6 +185,7 @@ class StorageTests(unittest.TestCase):
                 title TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL, crop TEXT,
                 PRIMARY KEY (media_type, tmdb_id, slot, language))
         """)
+        self.db.execute("CREATE TABLE art_overrides_remote AS SELECT * FROM art_overrides WHERE 0")
         self.state = {}
         self.invalidated = []
         patches = [
@@ -414,10 +434,10 @@ class PosterSourceParsingTests(unittest.TestCase):
             with self.subTest(enabled=enabled), \
                     mock.patch.object(main.tvdb, "poster_source_enabled", lambda: enabled):
                 self.assertEqual(
-                    main.build_request_config({"poster_source": "tvdb"}).poster_source, want)
+                    main.build_request_config({"poster_source": "tvdb"}).poster_source_tv, want)
         with mock.patch.object(main.tvdb, "poster_source_enabled", lambda: True):
             self.assertEqual(main.build_request_config(
-                {"poster_source": "tvdb", "shape": "landscape"}).poster_source, "tmdb")
+                {"poster_source": "tvdb", "shape": "landscape"}).poster_source_tv, "tmdb")
 
 
 if __name__ == "__main__":
